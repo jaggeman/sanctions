@@ -29,10 +29,12 @@ const fakeDb = {
 };
 
 const runSearch = vi.fn();
+const verifyApiToken = vi.fn();
 
 vi.mock('../../src/shared/firebase', () => ({ db: fakeDb }));
 vi.mock('../../src/importer', () => ({ runImport: vi.fn(async () => ({ success: true, importedCounts: {} })) }));
 vi.mock('../../src/search', () => ({ runSearch }));
+vi.mock('../../src/shared/apiTokens', () => ({ verifyApiToken }));
 vi.stubEnv('NODE_ENV', 'test');
 
 function record(overrides: Partial<SanctionRecord> = {}): SanctionRecord {
@@ -61,6 +63,7 @@ beforeEach(async () => {
   overrideDocResult = { exists: false };
   runSearch.mockReset();
   runSearch.mockResolvedValue({ results: [], totalMatches: 0, truncated: false });
+  verifyApiToken.mockReset();
   vi.clearAllMocks();
   await agent.post('/api/auth/verify-otp').send({ email: 'admin@sanctions.com', code: '123456' });
 });
@@ -195,3 +198,81 @@ describe('POST /api/import', () => {
 // 202 response this block used to assert. The two multer-level validation
 // tests (disallowed extension, oversized file) that were added here on main
 // moved there too, alongside this rewrite's own source/dedup/format tests.
+
+// Issue #36: requireScope was fully built and tested in isolation but never
+// actually reachable — a bearer-token-only request (no session cookie) was
+// rejected by the blanket session gate before any route-level scope check
+// could run. These tests use a plain (session-less) `request(api)` client,
+// never `agent`, to prove a token alone is now sufficient.
+describe('bearer-token (API key) auth on the read routes — issue #36', () => {
+  it('GET /api/search accepts a valid read-scoped token with no session cookie at all', async () => {
+    verifyApiToken.mockResolvedValue({ valid: true, tokenId: 'tok-1', scopes: ['read'] });
+    runSearch.mockResolvedValue({ results: [scoredRecord()], totalMatches: 1, truncated: false });
+
+    const res = await request(api).get('/api/search').query({ q: 'Vladimir' }).set('Authorization', 'Bearer sanc_good');
+
+    expect(res.status).toBe(200);
+    expect(verifyApiToken).toHaveBeenCalledWith('sanc_good', 'read');
+    expect(res.body.results).toHaveLength(1);
+  });
+
+  it('GET /api/sanctions/:id accepts a valid read-scoped token with no session cookie at all', async () => {
+    const rec = record({ id: 'PEP-1' });
+    docGetResult = { exists: true, data: () => rec };
+    verifyApiToken.mockResolvedValue({ valid: true, tokenId: 'tok-1', scopes: ['read'] });
+
+    const res = await request(api).get('/api/sanctions/PEP-1').set('Authorization', 'Bearer sanc_good');
+
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe('PEP-1');
+  });
+
+  it('rejects a write-only-scoped token on the read routes with 403', async () => {
+    verifyApiToken.mockResolvedValue({
+      valid: false,
+      reason: 'insufficient_scope',
+      tokenId: 'tok-1',
+      scopes: ['write'],
+    });
+
+    const res = await request(api).get('/api/search').query({ q: 'Vladimir' }).set('Authorization', 'Bearer sanc_writeonly');
+
+    expect(res.status).toBe(403);
+    expect(runSearch).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid or revoked token with 401, without falling back to session auth', async () => {
+    verifyApiToken.mockResolvedValue({ valid: false, reason: 'not_found' });
+
+    const res = await request(api).get('/api/search').query({ q: 'Vladimir' }).set('Authorization', 'Bearer sanc_bogus');
+
+    expect(res.status).toBe(401);
+  });
+
+  it('still rejects a plain, unauthenticated request (no cookie, no token) with 401', async () => {
+    const res = await request(api).get('/api/search').query({ q: 'Vladimir' });
+    expect(res.status).toBe(401);
+  });
+
+  it('POST /api/import accepts a write-scoped token with no session cookie', async () => {
+    verifyApiToken.mockResolvedValue({ valid: true, tokenId: 'tok-1', scopes: ['write'] });
+
+    const res = await request(api).post('/api/import').set('Authorization', 'Bearer sanc_writer').send({ sources: ['EU'] });
+
+    expect(res.status).toBe(202);
+    expect(verifyApiToken).toHaveBeenCalledWith('sanc_writer', 'write');
+  });
+
+  it('rejects a read-only-scoped token on POST /api/import with 403', async () => {
+    verifyApiToken.mockResolvedValue({
+      valid: false,
+      reason: 'insufficient_scope',
+      tokenId: 'tok-1',
+      scopes: ['read'],
+    });
+
+    const res = await request(api).post('/api/import').set('Authorization', 'Bearer sanc_readonly').send({ sources: ['EU'] });
+
+    expect(res.status).toBe(403);
+  });
+});
