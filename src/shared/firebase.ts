@@ -20,4 +20,20 @@ db.settings({
   ignoreUndefinedProperties: true, // Crucial for Firestore to not throw on undefined fields
 });
 
+// Storage bucket for raw uploaded files (issue #7). Lazy rather than a
+// top-level const: admin.storage().bucket() throws synchronously without an
+// explicit bucket name (no default can be inferred from just a projectId),
+// which broke every module importing this file, including ones that only
+// ever need `db`. Deferring construction to first actual use means only
+// upload-pipeline code (the only caller) pays that cost or that risk.
+let bucketInstance: ReturnType<ReturnType<typeof admin.storage>['bucket']> | undefined;
+
+export function getBucket() {
+  if (!bucketInstance) {
+    const bucketName = process.env.FIREBASE_STORAGE_BUCKET || `${projectId}.appspot.com`;
+    bucketInstance = admin.storage().bucket(bucketName);
+  }
+  return bucketInstance;
+}
+
 export default db;

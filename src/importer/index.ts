@@ -7,13 +7,107 @@ import { parseUSListStreaming } from './parsers/us';
 import { parseCSVList } from './parsers/csv';
 import { uploadRecords, filterAutomatedBatch } from './uploader';
 import { invalidateSearchIndex } from '../search';
-import { SanctionRecord } from '../shared/types';
+import { SanctionRecord, SanctionSource } from '../shared/types';
 
 interface ImportOptions {
   sources?: ('EU' | 'UN' | 'US')[];
   csvPath?: string;
   csvSource?: 'PEP' | 'CUSTOM';
   csvSeparator?: string;
+  /**
+   * issue #7: parse one specific, already-on-disk file (typically a user
+   * upload whose format was already sniffed by formatDetection.ts) instead
+   * of the download-or-csvPath model below. Self-contained — set this XOR
+   * the other options, never both.
+   */
+  uploadedFile?: {
+    path: string;
+    format: 'eu-xml-1.1' | 'un-xml' | 'us-xml' | 'csv';
+    source: SanctionSource;
+  };
+}
+
+async function uploadFiltered(records: SanctionRecord[]): Promise<number> {
+  const uploadable = filterAutomatedBatch(records);
+  if (uploadable.length > 0) {
+    await uploadRecords(uploadable);
+  }
+  return uploadable.length;
+}
+
+/** Handles ImportOptions.uploadedFile — see issue #7. */
+async function runUploadedFileImport(
+  file: NonNullable<ImportOptions['uploadedFile']>,
+): Promise<{ success: boolean; importedCounts: Record<string, number>; error?: string }> {
+  const importedCounts: Record<string, number> = {};
+
+  try {
+    let parsed = 0;
+    let uploaded = 0;
+
+    if (file.format === 'eu-xml-1.1') {
+      let buffer: SanctionRecord[] = [];
+      const flush = async () => {
+        if (buffer.length === 0) return;
+        const chunk = buffer;
+        buffer = [];
+        uploaded += await uploadFiltered(chunk);
+      };
+      await parseEUListStreaming(file.path, async (record) => {
+        parsed++;
+        buffer.push(record);
+        if (buffer.length >= EU_UPLOAD_CHUNK_SIZE) await flush();
+      });
+      await flush();
+    } else if (file.format === 'un-xml') {
+      const records = await parseUNList(file.path);
+      parsed = records.length;
+      uploaded = await uploadFiltered(records);
+    } else if (file.format === 'us-xml') {
+      // Streamed for the same reason as EU: the real OFAC SDN export (~29 MB)
+      // peaked at ~317 MB RSS under the full-DOM parse, over the deployed
+      // function's 256 MiB ceiling (see parsers/us.ts and issue #31). An
+      // uploaded SDN file is exactly that file, so the non-streaming
+      // parseUSList would OOM here.
+      let buffer: SanctionRecord[] = [];
+      const flush = async () => {
+        if (buffer.length === 0) return;
+        const chunk = buffer;
+        buffer = [];
+        uploaded += await uploadFiltered(chunk);
+      };
+      await parseUSListStreaming(file.path, async (record) => {
+        parsed++;
+        buffer.push(record);
+        if (buffer.length >= EU_UPLOAD_CHUNK_SIZE) await flush();
+      });
+      await flush();
+    } else {
+      const records = await parseCSVList(file.path, {
+        separator: ';',
+        defaultSource: file.source as 'PEP' | 'CUSTOM',
+      });
+      parsed = records.length;
+      uploaded = await uploadFiltered(records);
+    }
+
+    importedCounts[file.source] = parsed;
+
+    if (uploaded > 0) {
+      invalidateSearchIndex();
+      return { success: true, importedCounts };
+    } else if (parsed > 0) {
+      return {
+        success: false,
+        importedCounts,
+        error: 'No uploadable records after filtering CUSTOM-sourced records',
+      };
+    } else {
+      return { success: false, importedCounts, error: 'No records parsed' };
+    }
+  } catch (error: any) {
+    return { success: false, importedCounts, error: error.message };
+  }
 }
 
 /**
@@ -45,20 +139,16 @@ export async function runImport(options: ImportOptions = {}): Promise<{
   importedCounts: Record<string, number>;
   error?: string;
 }> {
+  if (options.uploadedFile) {
+    return runUploadedFileImport(options.uploadedFile);
+  }
+
   const sources = options.sources || ['EU', 'UN', 'US'];
   const importedCounts: Record<string, number> = {};
   let totalParsed = 0;
   let totalUploaded = 0;
 
   console.log(`Starting import process for sources: ${sources.join(', ')}`);
-
-  const uploadFiltered = async (records: SanctionRecord[]): Promise<number> => {
-    const uploadable = filterAutomatedBatch(records);
-    if (uploadable.length > 0) {
-      await uploadRecords(uploadable);
-    }
-    return uploadable.length;
-  };
 
   try {
     const downloadsDir = path.resolve(__dirname, '../../downloads');

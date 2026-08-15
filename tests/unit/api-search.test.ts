@@ -148,51 +148,9 @@ describe('POST /api/import', () => {
   });
 });
 
-describe('POST /api/upload', () => {
-  it('rejects a request with no file attached', async () => {
-    const res = await agent.post('/api/upload').field('source', 'PEP');
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/no file/i);
-  });
-
-  it('accepts an uploaded file and returns 202 immediately', async () => {
-    const res = await agent
-      .post('/api/upload')
-      .field('source', 'PEP')
-      .attach('file', Buffer.from('id;name\n1;Test Person\n'), 'people.csv');
-
-    expect(res.status).toBe(202);
-    expect(res.body.status).toBe('upload_received');
-  });
-
-  it('rejects an unknown source value with 400, without reaching runImport', async () => {
-    const { runImport } = await import('../../src/importer');
-    const res = await agent
-      .post('/api/upload')
-      .field('source', 'MANUAL_UPLOAD')
-      .attach('file', Buffer.from('id;name\n1;Test Person\n'), 'people.csv');
-
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/source/i);
-    expect(runImport).not.toHaveBeenCalled();
-  });
-
-  it('rejects a file with a disallowed extension with 400', async () => {
-    const res = await agent
-      .post('/api/upload')
-      .field('source', 'PEP')
-      .attach('file', Buffer.from('not a real binary'), 'payload.exe');
-
-    expect(res.status).toBe(400);
-  });
-
-  it('rejects a file over the size limit with 413', async () => {
-    const oversized = Buffer.alloc(65 * 1024 * 1024, 'a'); // over the 64 MB cap
-    const res = await agent
-      .post('/api/upload')
-      .field('source', 'PEP')
-      .attach('file', oversized, 'huge.csv');
-
-    expect(res.status).toBe(413);
-  });
-});
+// POST /api/upload's tests live in tests/unit/api-upload.test.ts — the
+// handler was rewritten for issue #7 (hashing, format detection, dedup,
+// Storage, the imports audit collection), replacing the old fire-and-forget
+// 202 response this block used to assert. The two multer-level validation
+// tests (disallowed extension, oversized file) that were added here on main
+// moved there too, alongside this rewrite's own source/dedup/format tests.
