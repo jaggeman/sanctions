@@ -17,6 +17,10 @@ vi.mock('../../src/importer/parsers/us', () => ({
 }));
 vi.mock('../../src/importer/uploader', () => ({
   uploadRecords: vi.fn(async () => {}),
+  filterAutomatedBatch: vi.fn((records: SanctionRecord[]) => records.filter((r) => r.source !== 'CUSTOM')),
+}));
+vi.mock('../../src/search', () => ({
+  invalidateSearchIndex: vi.fn(),
 }));
 
 import { runImport, EU_UPLOAD_CHUNK_SIZE } from '../../src/importer/index';
@@ -112,6 +116,34 @@ describe('runImport — chunked uploads, no full-run accumulation', () => {
     const result = await runImport({ sources: ['EU', 'UN', 'US'] });
 
     expect(result.success).toBe(false);
+    expect(vi.mocked(uploadRecords)).not.toHaveBeenCalled();
+  });
+
+  it('still drops CUSTOM-sourced records per chunk (issue #10 backstop applies per-chunk now)', async () => {
+    vi.mocked(parseEUListStreaming).mockImplementation(async (_path, onRecord) => {
+      await onRecord(makeRecord('EU-1'));
+      await onRecord({ ...makeRecord('EU-CUSTOM'), source: 'CUSTOM' });
+      return 2;
+    });
+
+    const result = await runImport({ sources: ['EU'] });
+
+    expect(result.importedCounts.EU).toBe(2); // parsed count, pre-filter
+    const uploadCalls = vi.mocked(uploadRecords).mock.calls;
+    const uploadedIds = uploadCalls.flatMap(([chunk]) => chunk.map((r: SanctionRecord) => r.id));
+    expect(uploadedIds).toEqual(['EU-1']);
+  });
+
+  it('reports failure (not success) when everything parsed was CUSTOM-sourced', async () => {
+    vi.mocked(parseEUListStreaming).mockImplementation(async (_path, onRecord) => {
+      await onRecord({ ...makeRecord('EU-CUSTOM'), source: 'CUSTOM' });
+      return 1;
+    });
+
+    const result = await runImport({ sources: ['EU'] });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/CUSTOM/);
     expect(vi.mocked(uploadRecords)).not.toHaveBeenCalled();
   });
 });

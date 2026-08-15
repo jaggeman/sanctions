@@ -67,7 +67,12 @@ vi.mock('../../src/importer/fetcher', () => ({
   downloadFile: vi.fn(async (_url: string, name: string) => `/fake/${name}`),
   SOURCE_URLS: { EU: 'http://fake/eu', UN: 'http://fake/un', US: 'http://fake/us' },
 }));
-vi.mock('../../src/importer/parsers/eu', () => ({ parseEUList: vi.fn(async () => [euRecord()]) }));
+vi.mock('../../src/importer/parsers/eu', () => ({
+  parseEUListStreaming: vi.fn(async (_path: string, onRecord: (r: SanctionRecord) => unknown) => {
+    await onRecord(euRecord());
+    return 1;
+  }),
+}));
 vi.mock('../../src/importer/parsers/un', () => ({ parseUNList: vi.fn(async () => []) }));
 vi.mock('../../src/importer/parsers/us', () => ({ parseUSList: vi.fn(async () => []) }));
 vi.mock('../../src/importer/parsers/csv', () => ({
@@ -85,18 +90,22 @@ beforeEach(() => {
 });
 
 describe('runImport — CUSTOM-sourced records never reach the automated upload path', () => {
+  // EU and CSV are uploaded via separate uploadRecords calls now (issue #5 —
+  // each source, and each streamed EU chunk, is flushed as soon as it is
+  // parsed rather than combined into one array before a single upload), so
+  // these assertions look at everything ever uploaded across every call.
+  const allUploaded = (): SanctionRecord[] =>
+    uploadRecordsMock.mock.calls.flatMap(([records]) => records as SanctionRecord[]);
+
   it('drops a CUSTOM-sourced record found in a CSV batch before uploading', async () => {
     await runImport({ sources: ['EU'], csvPath: 'fake.csv', csvSource: 'PEP', csvSeparator: ';' });
 
-    expect(uploadRecordsMock).toHaveBeenCalledTimes(1);
-    const uploaded: SanctionRecord[] = uploadRecordsMock.mock.calls[0][0];
-    expect(uploaded.some((r) => r.source === 'CUSTOM')).toBe(false);
+    expect(allUploaded().some((r) => r.source === 'CUSTOM')).toBe(false);
   });
 
   it('still uploads the legitimate EU and PEP records alongside the dropped CUSTOM one', async () => {
     await runImport({ sources: ['EU'], csvPath: 'fake.csv', csvSource: 'PEP', csvSeparator: ';' });
 
-    const uploaded: SanctionRecord[] = uploadRecordsMock.mock.calls[0][0];
-    expect(uploaded.map((r) => r.id).sort()).toEqual(['EU-1', 'PEP-1']);
+    expect(allUploaded().map((r) => r.id).sort()).toEqual(['EU-1', 'PEP-1']);
   });
 });
