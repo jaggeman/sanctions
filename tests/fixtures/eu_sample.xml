@@ -1,56 +1,184 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<export:export xmlns:export="http://eu.europa.ec/fpi/fsd/export">
-  <export:sanctionEntity logicalId="1001">
-    <export:subjectType code="I" classificationCode="PERSON"/>
-    <export:nameAlias logicalId="1" primary="true" strong="true">
-      <export:wholeName>Vladimir TESTOVICH</export:wholeName>
-      <export:firstName>Vladimir</export:firstName>
-      <export:lastName>Testovich</export:lastName>
-    </export:nameAlias>
-    <export:nameAlias logicalId="2" primary="false" strong="false">
-      <export:wholeName>Vova Testovich</export:wholeName>
-    </export:nameAlias>
-    <export:birthdate>
-      <export:birthdate>1965-04-12</export:birthdate>
-      <export:city>Moscow</export:city>
-      <export:countryDescription>Russia</export:countryDescription>
-    </export:birthdate>
-    <export:citizenship>
-      <export:countryDescription>Russia</export:countryDescription>
-    </export:citizenship>
-    <export:address>
-      <export:street>Red Square 1</export:street>
-      <export:city>Moscow</export:city>
-      <export:zipcode>101000</export:zipcode>
-      <export:countryDescription>Russia</export:countryDescription>
-    </export:address>
-    <export:identificationDocument>
-      <export:number>123456789</export:number>
-      <export:typeDescription>Passport</export:typeDescription>
-      <export:issueCountry>Russia</export:issueCountry>
-    </export:identificationDocument>
-    <export:regulationSummary>
-      <export:numberTitle>Council Regulation (EU) No 269/2014</export:numberTitle>
-      <export:publicationUrl>https://example.org/reg1</export:publicationUrl>
-    </export:regulationSummary>
-  </export:sanctionEntity>
-  <export:sanctionEntity logicalId="1002">
-    <export:subjectType code="E" classificationCode="ENTITY"/>
-    <export:nameAlias logicalId="3" primary="true">
-      <export:wholeName>Test Entity LLC</export:wholeName>
-    </export:nameAlias>
-    <export:regulation>
-      <export:numberTitle>Council Decision 2014/145/CFSP</export:numberTitle>
-    </export:regulation>
-  </export:sanctionEntity>
-  <export:sanctionEntity logicalId="1003">
-    <export:subjectType code="I"/>
-    <export:nameAlias logicalId="4" primary="false">
-      <export:firstName>Only</export:firstName>
-      <export:lastName>Alias</export:lastName>
-    </export:nameAlias>
-  </export:sanctionEntity>
-  <export:sanctionEntity logicalId="1004">
-    <export:subjectType code="I"/>
-  </export:sanctionEntity>
-</export:export>
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  REAL structure, carved verbatim out of the official EU FSD v1.1 consolidated
+  export (generationDate 2026-08-05T16:47:04.449+02:00, globalFileId 184961).
+
+  Do not hand-edit the element/attribute shapes here. The whole point of this
+  fixture is that it is a byte-faithful sample of what the EU actually ships:
+  a fixture invented from reading the parser can only ever confirm the parser's
+  own assumptions. See issue #4.
+-->
+<export xmlns="http://eu.europa.ec/fpi/fsd/export" generationDate="2026-08-05T16:47:04.449+02:00" globalFileId="184961">
+  <!-- entity 13 - person, multi-language aliases, birthdate, citizenship (real logicalId=13) -->
+  <sanctionEntity designationDetails="" unitedNationId="" euReferenceNumber="EU.27.28" logicalId="13">
+        <remark>UNSC RESOLUTION 1483</remark>
+        <regulation regulationType="regulation" organisationType="commission" publicationDate="2003-07-08" entryIntoForceDate="2003-07-07" numberTitle="1210/2003 (OJ L169)" programme="IRQ" logicalId="348">
+            <publicationUrl>http://eur-lex.europa.eu/LexUriServ/LexUriServ.do?uri=OJ:L:2003:169:0006:0023:EN:PDF</publicationUrl>
+        </regulation>
+        <subjectType code="person" classificationCode="P"/>
+        <nameAlias firstName="Saddam" middleName="" lastName="Hussein Al-Tikriti" wholeName="Saddam Hussein Al-Tikriti" function="" gender="M" title="" nameLanguage="" strong="true" regulationLanguage="en" logicalId="17">
+            <regulationSummary regulationType="regulation" publicationDate="2003-07-08" numberTitle="1210/2003 (OJ L169)" publicationUrl="http://eur-lex.europa.eu/LexUriServ/LexUriServ.do?uri=OJ:L:2003:169:0006:0023:EN:PDF"/>
+        </nameAlias>
+        <nameAlias firstName="" middleName="" lastName="" wholeName="Abu Ali" function="" title="" nameLanguage="" strong="true" regulationLanguage="en" logicalId="19">
+            <regulationSummary regulationType="regulation" publicationDate="2003-07-08" numberTitle="1210/2003 (OJ L169)" publicationUrl="http://eur-lex.europa.eu/LexUriServ/LexUriServ.do?uri=OJ:L:2003:169:0006:0023:EN:PDF"/>
+        </nameAlias>
+        <nameAlias firstName="" middleName="" lastName="" wholeName="Abou Ali" function="" title="" nameLanguage="FR" strong="true" regulationLanguage="en" logicalId="380">
+            <regulationSummary regulationType="regulation" publicationDate="2003-07-08" numberTitle="1210/2003 (OJ L169)" publicationUrl="http://eur-lex.europa.eu/LexUriServ/LexUriServ.do?uri=OJ:L:2003:169:0006:0023:EN:PDF"/>
+        </nameAlias>
+        <citizenship region="" countryIso2Code="IQ" countryDescription="IRAQ" regulationLanguage="en" logicalId="1">
+            <regulationSummary regulationType="regulation" publicationDate="2003-07-08" numberTitle="1210/2003 (OJ L169)" publicationUrl="http://eur-lex.europa.eu/LexUriServ/LexUriServ.do?uri=OJ:L:2003:169:0006:0023:EN:PDF"/>
+        </citizenship>
+        <birthdate circa="false" calendarType="GREGORIAN" city="al-Awja, near Tikrit" zipCode="" birthdate="1937-04-28" dayOfMonth="28" monthOfYear="4" year="1937" region="" place="" countryIso2Code="IQ" countryDescription="IRAQ" regulationLanguage="en" logicalId="14">
+            <regulationSummary regulationType="regulation" publicationDate="2003-07-08" numberTitle="1210/2003 (OJ L169)" publicationUrl="http://eur-lex.europa.eu/LexUriServ/LexUriServ.do?uri=OJ:L:2003:169:0006:0023:EN:PDF"/>
+        </birthdate>
+    </sanctionEntity>
+
+  <!-- person with a passport-type identification (real logicalId=191) -->
+  <sanctionEntity designationDetails="" unitedNationId="" euReferenceNumber="EU.3579.2" logicalId="191">
+        <regulation regulationType="amendment" organisationType="council" publicationDate="2025-01-31" entryIntoForceDate="2025-02-01" numberTitle="2025/206 (L 202500206)" programme="TERR" logicalId="207667">
+            <publicationUrl>https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=OJ:L_202500206</publicationUrl>
+        </regulation>
+        <subjectType code="person" classificationCode="P"/>
+        <nameAlias firstName="" middleName="" lastName="" wholeName="Bin Khalid Fahd Bin Adballah" function="" gender="M" title="" nameLanguage="FR" strong="true" regulationLanguage="en" logicalId="161419">
+            <regulationSummary regulationType="amendment" publicationDate="2025-01-31" numberTitle="2025/206 (L 202500206)" publicationUrl="https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=OJ:L_202500206"/>
+        </nameAlias>
+        <nameAlias firstName="" middleName="" lastName="" wholeName="Wadood Khalid Adbul" function="" gender="M" title="" nameLanguage="FR" strong="true" regulationLanguage="en" logicalId="161420">
+            <regulationSummary regulationType="amendment" publicationDate="2025-01-31" numberTitle="2025/206 (L 202500206)" publicationUrl="https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=OJ:L_202500206"/>
+        </nameAlias>
+        <nameAlias firstName="" middleName="" lastName="" wholeName="Henin Ashraf Refaat Nabith" function="" gender="M" title="" nameLanguage="" strong="true" regulationLanguage="en" logicalId="292">
+            <regulationSummary regulationType="amendment" publicationDate="2022-07-19" numberTitle="2022/1230 (OJ L190)" publicationUrl="https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=uriserv%3AOJ.L_.2022.190.01.0001.01.ENG&amp;toc=OJ%3AL%3A2022%3A190%3ATOC"/>
+        </nameAlias>
+        <nameAlias firstName="" middleName="" lastName="" wholeName="Bin Khalid Fahd Bin Abdallah" function="" gender="M" title="" nameLanguage="EN" strong="true" regulationLanguage="en" logicalId="291">
+            <regulationSummary regulationType="amendment" publicationDate="2024-01-16" numberTitle="2024/329 (OJ L16012024)" publicationUrl="https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=OJ:L_202400329"/>
+        </nameAlias>
+        <nameAlias firstName="" middleName="" lastName="" wholeName="Wadood Khalid Abdul" function="" gender="M" title="" nameLanguage="" strong="true" regulationLanguage="en" logicalId="293">
+            <regulationSummary regulationType="amendment" publicationDate="2022-07-19" numberTitle="2022/1230 (OJ L190)" publicationUrl="https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=uriserv%3AOJ.L_.2022.190.01.0001.01.ENG&amp;toc=OJ%3AL%3A2022%3A190%3ATOC"/>
+        </nameAlias>
+        <nameAlias firstName="Khalid Sheikh" middleName="" lastName="MOHAMMED" wholeName="Khalid Sheikh MOHAMMED" function="" gender="M" title="" nameLanguage="EN" strong="true" regulationLanguage="en" logicalId="289">
+            <regulationSummary regulationType="amendment" publicationDate="2024-01-16" numberTitle="2024/329 (OJ L16012024)" publicationUrl="https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=OJ:L_202400329"/>
+        </nameAlias>
+        <nameAlias firstName="" middleName="" lastName="" wholeName="Ali Salem" function="" gender="M" title="" nameLanguage="" strong="true" regulationLanguage="en" logicalId="290">
+            <regulationSummary regulationType="amendment" publicationDate="2022-07-19" numberTitle="2022/1230 (OJ L190)" publicationUrl="https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=uriserv%3AOJ.L_.2022.190.01.0001.01.ENG&amp;toc=OJ%3AL%3A2022%3A190%3ATOC"/>
+        </nameAlias>
+        <birthdate circa="false" calendarType="GREGORIAN" city="-" zipCode="" birthdate="1965-04-14" dayOfMonth="14" monthOfYear="4" year="1965" region="" place="" countryIso2Code="PK" countryDescription="PAKISTAN" regulationLanguage="en" logicalId="183">
+            <regulationSummary regulationType="amendment" publicationDate="2005-11-30" numberTitle="2005/848/EC (OJ L314)" publicationUrl="http://eur-lex.europa.eu/LexUriServ/LexUriServ.do?uri=OJ:L:2005:314:0046:0047:EN:PDF"/>
+        </birthdate>
+        <birthdate circa="false" calendarType="GREGORIAN" city="-" zipCode="" birthdate="1964-03-01" dayOfMonth="1" monthOfYear="3" year="1964" region="" place="" countryIso2Code="PK" countryDescription="PAKISTAN" regulationLanguage="en" logicalId="184">
+            <regulationSummary regulationType="amendment" publicationDate="2005-11-30" numberTitle="2005/848/EC (OJ L314)" publicationUrl="http://eur-lex.europa.eu/LexUriServ/LexUriServ.do?uri=OJ:L:2005:314:0046:0047:EN:PDF"/>
+        </birthdate>
+        <identification diplomatic="false" knownExpired="false" knownFalse="false" reportedLost="false" revokedByIssuer="false" issuedBy="" latinNumber="" nameOnDocument="" number="488555" region="" identificationTypeCode="passport" identificationTypeDescription="National passport" countryIso2Code="00" countryDescription="UNKNOWN" regulationLanguage="en" logicalId="6">
+            <regulationSummary regulationType="repealing" publicationDate="2015-08-01" numberTitle="2015/1325 (OJ L206)" publicationUrl="http://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=CELEX:32015R1325&amp;rid=1"/>
+        </identification>
+    </sanctionEntity>
+
+  <!-- enterprise with an address carrying a zipCode (real logicalId=980) -->
+  <sanctionEntity designationDetails="" unitedNationId="" euReferenceNumber="EU.589.30" logicalId="980">
+        <regulation regulationType="amendment" organisationType="commission" publicationDate="2014-04-01" entryIntoForceDate="2014-03-31" numberTitle="329/2014 (OJ L98)" programme="TAQA" logicalId="1134">
+            <publicationUrl>http://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=CELEX:32014R0329&amp;from=EN</publicationUrl>
+        </regulation>
+        <subjectType code="enterprise" classificationCode="E"/>
+        <nameAlias firstName="" middleName="" lastName="" wholeName="Global Relief Foundation (GRF)" function="" title="" nameLanguage="" strong="true" regulationLanguage="en" logicalId="2062">
+            <regulationSummary regulationType="amendment" publicationDate="2009-11-18" numberTitle="1102/2009 (OJ L303)" publicationUrl="http://eur-lex.europa.eu/LexUriServ/LexUriServ.do?uri=OJ:L:2009:303:0039:0059:EN:PDF"/>
+        </nameAlias>
+        <address city="Bridgeview, Illinois" street="" poBox="" zipCode="PO Box 1406 - 60455" region="" place="" asAtListingTime="false" countryIso2Code="US" countryDescription="UNITED STATES" regulationLanguage="en" logicalId="2252">
+            <regulationSummary regulationType="amendment" publicationDate="2012-03-02" numberTitle="177/2012 (OJ L61)" publicationUrl="http://eur-lex.europa.eu/LexUriServ/LexUriServ.do?uri=OJ:L:2012:061:0010:0013:EN:PDF"/>
+        </address>
+        <address city="Bridgeview, Illinois" street="9935 South 76th Avenue, Unit 1" poBox="" zipCode="60455" region="" place="" asAtListingTime="false" countryIso2Code="US" countryDescription="UNITED STATES" regulationLanguage="en" logicalId="2251">
+            <regulationSummary regulationType="amendment" publicationDate="2012-03-02" numberTitle="177/2012 (OJ L61)" publicationUrl="http://eur-lex.europa.eu/LexUriServ/LexUriServ.do?uri=OJ:L:2012:061:0010:0013:EN:PDF"/>
+        </address>
+    </sanctionEntity>
+
+  <!-- enterprise with contactInfo (real logicalId=330) -->
+  <sanctionEntity designationDate="2001-10-06" designationDetails="" unitedNationId="" euReferenceNumber="EU.522.39" logicalId="330">
+        <regulation regulationType="amendment" organisationType="commission" publicationDate="2024-01-15" entryIntoForceDate="2024-01-16" numberTitle="2024/328 (OJ L15012024)" programme="TAQA" logicalId="188894">
+            <publicationUrl>https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=OJ:L_202400328</publicationUrl>
+        </regulation>
+        <subjectType code="enterprise" classificationCode="E"/>
+        <nameAlias firstName="" middleName="" lastName="" wholeName="Al-Rasheed Trust" function="" title="" nameLanguage="EN" strong="true" regulationLanguage="en" logicalId="909">
+            <regulationSummary regulationType="amendment" publicationDate="2024-01-15" numberTitle="2024/328 (OJ L15012024)" publicationUrl="https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=OJ:L_202400328"/>
+        </nameAlias>
+        <nameAlias firstName="" middleName="" lastName="" wholeName="Al Rasheed Trust" function="" title="" nameLanguage="EN" strong="true" regulationLanguage="en" logicalId="2406">
+            <regulationSummary regulationType="amendment" publicationDate="2024-01-15" numberTitle="2024/328 (OJ L15012024)" publicationUrl="https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=OJ:L_202400328"/>
+        </nameAlias>
+        <nameAlias firstName="" middleName="" lastName="" wholeName="Al-Rashid Trust" function="" title="" nameLanguage="EN" strong="true" regulationLanguage="en" logicalId="2407">
+            <regulationSummary regulationType="amendment" publicationDate="2024-01-15" numberTitle="2024/328 (OJ L15012024)" publicationUrl="https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=OJ:L_202400328"/>
+        </nameAlias>
+        <nameAlias firstName="" middleName="" lastName="" wholeName="Организация за подпомагане на Ulema, Пакистан" function="" title="" nameLanguage="BG" strong="true" regulationLanguage="en" logicalId="7393">
+            <regulationSummary regulationType="amendment" publicationDate="2009-11-18" numberTitle="1102/2009 (OJ L303)" publicationUrl="http://eur-lex.europa.eu/LexUriServ/LexUriServ.do?uri=OJ:L:2009:303:0039:0059:EN:PDF"/>
+        </nameAlias>
+        <nameAlias firstName="" middleName="" lastName="" wholeName="Aid Organisation of the Ulema, Pakistan" function="" title="" nameLanguage="EN" strong="true" regulationLanguage="en" logicalId="2408">
+            <regulationSummary regulationType="amendment" publicationDate="2024-01-15" numberTitle="2024/328 (OJ L15012024)" publicationUrl="https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=OJ:L_202400328"/>
+        </nameAlias>
+        <nameAlias firstName="" middleName="" lastName="" wholeName="Al Madina Trust" function="" title="" nameLanguage="EN" strong="true" regulationLanguage="en" logicalId="7302">
+            <regulationSummary regulationType="amendment" publicationDate="2024-01-15" numberTitle="2024/328 (OJ L15012024)" publicationUrl="https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=OJ:L_202400328"/>
+        </nameAlias>
+        <nameAlias firstName="" middleName="" lastName="" wholeName="Al Amin Trust" function="" title="" nameLanguage="EN" strong="true" regulationLanguage="en" logicalId="7299">
+            <regulationSummary regulationType="amendment" publicationDate="2024-01-15" numberTitle="2024/328 (OJ L15012024)" publicationUrl="https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=OJ:L_202400328"/>
+        </nameAlias>
+        <nameAlias firstName="" middleName="" lastName="" wholeName="Al Ameen Trust" function="" title="" nameLanguage="EN" strong="true" regulationLanguage="en" logicalId="7300">
+            <regulationSummary regulationType="amendment" publicationDate="2024-01-15" numberTitle="2024/328 (OJ L15012024)" publicationUrl="https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=OJ:L_202400328"/>
+        </nameAlias>
+        <nameAlias firstName="" middleName="" lastName="" wholeName="Al-Madina Trust" function="" title="" nameLanguage="EN" strong="true" regulationLanguage="en" logicalId="7303">
+            <regulationSummary regulationType="amendment" publicationDate="2024-01-15" numberTitle="2024/328 (OJ L15012024)" publicationUrl="https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=OJ:L_202400328"/>
+        </nameAlias>
+        <nameAlias firstName="" middleName="" lastName="" wholeName="Al Rashid Trust" function="" title="" nameLanguage="EN" strong="true" regulationLanguage="en" logicalId="908">
+            <remark>Banned in Pakistan since October 2001. Reportedly defunct. Headquarters were in Pakistan. Founded by Mufti Rashid Ahmad Ledahyanoy.
+Associated with Jaish-i-Mohammed.
+Operations in Afghanistan: Herat, Jalalabad, Kabul, Kandahar, Mazar, Sherif, also operations in Kosovo, Chechnya.
+Until 21.10.2008 the UN list included the entries ‘Al Rashid Trust’ (listed on 6.10.2001) and ‘Aid Organization of the 
+Ulema, Pakistan’ (listed on 24.4.2002 and amended on 25.7.2006); The two entries were consolidated into this 
+entry on 21 October 2008.</remark>
+            <regulationSummary regulationType="amendment" publicationDate="2024-01-15" numberTitle="2024/328 (OJ L15012024)" publicationUrl="https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=OJ:L_202400328"/>
+        </nameAlias>
+        <nameAlias firstName="" middleName="" lastName="" wholeName="Al-Ameen Trust" function="" title="" nameLanguage="EN" strong="true" regulationLanguage="en" logicalId="7301">
+            <regulationSummary regulationType="amendment" publicationDate="2024-01-15" numberTitle="2024/328 (OJ L15012024)" publicationUrl="https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=OJ:L_202400328"/>
+        </nameAlias>
+        <nameAlias firstName="" middleName="" lastName="" wholeName="Al Amin Welfare Trust" function="" title="" nameLanguage="EN" strong="true" regulationLanguage="en" logicalId="7298">
+            <regulationSummary regulationType="amendment" publicationDate="2024-01-15" numberTitle="2024/328 (OJ L15012024)" publicationUrl="https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=OJ:L_202400328"/>
+        </nameAlias>
+        <address city="Karachi" street="302b-40 Good Earth Court, Opposite Pia Planitarium, Block 13a, Gushan-I Igbal" poBox="" zipCode="" region="" place="" asAtListingTime="false" countryIso2Code="PK" countryDescription="PAKISTAN" regulationLanguage="en" logicalId="368">
+            <regulationSummary regulationType="amendment" publicationDate="2024-01-15" numberTitle="2024/328 (OJ L15012024)" publicationUrl="https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=OJ:L_202400328"/>
+            <contactInfo key="PHONE" value="497 92 63"/>
+        </address>
+        <address city="Karachi" street="Kitas Ghar, Nazimabad 4, Dahgel-Iftah" poBox="" zipCode="" region="" place="" asAtListingTime="false" countryIso2Code="PK" countryDescription="PAKISTAN" regulationLanguage="en" logicalId="1327">
+            <regulationSummary regulationType="amendment" publicationDate="2009-11-18" numberTitle="1102/2009 (OJ L303)" publicationUrl="http://eur-lex.europa.eu/LexUriServ/LexUriServ.do?uri=OJ:L:2009:303:0039:0059:EN:PDF"/>
+        </address>
+        <address city="Karachi" street="605 Landmark Plaza, 11 Chundrigar Road, Opposite Jang Building" poBox="" zipCode="" region="" place="" asAtListingTime="false" countryIso2Code="PK" countryDescription="PAKISTAN" regulationLanguage="en" logicalId="370">
+            <regulationSummary regulationType="amendment" publicationDate="2002-06-04" numberTitle="951/2002 (OJ L145)" publicationUrl="http://eur-lex.europa.eu/LexUriServ/LexUriServ.do?uri=OJ:L:2002:145:0014:0015:EN:PDF"/>
+            <contactInfo key="PHONE" value="262 38 18-19"/>
+        </address>
+        <address city="Mansehra" street="Office Dha’rbi-M’unin, Opposite Khyber Bank, Abbottabad Road" poBox="" zipCode="" region="" place="" asAtListingTime="false" countryIso2Code="PK" countryDescription="PAKISTAN" regulationLanguage="en" logicalId="1329">
+            <regulationSummary regulationType="amendment" publicationDate="2009-11-18" numberTitle="1102/2009 (OJ L303)" publicationUrl="http://eur-lex.europa.eu/LexUriServ/LexUriServ.do?uri=OJ:L:2009:303:0039:0059:EN:PDF"/>
+        </address>
+        <address city="Karachi" street="617 Clifton Center, Block 5, 6th floor, Clifton" poBox="" zipCode="" region="" place="" asAtListingTime="false" countryIso2Code="PK" countryDescription="PAKISTAN" regulationLanguage="en" logicalId="369">
+            <regulationSummary regulationType="amendment" publicationDate="2024-01-15" numberTitle="2024/328 (OJ L15012024)" publicationUrl="https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=OJ:L_202400328"/>
+            <contactInfo key="PHONE" value="587-25 45"/>
+        </address>
+        <address city="Mingora" street="Office Dha’rbi-M’unin, Top Floor, Dr. Dawa Khan Dental Clinic Surgeon, Main Baxae,Mingora" poBox="" zipCode="" region="Swat" place="" asAtListingTime="false" countryIso2Code="PK" countryDescription="PAKISTAN" regulationLanguage="en" logicalId="1332">
+            <regulationSummary regulationType="amendment" publicationDate="2024-01-15" numberTitle="2024/328 (OJ L15012024)" publicationUrl="https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=OJ:L_202400328"/>
+        </address>
+        <address city="Karachi" street="Kitab Ghar, Darul Ifta Wal Irshad, Nazimbad No 4" poBox="" zipCode="" region="" place="" asAtListingTime="false" countryIso2Code="PK" countryDescription="PAKISTAN" regulationLanguage="en" logicalId="367">
+            <regulationSummary regulationType="amendment" publicationDate="2024-01-15" numberTitle="2024/328 (OJ L15012024)" publicationUrl="https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=OJ:L_202400328"/>
+            <contactInfo key="PHONE" value="668 33 01; 0300- 820 91 99"/>
+            <contactInfo key="FAX" value="662 38 14"/>
+        </address>
+        <address city="Lahore" street="Jamia Maajid, Sulalman Park, Melgium Pura" poBox="" zipCode="" region="" place="" asAtListingTime="false" countryIso2Code="PK" countryDescription="PAKISTAN" regulationLanguage="en" logicalId="1328">
+            <regulationSummary regulationType="amendment" publicationDate="2009-11-18" numberTitle="1102/2009 (OJ L303)" publicationUrl="http://eur-lex.europa.eu/LexUriServ/LexUriServ.do?uri=OJ:L:2009:303:0039:0059:EN:PDF"/>
+        </address>
+        <address city="Peshawar" street="Office Dha’rbi-M’unin ZR Brothers, Katcherry Road, Chowk Yadgaar" poBox="" zipCode="" region="" place="" asAtListingTime="false" countryIso2Code="PK" countryDescription="PAKISTAN" regulationLanguage="en" logicalId="1330">
+            <regulationSummary regulationType="amendment" publicationDate="2009-11-18" numberTitle="1102/2009 (OJ L303)" publicationUrl="http://eur-lex.europa.eu/LexUriServ/LexUriServ.do?uri=OJ:L:2009:303:0039:0059:EN:PDF"/>
+        </address>
+        <address city="Lahore" street="Jamia Masjid Sulaiman Park, Begum Pura" poBox="" zipCode="" region="" place="" asAtListingTime="false" countryIso2Code="PK" countryDescription="PAKISTAN" regulationLanguage="en" logicalId="366">
+            <regulationSummary regulationType="amendment" publicationDate="2024-01-15" numberTitle="2024/328 (OJ L15012024)" publicationUrl="https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=OJ:L_202400328"/>
+            <contactInfo key="PHONE" value="042-681 20 81"/>
+        </address>
+        <address city="Rawalpindi" street="Office Dha’rbi-M’unin, Rm No. 3, Moti Plaza, Near Liaquat Bagh, Muree Road" poBox="" zipCode="" region="" place="" asAtListingTime="false" countryIso2Code="PK" countryDescription="PAKISTAN" regulationLanguage="en" logicalId="1331">
+            <regulationSummary regulationType="amendment" publicationDate="2009-11-18" numberTitle="1102/2009 (OJ L303)" publicationUrl="http://eur-lex.europa.eu/LexUriServ/LexUriServ.do?uri=OJ:L:2009:303:0039:0059:EN:PDF"/>
+        </address>
+    </sanctionEntity>
+
+  <!-- synthetic: entity with no nameAlias at all, for the fallback path -->
+  <sanctionEntity designationDetails="" unitedNationId="" euReferenceNumber="EU.0.0" logicalId="999999">
+    <subjectType code="person" classificationCode="P"/>
+  </sanctionEntity>
+</export>
