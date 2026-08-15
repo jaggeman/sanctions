@@ -25,6 +25,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Brightness7Icon from '@mui/icons-material/Brightness7';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import ApiTokensTab from './ApiTokensTab';
 
 // Function to generate theme based on mode
 const getTheme = (mode: PaletteMode) => createTheme({
@@ -166,6 +167,7 @@ function App() {
             <Tab label="Search" />
             <Tab label="Upload Lists" />
             <Tab label="Official EU Lists" />
+            <Tab label="API Tokens" />
           </Tabs>
         </Box>
 
@@ -358,6 +360,8 @@ function App() {
             </Box>
           </Box>
         )}
+
+        {tabValue === 3 && <ApiTokensTab />}
       </Container>
     </ThemeProvider>
   );

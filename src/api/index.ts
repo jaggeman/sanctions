@@ -11,6 +11,7 @@ import { db } from '../shared/firebase';
 import { normalizeText } from '../importer/uploader';
 import { runImport } from '../importer';
 import { SanctionRecord } from '../shared/types';
+import { tokensRouter } from './routes/tokens';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -37,6 +38,10 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openApiSpec));
 app.get('/openapi.json', (req, res) => {
   res.json(openApiSpec);
 });
+
+// Admin: API token management (create / list / revoke)
+// NOTE: not yet gated by admin authentication — tracked in issue #17
+app.use('/api/admin/tokens', tokensRouter);
 
 /**
  * GET /api/search
