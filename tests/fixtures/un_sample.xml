@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<CONSOLIDATED_LIST xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://www.un.org/sc/resources/sc-sanctions.xsd" dateGenerated="2026-08-14T23:00:04.744Z">
+  <INDIVIDUALS>
+    <INDIVIDUAL>
+      <DATAID>6907993</DATAID>
+      <VERSIONNUM>1</VERSIONNUM>
+      <FIRST_NAME>ERIC</FIRST_NAME>
+      <SECOND_NAME>BADEGE</SECOND_NAME>
+      <UN_LIST_TYPE>DRC</UN_LIST_TYPE>
+      <REFERENCE_NUMBER>CDi.001</REFERENCE_NUMBER>
+      <LISTED_ON>2012-12-31</LISTED_ON>
+      <GENDER>Male</GENDER>
+      <COMMENTS1>He fled to Rwanda in March 2013.</COMMENTS1>
+      <NATIONALITY>
+        <VALUE>Democratic Republic of the Congo</VALUE>
+      </NATIONALITY>
+      <INDIVIDUAL_ALIAS>
+        <QUALITY/>
+        <ALIAS_NAME/>
+      </INDIVIDUAL_ALIAS>
+      <INDIVIDUAL_ADDRESS>
+        <COUNTRY>Rwanda</COUNTRY>
+        <NOTE>as of early 2016</NOTE>
+      </INDIVIDUAL_ADDRESS>
+      <INDIVIDUAL_DATE_OF_BIRTH>
+        <TYPE_OF_DATE>EXACT</TYPE_OF_DATE>
+        <YEAR>1971</YEAR>
+      </INDIVIDUAL_DATE_OF_BIRTH>
+      <INDIVIDUAL_PLACE_OF_BIRTH>
+        <COUNTRY/>
+      </INDIVIDUAL_PLACE_OF_BIRTH>
+      <INDIVIDUAL_DOCUMENT/>
+      <SORT_KEY/>
+      <SORT_KEY_LAST_MOD/>
+    </INDIVIDUAL>
+    <INDIVIDUAL>
+      <DATAID>7000001</DATAID>
+      <VERSIONNUM>1</VERSIONNUM>
+      <FIRST_NAME>MULTI</FIRST_NAME>
+      <SECOND_NAME>ALIAS</SECOND_NAME>
+      <THIRD_NAME>PERSON</THIRD_NAME>
+      <REFERENCE_NUMBER>XXi.002</REFERENCE_NUMBER>
+      <COMMENTS1>Has two real aliases and two documents.</COMMENTS1>
+      <INDIVIDUAL_ALIAS>
+        <ALIAS_NAME>Alias One</ALIAS_NAME>
+      </INDIVIDUAL_ALIAS>
+      <INDIVIDUAL_ALIAS>
+        <ALIAS_NAME>Alias Two</ALIAS_NAME>
+      </INDIVIDUAL_ALIAS>
+      <INDIVIDUAL_DOCUMENT>
+        <TYPE_OF_DOCUMENT>Passport</TYPE_OF_DOCUMENT>
+        <NUMBER>P1234567</NUMBER>
+        <ISSUING_COUNTRY>Sweden</ISSUING_COUNTRY>
+      </INDIVIDUAL_DOCUMENT>
+      <INDIVIDUAL_DOCUMENT>
+        <TYPE_OF_DOCUMENT>National ID</TYPE_OF_DOCUMENT>
+        <NUMBER>N9999</NUMBER>
+      </INDIVIDUAL_DOCUMENT>
+      <NATIONALITY>
+        <VALUE>Sweden</VALUE>
+        <VALUE>Norway</VALUE>
+      </NATIONALITY>
+    </INDIVIDUAL>
+    <INDIVIDUAL>
+      <DATAID/>
+      <FIRST_NAME>No Data Id</FIRST_NAME>
+    </INDIVIDUAL>
+  </INDIVIDUALS>
+  <ENTITIES>
+    <ENTITY>
+      <DATAID>6908402</DATAID>
+      <VERSIONNUM>1</VERSIONNUM>
+      <FIRST_NAME>ADF</FIRST_NAME>
+      <UN_LIST_TYPE>DRC</UN_LIST_TYPE>
+      <REFERENCE_NUMBER>CDe.001</REFERENCE_NUMBER>
+      <LISTED_ON>2014-06-30</LISTED_ON>
+      <COMMENTS1>ADF founder and leader.</COMMENTS1>
+      <ENTITY_ADDRESS>
+        <CITY>Beni</CITY>
+        <COUNTRY>Democratic Republic of the Congo</COUNTRY>
+      </ENTITY_ADDRESS>
+    </ENTITY>
+  </ENTITIES>
+</CONSOLIDATED_LIST>

@@ -3,6 +3,7 @@ dist/
 .env
 firebase-debug.log
 firebase-debug.*.log
+firestore-debug.log
 *.local
 
 # Data files (Sanctions lists)
