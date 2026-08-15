@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import * as functions from 'firebase-functions';
 import * as path from 'path';
@@ -63,12 +64,30 @@ function uploadSingleFile(fieldName: string) {
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// importId (issue #8) becomes a Firestore document ID under
+// sanctions/{id}/versions/{importId} — validate it before it ever reaches
+// there, same as any other client-supplied value used as a storage key
+// (CLAUDE.md §6). Matches the shape runImport auto-generates
+// (import_<timestamp>_<hex>) plus reasonable room for a caller-chosen id.
+const IMPORT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const SESSION_COOKIE_OPTIONS = {
   httpOnly: true,
   sameSite: 'lax' as const,
   secure: process.env.NODE_ENV === 'production',
   maxAge: 7 * 24 * 60 * 60 * 1000,
 };
+
+// Security response headers (issue #95, found via a live pen test): nosniff,
+// frame-ancestors/X-Frame-Options, HSTS, and hiding X-Powered-By. CSP is
+// skipped specifically on /api-docs — swagger-ui-express's bundled page
+// relies on inline <script>/<style>, which helmet's default policy blocks;
+// every other route keeps the full default policy.
+app.use((req, res, next) => {
+  const applyHeaders = req.path.startsWith('/api-docs')
+    ? helmet({ contentSecurityPolicy: false })
+    : helmet();
+  applyHeaders(req, res, next);
+});
 
 // Enable CORS and JSON parsing.
 // Cookie-based sessions mean credentialed CORS must not reflect an arbitrary origin —
@@ -194,13 +213,14 @@ app.use('/api/admin/tokens', requireAuth, tokensRouter);
 /**
  * PUT/DELETE /api/overrides/:id
  * Field-level corrections layered on top of an imported record (issue #35).
- * Inherits the blanket requireAuth session gate above — any authenticated
- * caller may write, never anonymous. See src/api/routes/overrides.ts.
+ * Auth is enforced inside overridesRouter itself (requireAuthOrScope) — no
+ * middleware needed at this mount site. See src/api/routes/overrides.ts.
  */
 app.use('/api/overrides', overridesRouter);
 
 // Screening adjudications (false-positive/true-positive decisions, issue #22).
-// Inherits the blanket requireAuth session gate above.
+// Auth is enforced inside decisionsRouter itself (requireAuthOrScope) — no
+// middleware needed at this mount site. See src/api/routes/decisions.ts.
 app.use('/api/decisions', decisionsRouter);
 
 /**
@@ -283,26 +303,60 @@ app.get('/api/sanctions/:id', requireAuthOrScope('read'), async (req, res): Prom
  * Accepts either a logged-in session or a `write`-scoped API token (issue #36).
  */
 app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<any> => {
-  const { sources, csvPath } = req.body;
+  // mode/dryRun/force/importId drive the diff engine (issue #8).
+  const { sources, csvPath, mode, dryRun, force, importId } = req.body;
 
   // Validate sources if provided
   if (sources && !Array.isArray(sources)) {
     return res.status(400).json({ error: '"sources" must be an array.' });
   }
+  if (mode !== undefined && mode !== 'sync' && mode !== 'append') {
+    return res.status(400).json({ error: '"mode" must be "sync" or "append".' });
+  }
+  if (importId !== undefined && !IMPORT_ID_PATTERN.test(importId)) {
+    return res.status(400).json({ error: '"importId" must match ^[A-Za-z0-9_-]{1,128}$.' });
+  }
+
+  const importOptions = {
+    sources,
+    csvPath,
+    csvSource: 'PEP' as const,
+    csvSeparator: ';',
+    mode,
+    dryRun: !!dryRun,
+    force: !!force,
+    importId,
+  };
+
+  // Dry-run is a preview (issue #8): the caller needs the counts back to
+  // decide whether to apply for real, so this one path responds
+  // synchronously instead of the fire-and-forget 202 every other
+  // import/upload call uses.
+  if (dryRun) {
+    try {
+      const result = await runImport(importOptions);
+      return res.status(200).json(result);
+    } catch (error: any) {
+      console.error('Dry-run import failed:', error);
+      return res.status(500).json({ error: 'Internal server error', details: error.message });
+    }
+  }
 
   // Trigger import in the background
   console.log('Import triggered via REST API. Starting background run...');
-  
-  runImport({
-    sources: sources,
-    csvPath: csvPath,
-    csvSource: 'PEP',
-    csvSeparator: ';',
-  })
+
+  runImport(importOptions)
     .then((result) => {
       console.log('API Background Import finished:', result);
     })
     .catch((err) => {
+      // A refused delist guard (issue #8's DelistGuardError) surfaces only
+      // here today, same as any other background-import failure — the 202
+      // already went out by the time this rejects. Known gap, not solved by
+      // this change: making the sync-mode apply path synchronous (or adding
+      // a status-polling endpoint) is bigger than this diff engine's own
+      // scope and touches the same fire-and-forget pattern every endpoint
+      // in this file uses.
       console.error('API Background Import failed:', err);
     });
 
@@ -336,10 +390,26 @@ app.post('/api/upload', requireAuthOrScope('write'), uploadSingleFile('file'), a
   // generic-CSV uploads only) the fallback source tag — required and
   // validated against the known enum rather than letting it flow
   // unvalidated into Firestore, per CLAUDE.md §6.
-  const { source } = req.body;
+  const { source, mode, importId } = req.body;
   if (!ALLOWED_SOURCES.has(source)) {
     await fs.remove(req.file.path).catch((e) => console.error('Failed to cleanup temp file', e));
     return res.status(400).json({ error: `"source" must be one of ${[...ALLOWED_SOURCES].join(', ')}.` });
+  }
+
+  // Diff-engine controls (issue #8). Multipart fields always arrive as strings,
+  // unlike the JSON /api/import body, so the booleans are compared literally.
+  // Validated before anything is written, and the temp file is cleaned up on
+  // every rejection path rather than only the happy one.
+  const dryRun = req.body.dryRun === 'true';
+  const force = req.body.force === 'true';
+
+  if (mode !== undefined && mode !== 'sync' && mode !== 'append') {
+    await fs.remove(req.file.path).catch((e) => console.error('Failed to cleanup temp file', e));
+    return res.status(400).json({ error: '"mode" must be "sync" or "append".' });
+  }
+  if (importId !== undefined && !IMPORT_ID_PATTERN.test(importId)) {
+    await fs.remove(req.file.path).catch((e) => console.error('Failed to cleanup temp file', e));
+    return res.status(400).json({ error: '"importId" must match ^[A-Za-z0-9_-]{1,128}$.' });
   }
 
   const uploadedPath = req.file.path;
@@ -351,11 +421,21 @@ app.post('/api/upload', requireAuthOrScope('write'), uploadSingleFile('file'), a
       originalFilename: req.file.originalname,
       sourceHint: source as SanctionSource,
       uploadedBy,
+      importOptions: { mode, dryRun, force, importId },
     });
 
     switch (result.outcome) {
       case 'applied':
         return res.status(200).json({ status: 'applied', importId: result.importId, counts: result.counts });
+      case 'dry_run':
+        // Preview only — nothing was written and no imports doc was created,
+        // so the same file can still be uploaded for real afterwards.
+        return res.status(200).json({
+          status: 'dry_run',
+          importId: result.importId,
+          counts: result.counts,
+          diffs: result.diffs,
+        });
       case 'rejected':
         return res.status(409).json({
           error: `Identical file already imported as import #${result.duplicateOfImportId}.`,

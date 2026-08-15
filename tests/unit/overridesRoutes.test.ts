@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import cookieParser from 'cookie-parser';
 
 const {
   mockSaveOverride,
@@ -35,25 +36,28 @@ vi.mock('../../src/shared/firebase', () => ({
 }));
 
 import { overridesRouter } from '../../src/api/routes/overrides';
+import { createSession, _resetSessionStoreForTests } from '../../src/auth/session';
+import { SESSION_COOKIE_NAME } from '../../src/auth/middleware';
 
 const CALLER_EMAIL = 'analyst@example.com';
 
-// In production, req.userEmail is set by the blanket requireAuth gate that
-// runs before overridesRouter (src/api/index.ts). This standalone app
-// simulates that directly.
-function buildApp(callerEmail: string | undefined = CALLER_EMAIL) {
+// overridesRouter carries its own requireAuthOrScope('write') gate
+// internally — no test-only auth shim here, so a request only succeeds if
+// the router itself authenticates it, the same as production.
+function buildApp() {
   const app = express();
   app.use(express.json());
-  app.use((req, _res, next) => {
-    if (callerEmail) (req as any).userEmail = callerEmail;
-    next();
-  });
+  app.use(cookieParser());
   app.use('/api/overrides', overridesRouter);
   return app;
 }
 
+const authedCookie = (email: string = CALLER_EMAIL) => `${SESSION_COOKIE_NAME}=${createSession(email)}`;
+
 beforeEach(() => {
   vi.clearAllMocks();
+  _resetSessionStoreForTests();
+  vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'example.com');
   sanctionsDocExists = true;
   mockSaveOverride.mockImplementation(async (entityId: string, fields: any, meta: any) => ({
     entityId,
@@ -65,15 +69,37 @@ beforeEach(() => {
   mockDeleteOverride.mockResolvedValue(undefined);
 });
 
+describe('requires authentication', () => {
+  it('rejects PUT /:id without a session', async () => {
+    const res = await request(buildApp())
+      .put('/api/overrides/EU-1')
+      .send({ fields: { sanctionReason: 'Corrected' }, reason: 'Fix' });
+    expect(res.status).toBe(401);
+    expect(mockSaveOverride).not.toHaveBeenCalled();
+  });
+
+  it('rejects DELETE /:id without a session', async () => {
+    const res = await request(buildApp()).delete('/api/overrides/EU-1');
+    expect(res.status).toBe(401);
+    expect(mockDeleteOverride).not.toHaveBeenCalled();
+  });
+});
+
 describe('PUT /api/overrides/:id', () => {
   it('requires a non-empty "fields" object', async () => {
-    const res = await request(buildApp()).put('/api/overrides/EU-1').send({ reason: 'Fix' });
+    const res = await request(buildApp())
+      .put('/api/overrides/EU-1')
+      .set('Cookie', authedCookie())
+      .send({ reason: 'Fix' });
     expect(res.status).toBe(400);
     expect(mockSaveOverride).not.toHaveBeenCalled();
   });
 
   it('rejects an empty "fields" object', async () => {
-    const res = await request(buildApp()).put('/api/overrides/EU-1').send({ fields: {}, reason: 'Fix' });
+    const res = await request(buildApp())
+      .put('/api/overrides/EU-1')
+      .set('Cookie', authedCookie())
+      .send({ fields: {}, reason: 'Fix' });
     expect(res.status).toBe(400);
     expect(mockSaveOverride).not.toHaveBeenCalled();
   });
@@ -81,6 +107,7 @@ describe('PUT /api/overrides/:id', () => {
   it('requires a non-empty "reason"', async () => {
     const res = await request(buildApp())
       .put('/api/overrides/EU-1')
+      .set('Cookie', authedCookie())
       .send({ fields: { sanctionReason: 'Corrected' } });
     expect(res.status).toBe(400);
     expect(mockSaveOverride).not.toHaveBeenCalled();
@@ -89,6 +116,7 @@ describe('PUT /api/overrides/:id', () => {
   it('rejects a write attempt at an immutable key with a clear 400, not a silent no-op', async () => {
     const res = await request(buildApp())
       .put('/api/overrides/EU-1')
+      .set('Cookie', authedCookie())
       .send({ fields: { status: 'active', sanctionReason: 'Corrected' }, reason: 'Fix' });
 
     expect(res.status).toBe(400);
@@ -100,6 +128,7 @@ describe('PUT /api/overrides/:id', () => {
     sanctionsDocExists = false;
     const res = await request(buildApp())
       .put('/api/overrides/DOES-NOT-EXIST')
+      .set('Cookie', authedCookie())
       .send({ fields: { sanctionReason: 'Corrected' }, reason: 'Fix' });
 
     expect(res.status).toBe(404);
@@ -107,8 +136,9 @@ describe('PUT /api/overrides/:id', () => {
   });
 
   it('saves the override with overriddenBy from the authenticated caller, not the request body', async () => {
-    const res = await request(buildApp(CALLER_EMAIL))
+    const res = await request(buildApp())
       .put('/api/overrides/EU-1')
+      .set('Cookie', authedCookie())
       .send({ fields: { sanctionReason: 'Corrected' }, reason: 'Fix', overriddenBy: 'spoofed@evil.com' });
 
     expect(res.status).toBe(200);
@@ -123,20 +153,26 @@ describe('PUT /api/overrides/:id', () => {
   it('invalidates the search index after a successful save, so search never serves stale data', async () => {
     await request(buildApp())
       .put('/api/overrides/EU-1')
+      .set('Cookie', authedCookie())
       .send({ fields: { sanctionReason: 'Corrected' }, reason: 'Fix' });
 
     expect(mockInvalidateSearchIndex).toHaveBeenCalledTimes(1);
   });
 
   it('does not invalidate the index when the request was rejected before saving', async () => {
-    await request(buildApp()).put('/api/overrides/EU-1').send({ reason: 'Fix' }); // missing fields
+    await request(buildApp())
+      .put('/api/overrides/EU-1')
+      .set('Cookie', authedCookie())
+      .send({ reason: 'Fix' }); // missing fields
     expect(mockInvalidateSearchIndex).not.toHaveBeenCalled();
   });
 });
 
 describe('DELETE /api/overrides/:id', () => {
   it('deletes the override and invalidates the search index', async () => {
-    const res = await request(buildApp()).delete('/api/overrides/EU-1');
+    const res = await request(buildApp())
+      .delete('/api/overrides/EU-1')
+      .set('Cookie', authedCookie());
 
     expect(res.status).toBe(200);
     expect(mockDeleteOverride).toHaveBeenCalledWith('EU-1');

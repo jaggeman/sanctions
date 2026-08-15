@@ -14,7 +14,8 @@ import { TEST_LOGIN_EMAIL, isTestLoginEnabled, isTestLoginEmail } from './testAc
  * domain has to take effect on the next request, not after a redeploy.
  *
  * Fails closed. An unset or empty list grants nobody access, with one narrow
- * dev-only exception below — same shape as `admins.ts`.
+ * dev-only exception (the hardcoded test account, checked unconditionally —
+ * issue #92) — same shape as `admins.ts`.
  */
 
 function normalise(email: string): string {
@@ -33,14 +34,22 @@ export function isAllowedEmail(email: string | null | undefined): boolean {
   const candidate = normalise(email);
   if (!candidate) return false;
 
+  // issue #92: this bypass must be unconditional (still gated on
+  // non-production), not limited to when no domain list is configured.
+  // verify-otp already lets the test account log in regardless of
+  // ALLOWED_EMAIL_DOMAINS; if this check only fired for an empty list, a
+  // real deployment (which must set a real list per issue #33) would let
+  // the test account "log in", then 401 on its very next request.
+  if (isTestLoginEnabled() && isTestLoginEmail(candidate)) {
+    return true;
+  }
+
   const domains = allowedDomains();
 
   if (domains.length === 0) {
-    // Dev-only fallback so local work isn't blocked before
-    // ALLOWED_EMAIL_DOMAINS is set. Gated on the same non-production check as
-    // the test login account, and superseded the moment a real list is
-    // configured (mirrors admins.ts).
-    return isTestLoginEnabled() && isTestLoginEmail(candidate);
+    // Fails closed: no domain list configured and not the test account
+    // above means nobody, in or out of production.
+    return false;
   }
 
   const domain = candidate.split('@')[1];

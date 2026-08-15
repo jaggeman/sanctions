@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { saveDecision, listDecisionsForEntity } from '../../decisions';
+import { requireAuthOrScope } from '../middleware/requireAuthOrScope';
 
 export const decisionsRouter = Router();
 
@@ -9,9 +10,11 @@ export const decisionsRouter = Router();
  * adjudication for an entity+subject pair. `decidedBy` always comes from the
  * authenticated session, never the request body — a client-supplied
  * decidedBy would let anyone attribute an adjudication to a different
- * analyst (CLAUDE.md §6: never trust client-supplied identity).
+ * analyst (CLAUDE.md §6: never trust client-supplied identity). Requires
+ * write access — there is no blanket app.use('/api', requireAuth) gate
+ * (removed by issue #36); this router previously had no auth of its own.
  */
-decisionsRouter.post('/', async (req, res): Promise<any> => {
+decisionsRouter.post('/', requireAuthOrScope('write'), async (req, res): Promise<any> => {
   const { entityId, subjectId, verdict, notes } = req.body;
   const decidedBy = (req as any).userEmail;
 
@@ -26,8 +29,9 @@ decisionsRouter.post('/', async (req, res): Promise<any> => {
 /**
  * GET /api/decisions/:entityId
  * Lists every recorded adjudication for an entity, across all subjects.
+ * Requires read access (session or a read-scoped API token).
  */
-decisionsRouter.get('/:entityId', async (req, res): Promise<any> => {
+decisionsRouter.get('/:entityId', requireAuthOrScope('read'), async (req, res): Promise<any> => {
   try {
     const decisions = await listDecisionsForEntity(req.params.entityId);
     res.json(decisions);

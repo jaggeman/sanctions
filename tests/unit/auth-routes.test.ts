@@ -43,6 +43,14 @@ describe('POST /api/auth/request-otp', () => {
     expect(sendOtpEmail.mock.calls[0][1]).toMatch(/^\d{6}$/);
   });
 
+  it('issue #70: surfaces a rejected sendOtpEmail as a 500, not a silent success', async () => {
+    vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'example.com');
+    sendOtpEmail.mockRejectedValueOnce(new Error('SMTP server unavailable'));
+
+    const res = await request(api).post('/api/auth/request-otp').send({ email: 'user@example.com' });
+    expect(res.status).toBe(500);
+  });
+
   it('does not send a real email for the hardcoded test account', async () => {
     const res = await request(api).post('/api/auth/request-otp').send({ email: 'admin@sanctions.com' });
     expect(res.status).toBe(200);

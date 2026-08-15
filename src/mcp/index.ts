@@ -144,6 +144,56 @@ export async function handleSearchSanctions(args: any) {
 }
 
 /**
+ * Handles the get_sanction_details tool. Exported so it can be unit tested
+ * directly (issue #71), mirroring the handleSearchSanctions pattern.
+ */
+export async function handleGetSanctionDetails(args: any) {
+  const id = String(args?.id || '');
+  const doc = await db.collection('sanctions').doc(id).get();
+
+  if (!doc.exists) {
+    return {
+      content: [{ type: 'text', text: `Kunde inte hitta någon sanktionspost med ID: ${id}` }],
+      isError: true,
+    };
+  }
+
+  const data = doc.data();
+  return {
+    content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
+  };
+}
+
+/**
+ * Handles the run_database_import tool. Exported so it can be unit tested
+ * directly (issue #71), mirroring the handleSearchSanctions pattern.
+ */
+export async function handleRunDatabaseImport(args: any) {
+  const sources = args?.sources as ('EU' | 'UN' | 'US')[] | undefined;
+  const csvPath = args?.csvPath as string | undefined;
+
+  // Run import synchronously so we can return the result to the caller
+  const result = await runImport({
+    sources,
+    csvPath,
+  });
+
+  if (result.success) {
+    return {
+      content: [{
+        type: 'text',
+        text: `Import slutförd framgångsrikt!\nAntal poster importerade per källa:\n${JSON.stringify(result.importedCounts, null, 2)}`,
+      }],
+    };
+  } else {
+    return {
+      content: [{ type: 'text', text: `Import misslyckades: ${result.error}` }],
+      isError: true,
+    };
+  }
+}
+
+/**
  * Handle tool execution calls.
  */
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -155,45 +205,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     if (name === 'get_sanction_details') {
-      const id = String(args?.id || '');
-      const doc = await db.collection('sanctions').doc(id).get();
-
-      if (!doc.exists) {
-        return {
-          content: [{ type: 'text', text: `Kunde inte hitta någon sanktionspost med ID: ${id}` }],
-          isError: true,
-        };
-      }
-
-      const data = doc.data();
-      return {
-        content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
-      };
+      return await handleGetSanctionDetails(args);
     }
 
     if (name === 'run_database_import') {
-      const sources = args?.sources as ('EU' | 'UN' | 'US')[] | undefined;
-      const csvPath = args?.csvPath as string | undefined;
-
-      // Run import synchronously so we can return the result to the caller
-      const result = await runImport({
-        sources,
-        csvPath,
-      });
-
-      if (result.success) {
-        return {
-          content: [{
-            type: 'text',
-            text: `Import slutförd framgångsrikt!\nAntal poster importerade per källa:\n${JSON.stringify(result.importedCounts, null, 2)}`,
-          }],
-        };
-      } else {
-        return {
-          content: [{ type: 'text', text: `Import misslyckades: ${result.error}` }],
-          isError: true,
-        };
-      }
+      return await handleRunDatabaseImport(args);
     }
 
     throw new Error(`Okänt verktyg: ${name}`);
@@ -222,42 +238,52 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
 });
 
 /**
+ * Handles the sanctions://statistics resource read. Exported so it can be
+ * unit tested directly (issue #71), mirroring the handleSearchSanctions
+ * pattern.
+ */
+export async function handleReadStatistics() {
+  const uri = 'sanctions://statistics';
+  try {
+    const totalCount = (await db.collection('sanctions').count().get()).data().count;
+    const euCount = (await db.collection('sanctions').where('source', '==', 'EU').count().get()).data().count;
+    const unCount = (await db.collection('sanctions').where('source', '==', 'UN').count().get()).data().count;
+    const usCount = (await db.collection('sanctions').where('source', '==', 'US').count().get()).data().count;
+    const pepCount = (await db.collection('sanctions').where('source', '==', 'PEP').count().get()).data().count;
+
+    const statistics = {
+      totalRecords: totalCount,
+      breakdown: {
+        EU: euCount,
+        UN: unCount,
+        US_OFAC: usCount,
+        PEP: pepCount,
+      },
+      lastUpdated: new Date().toISOString(),
+    };
+
+    return {
+      contents: [
+        {
+          uri: uri,
+          mimeType: 'application/json',
+          text: JSON.stringify(statistics, null, 2),
+        },
+      ],
+    };
+  } catch (err: any) {
+    throw new Error(`Kunde inte läsa statistikresurs: ${err.message}`);
+  }
+}
+
+/**
  * Handle reading a resource (like statistics).
  */
 server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   const { uri } = request.params;
 
   if (uri === 'sanctions://statistics') {
-    try {
-      const totalCount = (await db.collection('sanctions').count().get()).data().count;
-      const euCount = (await db.collection('sanctions').where('source', '==', 'EU').count().get()).data().count;
-      const unCount = (await db.collection('sanctions').where('source', '==', 'UN').count().get()).data().count;
-      const usCount = (await db.collection('sanctions').where('source', '==', 'US').count().get()).data().count;
-      const pepCount = (await db.collection('sanctions').where('source', '==', 'PEP').count().get()).data().count;
-
-      const statistics = {
-        totalRecords: totalCount,
-        breakdown: {
-          EU: euCount,
-          UN: unCount,
-          US_OFAC: usCount,
-          PEP: pepCount,
-        },
-        lastUpdated: new Date().toISOString(),
-      };
-
-      return {
-        contents: [
-          {
-            uri: uri,
-            mimeType: 'application/json',
-            text: JSON.stringify(statistics, null, 2),
-          },
-        ],
-      };
-    } catch (err: any) {
-      throw new Error(`Kunde inte läsa statistikresurs: ${err.message}`);
-    }
+    return await handleReadStatistics();
   }
 
   throw new Error(`Okänd resurs: ${uri}`);

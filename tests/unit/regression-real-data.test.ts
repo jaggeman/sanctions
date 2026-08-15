@@ -93,7 +93,15 @@ describe('regression: known name-variant pairs against the real EU corpus', () =
 });
 
 describe('benchmark: full-corpus scan timing (issue #11 acceptance criterion)', () => {
-  it('records p50/p95 latency and peak heap over repeated full-corpus searches', () => {
+  // v8 coverage instrumentation adds real overhead to a hot loop like this
+  // one (observed roughly 3x the per-query latency), which both pushes
+  // runtime past the default testTimeout AND pushes p95 past its own
+  // threshold below — coverage overhead corrupts the very thing this test
+  // measures. The timeout is raised here as a courtesy for a plain
+  // `vitest run --coverage`, but the p95 assertion will still legitimately
+  // fail under instrumentation; `npm run test:coverage` (issue #72) excludes
+  // this file entirely rather than loosen the threshold to accommodate it.
+  it('records p50/p95 latency and peak heap over repeated full-corpus searches', { timeout: 60_000 }, () => {
     const queries = [
       'Qusay', 'Qousaye Saddam Hussein Al-Tikriti', 'Izzat Ibrahim al-Dury',
       'Abed Hamid Mahmud', 'Vladimir Putin', 'Mohammed Al Amin', 'Random Unrelated Name',

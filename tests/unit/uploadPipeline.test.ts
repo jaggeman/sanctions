@@ -64,8 +64,8 @@ describe('processUpload — happy path', () => {
     expect(hashFileStreaming).toHaveBeenCalledWith(tmpFile);
     expect(createPendingImport).toHaveBeenCalledWith(expect.objectContaining({
       sha256: 'abc123',
-      filename: 'people.csv',
-      storagePath: 'imports/abc123/people.csv',
+      filename: 'people.csv', // original name preserved for display
+      storagePath: 'imports/abc123/upload.csv', // storage key never uses the client-supplied name
       uploadedBy: 'user@example.com',
     }));
     expect(bucketFileSave).toHaveBeenCalled();
@@ -84,6 +84,42 @@ describe('processUpload — happy path', () => {
     expect(createPendingImport).toHaveBeenCalledWith(expect.objectContaining({ source: 'EU' }));
     expect(runImport).toHaveBeenCalledWith(expect.objectContaining({
       uploadedFile: expect.objectContaining({ source: 'EU' }),
+    }));
+  });
+});
+
+describe('processUpload — storage key never trusts the client-supplied filename (issue #94)', () => {
+  it('drops path separators and ".." from a malicious filename entirely', async () => {
+    await processUpload(baseOptions({ originalFilename: '../../other-import/evil.csv' }));
+
+    expect(createPendingImport).toHaveBeenCalledWith(expect.objectContaining({
+      // Original name still preserved for display/audit purposes...
+      filename: '../../other-import/evil.csv',
+      // ...but the storage key is derived, never the raw client string.
+      storagePath: 'imports/abc123/upload.csv',
+    }));
+  });
+
+  it('drops an unrecognized/oversized/control-character extension rather than smuggling it into the key', async () => {
+    await processUpload(baseOptions({ originalFilename: 'evil\x00\x0a.php\x00.csv' }));
+
+    const call = createPendingImport.mock.calls[0][0];
+    expect(call.storagePath).toMatch(/^imports\/abc123\/upload(\.[a-z0-9]{1,10})?$/);
+  });
+
+  it('preserves a normal, safe extension case-insensitively', async () => {
+    await processUpload(baseOptions({ originalFilename: 'People.XML' }));
+
+    expect(createPendingImport).toHaveBeenCalledWith(expect.objectContaining({
+      storagePath: 'imports/abc123/upload.xml',
+    }));
+  });
+
+  it('produces no extension at all when the filename has none', async () => {
+    await processUpload(baseOptions({ originalFilename: 'noextension' }));
+
+    expect(createPendingImport).toHaveBeenCalledWith(expect.objectContaining({
+      storagePath: 'imports/abc123/upload',
     }));
   });
 });
