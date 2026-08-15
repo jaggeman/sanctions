@@ -15,6 +15,7 @@ import { createOtp, verifyOtp } from '../auth/otpStore';
 import { sendOtpEmail } from '../auth/mailer';
 import { createSession, destroySession } from '../auth/session';
 import { requireAuth, SESSION_COOKIE_NAME } from '../auth/middleware';
+import { isAdminEmail } from '../auth/admins';
 import { TEST_LOGIN_EMAIL, TEST_LOGIN_CODE, isTestLoginEnabled, isTestLoginEmail } from '../auth/testAccount';
 import { requestLogger } from './middleware/requestLogger';
 import { errorLogger } from './middleware/errorLogger';
@@ -125,10 +126,13 @@ app.post('/api/auth/verify-otp', (req, res): any => {
 
 /**
  * GET /api/auth/session
- * Returns the currently logged-in email, or 401 if not authenticated.
+ * Returns the currently logged-in email plus admin status (isAdminEmail(),
+ * checked fresh from ADMIN_EMAILS on every call — see src/auth/admins.ts,
+ * issue #17), or 401 if not authenticated.
  */
 app.get('/api/auth/session', requireAuth, (req, res) => {
-  res.json({ email: (req as any).userEmail });
+  const email = (req as any).userEmail;
+  res.json({ email, isAdmin: isAdminEmail(email) });
 });
 
 /**

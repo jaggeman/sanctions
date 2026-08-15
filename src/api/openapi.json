@@ -220,7 +220,8 @@
     "/api/admin/tokens": {
       "post": {
         "summary": "Skapa en ny API-token",
-        "description": "Skapar en API-token med angivna scopes (read/write). Den fullständiga token-strängen returneras endast i detta svar och sparas aldrig i klartext.",
+        "description": "Skapar en API-token med angivna scopes (read/write). Den fullständiga token-strängen returneras endast i detta svar och sparas aldrig i klartext. Kräver en inloggad admin-session — admin-status kontrolleras på nytt vid varje anrop mot ADMIN_EMAILS (issue #17), inte cachad i sessionen.",
+        "security": [{ "cookieAuth": [] }],
         "requestBody": {
           "required": true,
           "content": {
@@ -262,12 +263,19 @@
           },
           "400": {
             "description": "Ogiltigt namn eller ogiltiga scopes"
+          },
+          "401": {
+            "description": "Ingen giltig session (ej inloggad)"
+          },
+          "403": {
+            "description": "Inloggad men inte admin (se ADMIN_EMAILS, issue #17)"
           }
         }
       },
       "get": {
         "summary": "Lista alla API-tokens",
-        "description": "Returnerar alla tokens (utan hemliga värden) inklusive scope, senast använd och status.",
+        "description": "Returnerar alla tokens (utan hemliga värden) inklusive scope, senast använd och status. Kräver en inloggad admin-session.",
+        "security": [{ "cookieAuth": [] }],
         "responses": {
           "200": {
             "description": "Lista över tokens",
@@ -279,6 +287,12 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Ingen giltig session (ej inloggad)"
+          },
+          "403": {
+            "description": "Inloggad men inte admin (se ADMIN_EMAILS, issue #17)"
           }
         }
       }
@@ -286,7 +300,8 @@
     "/api/admin/tokens/{id}/revoke": {
       "post": {
         "summary": "Återkalla en API-token",
-        "description": "Markerar en token som återkallad. Token raderas inte, för att bevara historik.",
+        "description": "Markerar en token som återkallad. Token raderas inte, för att bevara historik. Kräver en inloggad admin-session.",
+        "security": [{ "cookieAuth": [] }],
         "parameters": [
           {
             "name": "id",
@@ -303,6 +318,12 @@
                 "schema": { "$ref": "#/components/schemas/ApiToken" }
               }
             }
+          },
+          "401": {
+            "description": "Ingen giltig session (ej inloggad)"
+          },
+          "403": {
+            "description": "Inloggad men inte admin (se ADMIN_EMAILS, issue #17)"
           },
           "404": {
             "description": "Ingen token med detta ID hittades"
