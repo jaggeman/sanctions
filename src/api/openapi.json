@@ -443,6 +443,77 @@
           }
         }
       }
+    },
+    "/api/decisions": {
+      "post": {
+        "summary": "Registrera eller uppdatera en screening-adjudikation",
+        "description": "Skapar eller skriver över (upsert) den aktuella false-positive/true-positive-bedömningen för ett entity+subject-par. `decidedBy` sätts alltid från den inloggade sessionen, aldrig från request body. Att adjudikera på nytt (t.ex. en annan analytiker som är oense) skriver bara över tidigare bedömning för samma par — det är normalfallet, inte ett fel (issue #22).",
+        "security": [{ "cookieAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["entityId", "subjectId", "verdict"],
+                "properties": {
+                  "entityId": { "type": "string", "example": "EU-1234" },
+                  "subjectId": { "type": "string", "example": "customer-acme" },
+                  "verdict": { "type": "string", "enum": ["false_positive", "true_positive"] },
+                  "notes": { "type": "string", "example": "Confirmed match on passport number" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Bedömning sparad",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Decision" }
+              }
+            }
+          },
+          "400": {
+            "description": "Ogiltig entityId/subjectId/verdict, eller decidedBy saknas"
+          },
+          "401": {
+            "description": "Ingen giltig session (ej inloggad)"
+          }
+        }
+      }
+    },
+    "/api/decisions/{entityId}": {
+      "get": {
+        "summary": "Lista alla bedömningar för en entity",
+        "description": "Returnerar varje sparad bedömning för entityn, över alla subjects.",
+        "security": [{ "cookieAuth": [] }],
+        "parameters": [
+          {
+            "name": "entityId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista över bedömningar",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Decision" }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Ingen giltig session (ej inloggad)"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -475,6 +546,17 @@
           "lastUsedAt": { "type": "string", "format": "date-time", "nullable": true },
           "revoked": { "type": "boolean" },
           "revokedAt": { "type": "string", "format": "date-time", "nullable": true }
+        }
+      },
+      "Decision": {
+        "type": "object",
+        "properties": {
+          "entityId": { "type": "string", "example": "EU-1234" },
+          "subjectId": { "type": "string", "example": "customer-acme" },
+          "verdict": { "type": "string", "enum": ["false_positive", "true_positive"] },
+          "decidedBy": { "type": "string", "example": "analyst@example.com" },
+          "decidedAt": { "type": "string", "format": "date-time" },
+          "notes": { "type": "string", "nullable": true }
         }
       },
       "SanctionRecord": {

@@ -11,6 +11,7 @@ import { db } from '../shared/firebase';
 import { runImport } from '../importer';
 import { processUpload } from '../importer/uploadPipeline';
 import { tokensRouter } from './routes/tokens';
+import { decisionsRouter } from './routes/decisions';
 import { runSearch } from '../search';
 import { SanctionSource, SanctionRecord } from '../shared/types';
 import { applyOverride, getOverride } from '../overrides';
@@ -197,6 +198,10 @@ app.use('/api/admin/tokens', requireAuth, tokensRouter);
  * caller may write, never anonymous. See src/api/routes/overrides.ts.
  */
 app.use('/api/overrides', overridesRouter);
+
+// Screening adjudications (false-positive/true-positive decisions, issue #22).
+// Inherits the blanket requireAuth session gate above.
+app.use('/api/decisions', decisionsRouter);
 
 /**
  * GET /api/search
