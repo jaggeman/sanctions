@@ -6,11 +6,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/api': {
-        target: 'http://127.0.0.1:5001',
-        changeOrigin: true,
-        rewrite: (path) => `/sanctions-app-dev-01/us-central1/api${path}`,
-      },
+      '/api': 'http://localhost:3000',
     },
   },
 })

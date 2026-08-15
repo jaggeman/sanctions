@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import * as functions from 'firebase-functions';
 import * as path from 'path';
 import * as fs from 'fs-extra';
@@ -12,15 +13,99 @@ import { normalizeText } from '../importer/uploader';
 import { runImport } from '../importer';
 import { SanctionRecord } from '../shared/types';
 import { tokensRouter } from './routes/tokens';
+import { createOtp, verifyOtp } from '../auth/otpStore';
+import { sendOtpEmail } from '../auth/mailer';
+import { createSession, destroySession } from '../auth/session';
+import { requireAuth, SESSION_COOKIE_NAME } from '../auth/middleware';
+import { TEST_LOGIN_EMAIL, TEST_LOGIN_CODE, isTestLoginEnabled, isTestLoginEmail } from '../auth/testAccount';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 const upload = multer({ dest: os.tmpdir() });
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const SESSION_COOKIE_OPTIONS = {
+  httpOnly: true,
+  sameSite: 'lax' as const,
+  secure: process.env.NODE_ENV === 'production',
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+};
 
-// Enable CORS and JSON parsing
-app.use(cors());
+// Enable CORS and JSON parsing.
+// Cookie-based sessions mean credentialed CORS must not reflect an arbitrary origin —
+// only an explicitly configured frontend origin is allowed to send/receive the session cookie.
+app.use(cors({ origin: process.env.FRONTEND_ORIGIN || false, credentials: true }));
 app.use(express.json());
+app.use(cookieParser());
+
+/**
+ * POST /api/auth/request-otp
+ * Generates and emails a one-time login code.
+ */
+app.post('/api/auth/request-otp', async (req, res): Promise<any> => {
+  const { email } = req.body;
+
+  if (!email || typeof email !== 'string' || !EMAIL_PATTERN.test(email)) {
+    return res.status(400).json({ error: 'A valid "email" is required.' });
+  }
+
+  if (isTestLoginEnabled() && isTestLoginEmail(email)) {
+    console.log(`[auth] Test login code for ${TEST_LOGIN_EMAIL} is ${TEST_LOGIN_CODE}`);
+    return res.json({ ok: true });
+  }
+
+  try {
+    const code = createOtp(email);
+    await sendOtpEmail(email, code);
+    res.json({ ok: true });
+  } catch (error: any) {
+    console.error('Failed to send OTP email:', error);
+    res.status(500).json({ error: 'Failed to send login code. Please try again.' });
+  }
+});
+
+/**
+ * POST /api/auth/verify-otp
+ * Verifies a one-time code and starts a session.
+ */
+app.post('/api/auth/verify-otp', (req, res): any => {
+  const { email, code } = req.body;
+
+  if (!email || typeof email !== 'string' || !code || typeof code !== 'string') {
+    return res.status(400).json({ error: '"email" and "code" are required.' });
+  }
+
+  const isTestLogin = isTestLoginEnabled() && isTestLoginEmail(email) && code === TEST_LOGIN_CODE;
+
+  if (!isTestLogin && !verifyOtp(email, code)) {
+    return res.status(401).json({ error: 'Invalid or expired code.' });
+  }
+
+  const sessionId = createSession(email.trim().toLowerCase());
+  res.cookie(SESSION_COOKIE_NAME, sessionId, SESSION_COOKIE_OPTIONS);
+  res.json({ ok: true });
+});
+
+/**
+ * GET /api/auth/session
+ * Returns the currently logged-in email, or 401 if not authenticated.
+ */
+app.get('/api/auth/session', requireAuth, (req, res) => {
+  res.json({ email: (req as any).userEmail });
+});
+
+/**
+ * POST /api/auth/logout
+ */
+app.post('/api/auth/logout', (req, res) => {
+  const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
+  if (sessionId) destroySession(sessionId);
+  res.clearCookie(SESSION_COOKIE_NAME);
+  res.json({ ok: true });
+});
+
+// Every other /api route requires an authenticated session.
+app.use('/api', requireAuth);
 
 // Load OpenAPI Specification
 const openApiSpecPath = path.resolve(__dirname, 'openapi.json');
@@ -40,7 +125,9 @@ app.get('/openapi.json', (req, res) => {
 });
 
 // Admin: API token management (create / list / revoke)
-// NOTE: not yet gated by admin authentication — tracked in issue #17
+// Inherits the blanket requireAuth session gate above, so any logged-in user
+// can reach this today. It is NOT yet admin-role-specific — requireAdmin is
+// still a no-op placeholder. Tracked in issue #17.
 app.use('/api/admin/tokens', tokensRouter);
 
 /**
@@ -201,6 +288,13 @@ app.post('/api/upload', upload.single('file'), async (req, res): Promise<any> =>
     message: 'File received and import process started.',
   });
 });
+
+// When run directly (local dev via ts-node/node), also listen on PORT.
+// Under `firebase deploy`/emulators, this file is only ever required as a
+// module (never main), so this is skipped and `api` below is used instead.
+if (require.main === module) {
+  app.listen(PORT, () => console.log(`API listening on http://localhost:${PORT}`));
+}
 
 // Export Express App as a Firebase Cloud Function
 export const api = functions.https.onRequest(app);
