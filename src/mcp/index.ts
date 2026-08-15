@@ -104,7 +104,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
  */
 export async function handleSearchSanctions(args: any) {
   const queryStr = String(args?.query || '').trim();
-  if (!queryStr) {
+  // issue #37: this message promises "minst 2 tecken långt" (at least 2
+  // characters), but the code only rejected an empty string — a 1-character
+  // query slipped through and got fuzzy-matched anyway.
+  if (queryStr.length < 2) {
     return {
       content: [{ type: 'text', text: 'Sökordet måste anges och vara minst 2 tecken långt.' }],
     };
@@ -113,7 +116,9 @@ export async function handleSearchSanctions(args: any) {
   const { results, totalMatches, truncated } = await runSearch(queryStr, {
     source: args?.source ? String(args.source) : undefined,
     type: args?.type ? String(args.type) : undefined,
-    limit: args?.limit ? Number(args.limit) : undefined,
+    // issue #37: a truthy-ternary treats an explicit limit=0 the same as
+    // "not provided". Check presence explicitly so a real 0 survives.
+    limit: args?.limit !== undefined && args?.limit !== null ? Number(args.limit) : undefined,
   });
 
   if (results.length === 0) {

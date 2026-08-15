@@ -124,6 +124,16 @@ describe('GET /api/search', () => {
     expect(runSearch).toHaveBeenCalledWith('Vladimir', expect.objectContaining({ limit: 20 }));
   });
 
+  it('issue #37: honors an explicit limit=0 instead of silently falling back to the default', async () => {
+    await agent.get('/api/search').query({ q: 'Vladimir', limit: '0' });
+    expect(runSearch).toHaveBeenCalledWith('Vladimir', expect.objectContaining({ limit: 0 }));
+  });
+
+  it('falls back to the default limit of 20 when limit is omitted entirely', async () => {
+    await agent.get('/api/search').query({ q: 'Vladimir' });
+    expect(runSearch).toHaveBeenCalledWith('Vladimir', expect.objectContaining({ limit: 20 }));
+  });
+
   it('returns 500 with details when the search engine throws', async () => {
     runSearch.mockRejectedValue(new Error('boom'));
     const res = await agent.get('/api/search').query({ q: 'Vladimir' });

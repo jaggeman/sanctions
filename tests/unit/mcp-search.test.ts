@@ -37,6 +37,26 @@ describe('handleSearchSanctions — MCP search_sanctions tool', () => {
     expect(result.content[0].text).toMatch(/minst 2 tecken|query/i);
   });
 
+  it('issue #37: rejects a 1-character query, matching the tool\'s own stated "minst 2 tecken" contract', async () => {
+    const result = await handleSearchSanctions({ query: 'a' });
+    expect(runSearch).not.toHaveBeenCalled();
+    expect(result.content[0].text).toMatch(/minst 2 tecken/i);
+  });
+
+  it('issue #37: honors an explicit limit=0 instead of silently falling back to the default', async () => {
+    runSearch.mockResolvedValue({ results: [], totalMatches: 0, truncated: false });
+    await handleSearchSanctions({ query: 'Vladimir Putin', limit: 0 });
+
+    expect(runSearch).toHaveBeenCalledWith('Vladimir Putin', expect.objectContaining({ limit: 0 }));
+  });
+
+  it('passes limit: undefined through to runSearch (its own default) when limit is omitted entirely', async () => {
+    runSearch.mockResolvedValue({ results: [], totalMatches: 0, truncated: false });
+    await handleSearchSanctions({ query: 'Vladimir Putin' });
+
+    expect(runSearch).toHaveBeenCalledWith('Vladimir Putin', expect.objectContaining({ limit: undefined }));
+  });
+
   it('formats each hit with its score and matched alias', async () => {
     runSearch.mockResolvedValue({
       results: [
@@ -58,11 +78,11 @@ describe('handleSearchSanctions — MCP search_sanctions tool', () => {
 
   it('surfaces truncation instead of hiding it', async () => {
     runSearch.mockResolvedValue({
-      results: [{ id: 'PEP-1', primaryName: 'X', source: 'PEP', type: 'individual', aliases: [], score: 90, matchedAlias: 'X' }],
+      results: [{ id: 'PEP-1', primaryName: 'XY', source: 'PEP', type: 'individual', aliases: [], score: 90, matchedAlias: 'XY' }],
       totalMatches: 50,
       truncated: true,
     });
-    const result = await handleSearchSanctions({ query: 'X' });
+    const result = await handleSearchSanctions({ query: 'XY' });
     expect(result.content[0].text).toMatch(/50/);
   });
 });
