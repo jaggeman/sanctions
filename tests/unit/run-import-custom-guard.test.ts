@@ -83,6 +83,32 @@ vi.mock('../../src/importer/uploader', async () => {
   return { ...actual, uploadRecords: uploadRecordsMock };
 });
 
+// This test targets filterAutomatedBatch's integration into runImport, not
+// the diff engine's own Firestore-query logic (that's tests/unit/diff.test.ts
+// and the real-emulator tests/integration/diff.integration.test.ts) — the
+// fake `db` above only supports .collection()/.batch(), not the .where()
+// query runDiffForSource issues against real Firestore, so stub it with a
+// pass-through that just forwards whatever it's given (already filtered by
+// runImport before this is called) straight to uploadRecords.
+const runDiffForSource = vi.fn(async (source: string, records: SanctionRecord[]) => {
+  if (records.length > 0) {
+    const { uploadRecords } = await import('../../src/importer/uploader');
+    await uploadRecords(records);
+  }
+  return {
+    source,
+    counts: { parsed: records.length, added: records.length, updated: 0, unchanged: 0, delisted: 0, skipped: 0 },
+    recordsToWrite: records,
+    toDelistIds: [],
+    activeCount: 0,
+    guardTripped: false,
+  };
+});
+vi.mock('../../src/importer/diff', () => ({
+  runDiffForSource,
+  DEFAULT_IMPORT_MODE: 'append',
+}));
+
 const { runImport } = await import('../../src/importer');
 
 beforeEach(() => {

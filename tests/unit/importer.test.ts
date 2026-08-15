@@ -36,11 +36,18 @@ vi.mock('../../src/search', () => ({
   invalidateSearchIndex: vi.fn(),
 }));
 
-import { runImport } from '../../src/importer/index';
 import { parseEUListStreaming } from '../../src/importer/parsers/eu';
 import { parseUNList } from '../../src/importer/parsers/un';
 import { parseUSListStreaming } from '../../src/importer/parsers/us';
 import { filterAutomatedBatch } from '../../src/importer/uploader';
+
+// Dynamic import (not a static top-level one): src/importer/index.ts imports
+// ./diff, which is mocked above via a factory that references the
+// `runDiffForSource` const — vi.mock calls are hoisted above top-level
+// `const`s, so a *static* import here would load that module (and invoke the
+// factory) before the const is initialized. A dynamic import runs in
+// sequential file order instead, after the const above has already run.
+const { runImport } = await import('../../src/importer/index');
 
 function makeRecord(id: string, source: SanctionRecord['source'] = 'EU'): SanctionRecord {
   return {
