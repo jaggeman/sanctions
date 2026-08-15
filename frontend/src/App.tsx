@@ -1,11 +1,79 @@
-import { useState } from 'react';
-import './index.css';
+import React, { useState } from 'react';
+import {
+  ThemeProvider,
+  createTheme,
+  CssBaseline,
+  AppBar,
+  Toolbar,
+  Typography,
+  Container,
+  Box,
+  Tabs,
+  Tab,
+  Card,
+  CardContent,
+  TextField,
+  Button,
+  Chip,
+  Paper,
+  CircularProgress
+} from '@mui/material';
+import CloudUploadIcon from '@mui/icons-material/CloudUpload';
+import SearchIcon from '@mui/icons-material/Search';
+
+// Create a modern Dark Mode Material Design theme
+const darkTheme = createTheme({
+  palette: {
+    mode: 'dark',
+    primary: {
+      main: '#90caf9', // Modern blue accent
+    },
+    secondary: {
+      main: '#f48fb1',
+    },
+    background: {
+      default: '#0a1929', // Deep dark blue background
+      paper: '#001e3c',   // Slightly lighter blue for cards
+    },
+  },
+  typography: {
+    fontFamily: '"Inter", "Roboto", "Helvetica", "Arial", sans-serif',
+    h5: {
+      fontWeight: 600,
+    },
+  },
+  shape: {
+    borderRadius: 12,
+  },
+  components: {
+    MuiButton: {
+      styleOverrides: {
+        root: {
+          textTransform: 'none',
+          fontWeight: 600,
+        },
+      },
+    },
+    MuiCard: {
+      styleOverrides: {
+        root: {
+          backgroundImage: 'none',
+          boxShadow: '0 4px 20px 0 rgba(0,0,0,0.4)',
+        },
+      },
+    },
+  },
+});
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'search' | 'upload'>('search');
+  const [tabValue, setTabValue] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [results, setResults] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+
+  const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
+    setTabValue(newValue);
+  };
 
   const handleSearch = async () => {
     if (!searchQuery) return;
@@ -36,7 +104,7 @@ function App() {
         body: formData
       });
       if (res.ok) {
-        alert('File uploaded and import started!');
+        alert('File uploaded successfully! Import process has started.');
       } else {
         alert('Upload failed.');
       }
@@ -48,92 +116,135 @@ function App() {
   };
 
   return (
-    <div className="app-container">
-      <header className="header">
-        <h1>Sanctions Intelligence</h1>
-        <div style={{ display: 'flex', gap: '1rem' }}>
-          <button 
-            style={{ 
-              background: activeTab === 'search' ? 'var(--primary)' : 'var(--surface)',
-              color: activeTab === 'search' ? 'white' : 'var(--text-muted)',
-              border: '1px solid var(--border)'
-            }}
-            onClick={() => setActiveTab('search')}
-          >
-            Search
-          </button>
-          <button 
-            style={{ 
-              background: activeTab === 'upload' ? 'var(--primary)' : 'var(--surface)',
-              color: activeTab === 'upload' ? 'white' : 'var(--text-muted)',
-              border: '1px solid var(--border)'
-            }}
-            onClick={() => setActiveTab('upload')}
-          >
-            Upload Lists
-          </button>
-        </div>
-      </header>
+    <ThemeProvider theme={darkTheme}>
+      <CssBaseline />
+      <AppBar position="static" elevation={0} sx={{ background: 'transparent', borderBottom: 1, borderColor: 'divider' }}>
+        <Toolbar>
+          <Typography variant="h6" component="div" sx={{ flexGrow: 1, fontWeight: 'bold', color: 'primary.main' }}>
+            Sanctions Intelligence
+          </Typography>
+        </Toolbar>
+      </AppBar>
 
-      {activeTab === 'search' ? (
-        <div className="card">
-          <h2 style={{ marginBottom: '1rem' }}>Search Entities</h2>
-          <div style={{ display: 'flex', gap: '1rem' }}>
-            <input 
-              type="text" 
-              placeholder="Search by name, passport, or ID..." 
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-            />
-            <button onClick={handleSearch} disabled={isLoading}>
-              {isLoading ? 'Searching...' : 'Search'}
-            </button>
-          </div>
-          
-          <div className="results-grid">
-            {results.map((r, i) => (
-              <div key={i} className="card">
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
-                  <span className="tag">{r.source}</span>
-                  <span className="tag" style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444' }}>{r.type}</span>
-                </div>
-                <h3 style={{ marginBottom: '0.5rem' }}>{r.primaryName}</h3>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>
-                  Aliases: {r.aliases?.slice(0, 3).join(', ') || 'None'}
-                </p>
-                {r.birthDates && r.birthDates.length > 0 && (
-                  <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>
-                    DOB: {r.birthDates.join(', ')}
-                  </p>
-                )}
-              </div>
-            ))}
-            {results.length === 0 && !isLoading && (
-              <p style={{ color: 'var(--text-muted)', gridColumn: '1 / -1', marginTop: '1rem' }}>
-                No results. Enter a query and click Search.
-              </p>
-            )}
-          </div>
-        </div>
-      ) : (
-        <div className="card">
-          <h2 style={{ marginBottom: '1rem' }}>Import Sanctions List</h2>
-          <p style={{ color: 'var(--text-muted)', marginBottom: '2rem' }}>
-            Upload CSV or XML files to sync with the database.
-          </p>
-          
-          <label className="upload-area" style={{ display: 'block' }}>
-            <input type="file" style={{ display: 'none' }} onChange={handleUpload} accept=".csv,.xml" />
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginBottom: '1rem', color: 'var(--primary)' }}>
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
-            </svg>
-            <h3>{isLoading ? 'Uploading...' : 'Click to browse files'}</h3>
-            <p style={{ marginTop: '0.5rem', fontSize: '0.875rem' }}>Supported: CSV, XML</p>
-          </label>
-        </div>
-      )}
-    </div>
+      <Container maxWidth="lg" sx={{ mt: 4, mb: 8 }}>
+        <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 4 }}>
+          <Tabs value={tabValue} onChange={handleTabChange} aria-label="app tabs">
+            <Tab label="Search" />
+            <Tab label="Upload Lists" />
+          </Tabs>
+        </Box>
+
+        {tabValue === 0 && (
+          <Box>
+            <Card sx={{ mb: 4, p: 2 }}>
+              <CardContent>
+                <Typography variant="h5" gutterBottom>
+                  Search Entities
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
+                  <TextField
+                    fullWidth
+                    variant="outlined"
+                    placeholder="Search by name, passport, or ID..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                    disabled={isLoading}
+                  />
+                  <Button 
+                    variant="contained" 
+                    size="large" 
+                    startIcon={isLoading ? <CircularProgress size={20} color="inherit" /> : <SearchIcon />}
+                    onClick={handleSearch}
+                    disabled={isLoading}
+                  >
+                    Search
+                  </Button>
+                </Box>
+              </CardContent>
+            </Card>
+
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: '1fr 1fr 1fr' }, gap: 3 }}>
+              {results.map((r, i) => (
+                <Box key={i}>
+                  <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+                    <CardContent sx={{ flexGrow: 1 }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
+                        <Chip label={r.source} size="small" color="primary" variant="outlined" />
+                        <Chip label={r.type} size="small" color="error" variant="outlined" />
+                      </Box>
+                      <Typography variant="h6" component="h2" gutterBottom>
+                        {r.primaryName}
+                      </Typography>
+                      {r.aliases && r.aliases.length > 0 && (
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                          <strong>Aliases:</strong> {r.aliases.slice(0, 3).join(', ')}
+                          {r.aliases.length > 3 ? '...' : ''}
+                        </Typography>
+                      )}
+                      {r.birthDates && r.birthDates.length > 0 && (
+                        <Typography variant="body2" color="text.secondary">
+                          <strong>DOB:</strong> {r.birthDates.join(', ')}
+                        </Typography>
+                      )}
+                    </CardContent>
+                  </Card>
+                </Box>
+              ))}
+              {results.length === 0 && !isLoading && (
+                <Box sx={{ gridColumn: '1 / -1' }}>
+                  <Typography variant="body1" color="text.secondary" align="center" sx={{ mt: 4 }}>
+                    No results found. Enter a query to begin your search.
+                  </Typography>
+                </Box>
+              )}
+            </Box>
+          </Box>
+        )}
+
+        {tabValue === 1 && (
+          <Box>
+            <Card sx={{ p: 2 }}>
+              <CardContent>
+                <Typography variant="h5" gutterBottom>
+                  Import Sanctions List
+                </Typography>
+                <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
+                  Upload CSV or XML files to sync with the database. Processing happens in the background.
+                </Typography>
+                
+                <Paper 
+                  variant="outlined" 
+                  sx={{ 
+                    mt: 4, 
+                    p: 6, 
+                    textAlign: 'center', 
+                    cursor: 'pointer',
+                    borderStyle: 'dashed',
+                    borderColor: 'primary.main',
+                    backgroundColor: 'rgba(144, 202, 249, 0.04)',
+                    transition: 'all 0.2s',
+                    '&:hover': {
+                      backgroundColor: 'rgba(144, 202, 249, 0.08)'
+                    }
+                  }}
+                  component="label"
+                >
+                  <input type="file" hidden onChange={handleUpload} accept=".csv,.xml" />
+                  <CloudUploadIcon sx={{ fontSize: 60, color: 'primary.main', mb: 2 }} />
+                  <Typography variant="h6" gutterBottom>
+                    {isLoading ? 'Uploading...' : 'Click or Drag & Drop to upload files'}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Supported formats: CSV, XML
+                  </Typography>
+                </Paper>
+              </CardContent>
+            </Card>
+          </Box>
+        )}
+      </Container>
+    </ThemeProvider>
   );
 }
 
