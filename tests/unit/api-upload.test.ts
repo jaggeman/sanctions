@@ -158,4 +158,32 @@ describe('POST /api/upload', () => {
 
     expect(removeMock).toHaveBeenCalled();
   });
+
+  it('dryRun:"true" previews without writing, and leaves no imports doc behind', async () => {
+    // Response shape changed with #7's upload rewrite: the route reports
+    // processUpload's outcome, not runImport's raw result. 'dry_run' is
+    // deliberately distinct from 'applied' — a preview must not create an
+    // imports doc, or sha256 dedup would later reject the real upload of the
+    // same file as a duplicate of a preview that wrote nothing.
+    const { processUpload } = await import('../../src/importer/uploadPipeline');
+    (processUpload as any).mockResolvedValueOnce({
+      outcome: 'dry_run',
+      importId: 'abc123',
+      counts: { parsed: 1, uploaded: 0 },
+      diffs: [{ source: 'PEP', counts: { parsed: 1, added: 1, updated: 0, unchanged: 0, delisted: 0, skipped: 0 } }],
+    });
+
+    const res = await agent
+      .post('/api/upload')
+      .field('source', 'PEP')
+      .field('dryRun', 'true')
+      .attach('file', Buffer.from('id;name\n1;Test Person\n'), 'people.csv');
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('dry_run');
+    expect(res.body.diffs[0].counts.added).toBe(1);
+    expect(processUpload).toHaveBeenCalledWith(
+      expect.objectContaining({ importOptions: expect.objectContaining({ dryRun: true }) }),
+    );
+  });
 });

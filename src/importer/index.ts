@@ -5,7 +5,13 @@ import { parseEUListStreaming } from './parsers/eu';
 import { parseUNList } from './parsers/un';
 import { parseUSListStreaming } from './parsers/us';
 import { parseCSVList } from './parsers/csv';
-import { uploadRecords, filterAutomatedBatch } from './uploader';
+import {
+  startDiffSession,
+  DEFAULT_IMPORT_MODE,
+  ImportMode,
+  RunDiffOptions,
+  StreamedDiffResult,
+} from './diff';
 import { invalidateSearchIndex } from '../search';
 import { SanctionRecord, SanctionSource } from '../shared/types';
 
@@ -14,6 +20,14 @@ interface ImportOptions {
   csvPath?: string;
   csvSource?: 'PEP' | 'CUSTOM';
   csvSeparator?: string;
+  // Issue #8: reconcile against current state instead of blindly overwriting.
+  // Defaults to 'append' (never delists) — 'sync' must be opted into per
+  // call, since getting this wrong on a partial/CSV-style file would delist
+  // an entire source.
+  mode?: ImportMode;
+  dryRun?: boolean;
+  force?: boolean;
+  importId?: string;
   /**
    * issue #7: parse one specific, already-on-disk file (typically a user
    * upload whose format was already sniffed by formatDetection.ts) instead
@@ -27,19 +41,29 @@ interface ImportOptions {
   };
 }
 
-async function uploadFiltered(records: SanctionRecord[]): Promise<number> {
-  const uploadable = filterAutomatedBatch(records);
-  if (uploadable.length > 0) {
-    await uploadRecords(uploadable);
-  }
-  return uploadable.length;
+function diffOptionsFrom(options: ImportOptions): RunDiffOptions {
+  return {
+    // 'append' by default: 'sync' delists everything missing from the file, so
+    // it has to be opted into per call rather than inherited by accident.
+    mode: options.mode || DEFAULT_IMPORT_MODE,
+    dryRun: options.dryRun,
+    force: options.force,
+    importId: options.importId,
+  };
 }
 
 /** Handles ImportOptions.uploadedFile — see issue #7. */
 async function runUploadedFileImport(
   file: NonNullable<ImportOptions['uploadedFile']>,
-): Promise<{ success: boolean; importedCounts: Record<string, number>; error?: string }> {
+  options: ImportOptions,
+): Promise<{
+  success: boolean;
+  importedCounts: Record<string, number>;
+  diffs?: StreamedDiffResult[];
+  error?: string;
+}> {
   const importedCounts: Record<string, number> = {};
+  const session = await startDiffSession(file.source, diffOptionsFrom(options));
 
   try {
     let parsed = 0;
@@ -51,7 +75,7 @@ async function runUploadedFileImport(
         if (buffer.length === 0) return;
         const chunk = buffer;
         buffer = [];
-        uploaded += await uploadFiltered(chunk);
+        uploaded += await session.addChunk(chunk);
       };
       await parseEUListStreaming(file.path, async (record) => {
         parsed++;
@@ -62,7 +86,7 @@ async function runUploadedFileImport(
     } else if (file.format === 'un-xml') {
       const records = await parseUNList(file.path);
       parsed = records.length;
-      uploaded = await uploadFiltered(records);
+      uploaded = await session.addChunk(records);
     } else if (file.format === 'us-xml') {
       // Streamed for the same reason as EU: the real OFAC SDN export (~29 MB)
       // peaked at ~317 MB RSS under the full-DOM parse, over the deployed
@@ -74,7 +98,7 @@ async function runUploadedFileImport(
         if (buffer.length === 0) return;
         const chunk = buffer;
         buffer = [];
-        uploaded += await uploadFiltered(chunk);
+        uploaded += await session.addChunk(chunk);
       };
       await parseUSListStreaming(file.path, async (record) => {
         parsed++;
@@ -88,25 +112,38 @@ async function runUploadedFileImport(
         defaultSource: file.source as 'PEP' | 'CUSTOM',
       });
       parsed = records.length;
-      uploaded = await uploadFiltered(records);
+      uploaded = await session.addChunk(records);
     }
 
+    // Only now that the producer has completed cleanly is "absent from the
+    // file" a trustworthy signal, so this is where delisting is allowed to
+    // happen. A parse that threw skips it entirely via abort() below.
+    const diff = await session.finish();
     importedCounts[file.source] = parsed;
 
-    if (uploaded > 0) {
+    if (!options.dryRun && (uploaded > 0 || diff.counts.delisted > 0)) {
       invalidateSearchIndex();
-      return { success: true, importedCounts };
-    } else if (parsed > 0) {
+    }
+
+    if (parsed === 0) {
+      return { success: false, importedCounts, diffs: [diff], error: 'No records parsed' };
+    }
+    if (uploaded === 0 && diff.counts.delisted === 0 && diff.counts.skipped > 0) {
       return {
         success: false,
         importedCounts,
+        diffs: [diff],
         error: 'No uploadable records after filtering CUSTOM-sourced records',
       };
-    } else {
-      return { success: false, importedCounts, error: 'No records parsed' };
     }
+    return { success: true, importedCounts, diffs: [diff] };
   } catch (error: any) {
-    return { success: false, importedCounts, error: error.message };
+    return {
+      success: false,
+      importedCounts,
+      diffs: [session.abort()],
+      error: error.message,
+    };
   }
 }
 
@@ -137,14 +174,16 @@ export const US_UPLOAD_CHUNK_SIZE = 500;
 export async function runImport(options: ImportOptions = {}): Promise<{
   success: boolean;
   importedCounts: Record<string, number>;
+  diffs?: StreamedDiffResult[];
   error?: string;
 }> {
   if (options.uploadedFile) {
-    return runUploadedFileImport(options.uploadedFile);
+    return runUploadedFileImport(options.uploadedFile, options);
   }
 
   const sources = options.sources || ['EU', 'UN', 'US'];
   const importedCounts: Record<string, number> = {};
+  const diffs: StreamedDiffResult[] = [];
   let totalParsed = 0;
   let totalUploaded = 0;
 
@@ -157,6 +196,8 @@ export async function runImport(options: ImportOptions = {}): Promise<{
     // 1. Process EU. Streamed one entity at a time and uploaded in chunks —
     // never held as a single array of every EU record.
     if (sources.includes('EU')) {
+      const session = await startDiffSession('EU', diffOptionsFrom(options));
+      let parseSucceeded = false;
       let buffer: SanctionRecord[] = [];
       let parsed = 0;
       let uploaded = 0;
@@ -165,7 +206,7 @@ export async function runImport(options: ImportOptions = {}): Promise<{
         if (buffer.length === 0) return;
         const chunk = buffer;
         buffer = [];
-        uploaded += await uploadFiltered(chunk);
+        uploaded += await session.addChunk(chunk);
       };
 
       try {
@@ -178,12 +219,21 @@ export async function runImport(options: ImportOptions = {}): Promise<{
           }
         });
         await flush();
+        parseSucceeded = true;
       } catch (error: any) {
         // Report what actually made it to Firestore before the failure,
         // rather than silently claiming zero for records already persisted.
         await flush().catch(() => {});
+        // abort(), not finish(): a partial parse cannot tell "removed
+        // upstream" from "never reached", so nothing is delisted.
+        diffs.push(session.abort());
         console.error(`Error importing EU sanctions list: ${error.message}`);
       }
+
+      // finish() runs OUTSIDE the catch on purpose. A parse failure is
+      // tolerated per source, but a tripped delist guard must abort the whole
+      // import loudly rather than be swallowed as "error importing EU".
+      if (parseSucceeded) diffs.push(await session.finish());
 
       importedCounts.EU = parsed;
       totalParsed += parsed;
@@ -193,22 +243,29 @@ export async function runImport(options: ImportOptions = {}): Promise<{
     // 2. Process UN. Uploaded immediately after parsing, not held alongside
     // EU/US records.
     if (sources.includes('UN')) {
+      const session = await startDiffSession('UN', diffOptionsFrom(options));
+      let unParseSucceeded = false;
       try {
         const filePath = await downloadFile(SOURCE_URLS.UN, 'un_sanctions.xml');
         const records = await parseUNList(filePath);
         importedCounts.UN = records.length;
         totalParsed += records.length;
-        totalUploaded += await uploadFiltered(records);
+        totalUploaded += await session.addChunk(records);
+        unParseSucceeded = true;
       } catch (error: any) {
+        diffs.push(session.abort());
         console.error(`Error importing UN sanctions list: ${error.message}`);
         importedCounts.UN = 0;
       }
+      if (unParseSucceeded) diffs.push(await session.finish());
     }
 
     // 3. Process US (OFAC SDN). Streamed and chunk-uploaded like EU (issue #31)
     // — the real SDN export was measured to exceed the deployed function's
     // memory budget under the old full-DOM parse (see parsers/us.ts).
     if (sources.includes('US')) {
+      const session = await startDiffSession('US', diffOptionsFrom(options));
+      let usParseSucceeded = false;
       let buffer: SanctionRecord[] = [];
       let parsed = 0;
       let uploaded = 0;
@@ -217,7 +274,7 @@ export async function runImport(options: ImportOptions = {}): Promise<{
         if (buffer.length === 0) return;
         const chunk = buffer;
         buffer = [];
-        uploaded += await uploadFiltered(chunk);
+        uploaded += await session.addChunk(chunk);
       };
 
       try {
@@ -230,10 +287,13 @@ export async function runImport(options: ImportOptions = {}): Promise<{
           }
         });
         await flush();
+        usParseSucceeded = true;
       } catch (error: any) {
         await flush().catch(() => {});
+        diffs.push(session.abort());
         console.error(`Error importing US sanctions list: ${error.message}`);
       }
+      if (usParseSucceeded) diffs.push(await session.finish());
 
       importedCounts.US = parsed;
       totalParsed += parsed;
@@ -247,13 +307,15 @@ export async function runImport(options: ImportOptions = {}): Promise<{
         if (await fs.pathExists(absoluteCsvPath)) {
           const csvSource = options.csvSource || 'PEP';
           const separator = options.csvSeparator || ';';
+          const session = await startDiffSession(csvSource, diffOptionsFrom(options));
           const records = await parseCSVList(absoluteCsvPath, {
             separator,
             defaultSource: csvSource,
           });
           importedCounts[csvSource] = records.length;
           totalParsed += records.length;
-          totalUploaded += await uploadFiltered(records);
+          totalUploaded += await session.addChunk(records);
+          diffs.push(await session.finish());
         } else {
           console.error(`CSV file not found at path: ${absoluteCsvPath}`);
         }
@@ -263,13 +325,27 @@ export async function runImport(options: ImportOptions = {}): Promise<{
     }
 
     // 5. Report
-    if (totalUploaded > 0) {
+    if (!options.dryRun && totalUploaded > 0) {
       invalidateSearchIndex(); // next search rebuilds the in-memory index with the new data
-      console.log(`Successfully processed and uploaded total of ${totalUploaded} records.`);
-      return { success: true, importedCounts };
-    } else if (totalParsed > 0) {
-      console.warn('All parsed records were CUSTOM-sourced and were dropped from this automated import — see filterAutomatedBatch.');
-      return { success: false, importedCounts, error: 'No uploadable records after filtering CUSTOM-sourced records' };
+    }
+
+    if (totalParsed > 0) {
+      const delisted = diffs.reduce((n, d) => n + d.counts.delisted, 0);
+      const skipped = diffs.reduce((n, d) => n + d.counts.skipped, 0);
+      console.log(
+        `Import finished: ${totalParsed} parsed, ${totalUploaded} written, ` +
+        `${delisted} delisted, ${skipped} skipped across ${diffs.length} source(s).`,
+      );
+      if (totalUploaded === 0 && delisted === 0 && skipped > 0) {
+        console.warn('Every parsed record was skipped — see the CUSTOM guard in startDiffSession.');
+        return {
+          success: false,
+          importedCounts,
+          diffs,
+          error: 'No uploadable records after filtering CUSTOM-sourced records',
+        };
+      }
+      return { success: true, importedCounts, diffs };
     } else {
       console.warn('No records were parsed or imported.');
       return { success: false, importedCounts, error: 'No records parsed' };
