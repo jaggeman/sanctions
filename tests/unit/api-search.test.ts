@@ -187,6 +187,22 @@ describe('GET /api/sanctions/:id', () => {
     expect(res.body.sanctionReason).toBe('Corrected reason');
     expect(res.body.overriddenFields).toEqual(['sanctionReason']);
   });
+
+  it('rejects an id containing a URL-encoded slash before it ever reaches Firestore', async () => {
+    // %2F decodes to "/" within a single path segment — the real attack this
+    // guards against: a literal "/" in the raw URL would just 404 via normal
+    // Express routing, but an encoded one reaches the :id param intact.
+    const res = await agent.get('/api/sanctions/EU-1%2F..%2Fadmins%2Fattacker');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/invalid/i);
+    expect(fakeDb.collection).not.toHaveBeenCalled();
+  });
+
+  it('rejects an id with other structural characters (400, not a 500 from Firestore)', async () => {
+    const res = await agent.get('/api/sanctions/EU@evil.com');
+    expect(res.status).toBe(400);
+    expect(fakeDb.collection).not.toHaveBeenCalled();
+  });
 });
 
 describe('POST /api/import', () => {

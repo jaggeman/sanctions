@@ -1,6 +1,13 @@
 import { db } from '../shared/firebase';
 import { SanctionRecord } from '../shared/types';
 import { generateSearchTokens } from '../importer/uploader';
+import { isValidEntityId } from '../shared/entityId';
+
+function assertValidId(id: string): void {
+  if (!isValidEntityId(id)) {
+    throw new Error(`Invalid id "${id}" — must contain only letters, numbers, hyphens, and underscores.`);
+  }
+}
 
 export interface CustomRecordInput {
   id: string;
@@ -27,6 +34,7 @@ const COLLECTION = 'sanctions';
  * (see src/importer/index.ts), so this is the only path that may create one.
  */
 export async function createCustomRecord(input: CustomRecordInput): Promise<SanctionRecord> {
+  assertValidId(input.id);
   const docRef = db.collection(COLLECTION).doc(input.id);
   const existing = await docRef.get();
   if (existing.exists) {
@@ -52,6 +60,7 @@ export async function updateCustomRecord(
   id: string,
   patch: Partial<CustomRecordInput>,
 ): Promise<SanctionRecord> {
+  assertValidId(id);
   const docRef = db.collection(COLLECTION).doc(id);
   const existing = await docRef.get();
   if (!existing.exists) {
@@ -85,6 +94,7 @@ export async function updateCustomRecord(
 }
 
 export async function deleteCustomRecord(id: string, options: { confirm: boolean }): Promise<void> {
+  assertValidId(id);
   if (!options?.confirm) {
     throw new Error('Deleting a custom record requires explicit confirm: true.');
   }
@@ -104,6 +114,7 @@ export async function deleteCustomRecord(id: string, options: { confirm: boolean
 }
 
 export async function getCustomRecord(id: string): Promise<SanctionRecord | null> {
+  assertValidId(id);
   const doc = await db.collection(COLLECTION).doc(id).get();
   if (!doc.exists) return null;
   return doc.data() as SanctionRecord;

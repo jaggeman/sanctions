@@ -190,6 +190,15 @@ describe('POST /api/admin/tokens/:id/revoke', () => {
     expect(mockRevokeApiToken).toHaveBeenCalledWith('tok-1');
   });
 
+  it('rejects an id containing a URL-encoded slash before calling revokeApiToken', async () => {
+    const res = await request(buildApp())
+      .post('/api/admin/tokens/tok-1%2F..%2Fadmins%2Fattacker/revoke')
+      .set('Cookie', adminCookie());
+
+    expect(res.status).toBe(400);
+    expect(mockRevokeApiToken).not.toHaveBeenCalled();
+  });
+
   it('returns 500 with details when revokeApiToken throws', async () => {
     mockRevokeApiToken.mockRejectedValueOnce(new Error('boom'));
 

@@ -179,3 +179,24 @@ describe('DELETE /api/overrides/:id', () => {
     expect(mockInvalidateSearchIndex).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('id validation on /api/overrides/:id', () => {
+  it('rejects a PUT with a URL-encoded slash in the id before touching Firestore or saveOverride', async () => {
+    const res = await request(buildApp())
+      .put('/api/overrides/EU-1%2F..%2Fadmins%2Fattacker')
+      .set('Cookie', authedCookie())
+      .send({ fields: { sanctionReason: 'Corrected' }, reason: 'Fix' });
+
+    expect(res.status).toBe(400);
+    expect(mockSaveOverride).not.toHaveBeenCalled();
+    expect(mockInvalidateSearchIndex).not.toHaveBeenCalled();
+  });
+
+  it('rejects a DELETE with an invalid id before calling deleteOverride', async () => {
+    const res = await request(buildApp())
+      .delete('/api/overrides/EU%401')
+      .set('Cookie', authedCookie());
+    expect(res.status).toBe(400);
+    expect(mockDeleteOverride).not.toHaveBeenCalled();
+  });
+});
