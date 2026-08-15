@@ -12,6 +12,10 @@ The production web app is deployed and accessible at:
 - Firebase CLI (`npm install -g firebase-tools`)
 - Git
 
+## Multi-Agent Workflow
+
+This project follows a strict multi-agent and developer coordination workflow. Please read [GEMINI.md](./GEMINI.md) or [CLAUDE.md](./CLAUDE.md) for testing policies, coordination via claim files, PR conventions, and secure coding practices before contributing.
+
 ## Setup Instructions
 
 ### 1. Clone the repository
