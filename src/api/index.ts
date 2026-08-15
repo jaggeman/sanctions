@@ -9,6 +9,7 @@ import * as os from 'os';
 import multer from 'multer';
 import * as swaggerUi from 'swagger-ui-express';
 import { db } from '../shared/firebase';
+import { enqueueImportTask } from '../importer/taskQueue';
 import { runImport } from '../importer';
 import { processUpload } from '../importer/uploadPipeline';
 import { tokensRouter } from './routes/tokens';
@@ -330,7 +331,15 @@ app.get('/api/sanctions/:id', requireAuthOrScope('read'), async (req, res): Prom
 
 /**
  * POST /api/import
- * Trigger background import process.
+ * Queue a full import (issue #43). Handed off to `runImportTask`, a Cloud
+ * Tasks-dispatched function with its own instance/timeout budget, instead of
+ * running in-process here: `api` is pinned to maxInstances: 1 (issue #16),
+ * so a multi-minute import awaited in this same function would freeze
+ * login/search for everyone, and a bare fire-and-forget call is not
+ * guaranteed to run to completion if this instance freezes/recycles right
+ * after the response is sent. Cloud Tasks durably persists and retries the
+ * job independent of this request's own fate, so the 202 below is now
+ * actually true rather than merely optimistic.
  *
  * Accepts either a logged-in session or a `write`-scoped API token (issue #36).
  */
@@ -375,28 +384,21 @@ app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<a
     }
   }
 
-  // Trigger import in the background
-  console.log('Import triggered via REST API. Starting background run...');
+  try {
+    // importOptions already carries mode/dryRun/force/importId — building a
+    // fresh object here (as an earlier version of this route did) silently
+    // drops them before they reach the worker, defeating the diff engine's
+    // sync-mode guard and the delist-guard force override for anyone using
+    // the async path instead of dryRun.
+    await enqueueImportTask(importOptions);
+  } catch (error: any) {
+    console.error('Failed to queue import task:', error);
+    return res.status(500).json({ error: 'Failed to start import', details: error.message });
+  }
 
-  runImport(importOptions)
-    .then((result) => {
-      console.log('API Background Import finished:', result);
-    })
-    .catch((err) => {
-      // A refused delist guard (issue #8's DelistGuardError) surfaces only
-      // here today, same as any other background-import failure — the 202
-      // already went out by the time this rejects. Known gap, not solved by
-      // this change: making the sync-mode apply path synchronous (or adding
-      // a status-polling endpoint) is bigger than this diff engine's own
-      // scope and touches the same fire-and-forget pattern every endpoint
-      // in this file uses.
-      console.error('API Background Import failed:', err);
-    });
-
-  // Accept request and return immediately (202 Accepted)
   res.status(202).json({
     status: 'import_started',
-    message: 'The import process has been started in the background. Check server logs for progress.',
+    message: 'The import has been queued and will run independently of this request.',
   });
 });
 
@@ -515,7 +517,8 @@ if (require.main === module) {
 // that storage moves to Firestore or another shared store.
 export const api = functions.https.onRequest({ maxInstances: 1 }, app);
 
-// Re-exported so the scheduled Cloud Function is picked up: `dist/api/index.js`
-// (package.json's `main`) is the sole file Firebase Functions discovery walks
-// at deploy time (issue #97).
-export { scheduledSourceFetch };
+// Both re-exported so their deployable Cloud Functions are discovered:
+// `dist/api/index.js` (package.json's `main`) is the sole file Firebase
+// Functions discovery walks at deploy time.
+export { runImportTask } from '../importer/importTask'; // issue #43
+export { scheduledSourceFetch }; // issue #97
