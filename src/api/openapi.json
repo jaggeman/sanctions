@@ -65,6 +65,28 @@
               "type": "boolean",
               "default": false
             }
+          },
+          {
+            "name": "threshold",
+            "in": "query",
+            "description": "Lägsta matchningspoäng (0-100) för att en träff ska tas med. Standard 65.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100,
+              "default": 65
+            }
+          },
+          {
+            "name": "dob",
+            "in": "query",
+            "description": "Födelsedatum (helt eller delvis, t.ex. ett årtal) som boostar — men inte krävs av — poster vars datesOfBirth innehåller värdet. Inte ett hårt filter: en post utan matchande datum exkluderas aldrig enbart av detta.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "1952-10-07"
+            }
           }
         ],
         "responses": {
@@ -73,10 +95,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/SanctionRecord"
-                  }
+                  "$ref": "#/components/schemas/SearchResponse"
                 }
               }
             }
@@ -618,6 +637,52 @@
             "description": "true if delisting would exceed 20% of the source's active records without force:true"
           }
         }
+      },
+      "SearchResponse": {
+        "type": "object",
+        "description": "Faktiskt svar från GET /api/search (src/api/index.ts) — inte en bar array, till skillnad från hur det tidigare stod i denna spec.",
+        "required": ["results", "totalMatches", "truncated"],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ScoredResult" }
+          },
+          "totalMatches": {
+            "type": "integer",
+            "description": "Antal träffar innan 'limit' tillämpades."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "true om totalMatches är fler än vad 'results' innehåller, dvs fler träffar finns än vad som returnerades."
+          }
+        }
+      },
+      "ScoredResult": {
+        "description": "En sanktionspost så som den returneras av GET /api/search, med matchningsinformation utöver den lagrade posten.",
+        "allOf": [
+          { "$ref": "#/components/schemas/SanctionRecord" },
+          {
+            "type": "object",
+            "required": ["score", "matchedAlias", "overriddenFields"],
+            "properties": {
+              "score": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Matchningspoäng för denna sökning (fuzzy namnmatchning, eller 100 vid exakt pass-/ID-träff)."
+              },
+              "matchedAlias": {
+                "type": "string",
+                "description": "Vilket namn (primaryName eller alias) som gav den högsta poängen."
+              },
+              "overriddenFields": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Fältnamn som lokalt korrigerats via /api/overrides och sammanslagits in i denna post."
+              }
+            }
+          }
+        ]
       },
       "SanctionRecord": {
         "type": "object",

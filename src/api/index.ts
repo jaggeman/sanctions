@@ -241,7 +241,7 @@ app.use('/api/decisions', decisionsRouter);
  * — this is the exact route external, session-less integrations need.
  */
 app.get('/api/search', requireAuthOrScope('read'), async (req, res): Promise<any> => {
-  const { q, source, type, limit, threshold, includeDelisted } = req.query;
+  const { q, source, type, limit, threshold, includeDelisted, dob } = req.query;
 
   if (!q || typeof q !== 'string') {
     return res.status(400).json({ error: 'Query parameter "q" is required.' });
@@ -262,6 +262,9 @@ app.get('/api/search', requireAuthOrScope('read'), async (req, res): Promise<any
       // opts in. Filtered inside runSearch rather than here, so a delisted record
       // never enters the matcher and cannot surface as a scored hit.
       includeDelisted: includeDelisted === 'true',
+      // Booster, not a hard filter (src/search/index.ts) — was already built
+      // into runSearch/matcher but never reachable from this route.
+      dob: typeof dob === 'string' ? dob : undefined,
     });
 
     res.json({ results, totalMatches, truncated });
