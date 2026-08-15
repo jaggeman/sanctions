@@ -25,6 +25,7 @@ import { isAllowedEmail } from '../auth/emailAllowlist';
 import { TEST_LOGIN_EMAIL, TEST_LOGIN_CODE, isTestLoginEnabled, isTestLoginEmail } from '../auth/testAccount';
 import { requestLogger } from './middleware/requestLogger';
 import { errorLogger } from './middleware/errorLogger';
+import { scheduledSourceFetch } from '../scheduled';
 import { requireAuthOrScope } from './middleware/requireAuthOrScope';
 
 const app = express();
@@ -464,3 +465,8 @@ if (require.main === module) {
 // instance B would fail. This is the documented interim mitigation until
 // that storage moves to Firestore or another shared store.
 export const api = functions.https.onRequest({ maxInstances: 1 }, app);
+
+// Re-exported so the scheduled Cloud Function is picked up: `dist/api/index.js`
+// (package.json's `main`) is the sole file Firebase Functions discovery walks
+// at deploy time (issue #97).
+export { scheduledSourceFetch };
