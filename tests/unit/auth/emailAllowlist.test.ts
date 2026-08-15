@@ -47,8 +47,24 @@ describe('isAllowedEmail — the domain allow-list', () => {
     expect(isAllowedEmail('  b@PARTNER.ORG  ')).toBe(true);
   });
 
-  it('once ALLOWED_EMAIL_DOMAINS is set, the dev test account is no longer implicitly allowed', () => {
+  it('keeps admitting the dev test account once ALLOWED_EMAIL_DOMAINS is set, outside production (issue #92)', () => {
+    // verify-otp already lets the test account log in unconditionally
+    // outside production (src/auth/testAccount.ts). Before this fix,
+    // isAllowedEmail only granted the same bypass when no domain list was
+    // configured at all — so a real deployment (which must set
+    // ALLOWED_EMAIL_DOMAINS per issue #33) let the test account "log in",
+    // then 401'd it on the very next request. The bypass must be
+    // unconditional (still gated on non-production), not conditioned on
+    // whether a domain list happens to be configured.
     process.env.NODE_ENV = 'development';
+    process.env.ALLOWED_EMAIL_DOMAINS = 'corp.com';
+    expect(isAllowedEmail(TEST_LOGIN_EMAIL)).toBe(true);
+    // A real-domain address not on the list is still correctly rejected.
+    expect(isAllowedEmail('someone@not-corp.com')).toBe(false);
+  });
+
+  it('still rejects the dev test account in production even with a domain list configured', () => {
+    process.env.NODE_ENV = 'production';
     process.env.ALLOWED_EMAIL_DOMAINS = 'corp.com';
     expect(isAllowedEmail(TEST_LOGIN_EMAIL)).toBe(false);
   });
