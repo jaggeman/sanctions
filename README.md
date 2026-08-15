@@ -89,19 +89,38 @@ npm run import
 npm run cli -- --help
 ```
 
-## Deployment
+## 🚀 Hur man deployar (Laddar upp till produktion)
 
-To deploy the entire solution to Firebase (Firestore Rules, Cloud Functions, and Hosting for the React app):
+För att ladda upp dina ändringar så att de syns live på webben följer du dessa exakta steg. 
 
-1. **Important:** Your Firebase project *must* be on the Blaze (Pay-as-you-go) plan to deploy Cloud Functions.
-2. Build the frontend and backend:
-   ```bash
-   npm run build
-   cd frontend
-   npm run build
-   cd ..
-   ```
-3. Deploy to Firebase:
-   ```bash
-   firebase deploy
-   ```
+**Viktigt innan du börjar:**
+Se till att ditt Firebase-projekt (`sanctions-app-dev-01`) är på **Blaze-planen (Pay-as-you-go)** i Firebase Console. Utan detta kan Google inte ladda upp din backend-kod (Cloud Functions).
+
+### Steg 1: Bygg backend (API & Databas)
+Först måste vi kompilera TypeScript-koden för vår backend.
+```bash
+# Ställ dig i huvudmappen (roten av projektet)
+npm run build
+```
+
+### Steg 2: Bygg frontend (Webbappen)
+Sedan måste vi paketera vår React/Vite-app så att den är redo för webben.
+```bash
+# Gå in i frontend-mappen
+cd frontend
+
+# Kör byggskriptet
+npm run build
+
+# Gå tillbaka till huvudmappen när det är klart
+cd ..
+```
+
+### Steg 3: Skicka upp allting till Firebase
+Nu när all kod är bygd laddar vi upp databasreglerna, backend-API:et och frontend-filerna på en och samma gång med Firebase CLI.
+```bash
+# Ladda upp till projektet
+firebase deploy --project sanctions-app-dev-01
+```
+
+När terminalen är färdig (tar vanligtvis 1-2 minuter) kommer den spotta ut din Hosting URL. Appen är nu live! 🎉
