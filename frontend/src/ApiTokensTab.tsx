@@ -29,6 +29,8 @@ import {
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DeleteIcon from '@mui/icons-material/DeleteOutlined';
 
+type AccessState = 'checking' | 'admin' | 'denied';
+
 interface ApiToken {
   id: string;
   name: string;
@@ -46,6 +48,7 @@ function formatDate(value: string | null): string {
 }
 
 export default function ApiTokensTab() {
+  const [accessState, setAccessState] = useState<AccessState>('checking');
   const [tokens, setTokens] = useState<ApiToken[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -76,8 +79,25 @@ export default function ApiTokensTab() {
   }, []);
 
   useEffect(() => {
-    loadTokens();
-  }, [loadTokens]);
+    (async () => {
+      try {
+        const res = await fetch('/api/auth/session');
+        if (!res.ok) {
+          setAccessState('denied');
+          return;
+        }
+        const data = await res.json();
+        setAccessState(data.isAdmin ? 'admin' : 'denied');
+      } catch (err) {
+        console.error('Failed to check admin status', err);
+        setAccessState('denied');
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (accessState === 'admin') loadTokens();
+  }, [accessState, loadTokens]);
 
   const handleCreate = async () => {
     if (!name.trim()) return;
@@ -134,6 +154,22 @@ export default function ApiTokensTab() {
       console.error('Clipboard copy failed', err);
     }
   };
+
+  if (accessState === 'checking') {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  if (accessState === 'denied') {
+    return (
+      <Alert severity="warning" sx={{ mt: 2 }}>
+        API token management is restricted to admins. Ask an existing admin to grant you access if you believe this is a mistake.
+      </Alert>
+    );
+  }
 
   return (
     <Box>

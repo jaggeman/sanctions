@@ -114,6 +114,35 @@ describe('GET /api/auth/session', () => {
     expect(res.status).toBe(200);
     expect(res.body.email).toBe('admin@sanctions.com');
   });
+
+  it('reports isAdmin: true for the dev test account (admins.ts falls back to it when ADMIN_EMAILS is unset)', async () => {
+    const agent = request.agent(api);
+    await agent.post('/api/auth/verify-otp').send({ email: 'admin@sanctions.com', code: '123456' });
+    const res = await agent.get('/api/auth/session');
+    expect(res.body.isAdmin).toBe(true);
+  });
+
+  it('reports isAdmin: false for a regular logged-in user not on the ADMIN_EMAILS allow-list', async () => {
+    vi.stubEnv('ADMIN_EMAILS', 'someone-else@example.com');
+    await request(api).post('/api/auth/request-otp').send({ email: 'user@example.com' });
+    const code = sendOtpEmail.mock.calls[0][1];
+
+    const agent = request.agent(api);
+    await agent.post('/api/auth/verify-otp').send({ email: 'user@example.com', code });
+    const res = await agent.get('/api/auth/session');
+    expect(res.body.isAdmin).toBe(false);
+  });
+
+  it('reports isAdmin: true once ADMIN_EMAILS is set to include the caller, checked fresh (not cached)', async () => {
+    vi.stubEnv('ADMIN_EMAILS', 'user@example.com');
+    await request(api).post('/api/auth/request-otp').send({ email: 'user@example.com' });
+    const code = sendOtpEmail.mock.calls[0][1];
+
+    const agent = request.agent(api);
+    await agent.post('/api/auth/verify-otp').send({ email: 'user@example.com', code });
+    const res = await agent.get('/api/auth/session');
+    expect(res.body.isAdmin).toBe(true);
+  });
 });
 
 describe('POST /api/auth/logout', () => {
