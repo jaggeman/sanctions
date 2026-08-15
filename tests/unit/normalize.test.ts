@@ -12,7 +12,7 @@ vi.mock('../../src/shared/firebase', () => ({
   },
 }));
 
-import { normalizeText, generateSearchTokens } from '../../src/importer/uploader';
+import { normalizeText, generateSearchTokens, transliterate } from '../../src/importer/uploader';
 
 describe('normalizeText', () => {
   it('lowercases', () => {
@@ -45,20 +45,74 @@ describe('normalizeText', () => {
     expect(normalizeText(null as unknown as string)).toBe('');
   });
 
-  // --- Characterisation of a real limitation, not an endorsement of it. ---
-  // The [^a-z0-9\s] filter erases every non-Latin script. Any Cyrillic, Greek,
-  // Arabic or CJK name normalises to the empty string, which means it can never
-  // be indexed or searched. Tracked as a known gap, see the issue referenced in
-  // the PR — this test exists so the day someone fixes it, it fails loudly and
-  // tells them to update the expectation.
-  it('KNOWN GAP: erases non-Latin scripts entirely', () => {
-    expect(normalizeText('Путин')).toBe('');
-    expect(normalizeText('习近平')).toBe('');
-    expect(normalizeText('محمد')).toBe('');
+  // --- issue #40: was erasing every non-Latin script to '', now preserves ---
+  // any script's own letters (Unicode-aware \p{L}, not an ASCII a-z allowlist).
+  // Real strings, not invented ones — sourced from lists/20260805-FULL-1_1(xsd).xml
+  // (logicalId=201, the "Abu Nidal Organisation" entity, aliased across many
+  // languages) and a real Arabic alias (logicalId=514).
+  it('preserves Cyrillic script instead of erasing it (issue #40)', () => {
+    expect(normalizeText('Абу Нидал')).not.toBe('');
+    expect(normalizeText('Абу Нидал')).toBe('абу нидал');
   });
 
-  it('KNOWN GAP: a mixed-script name keeps only its Latin part', () => {
-    expect(normalizeText('Владимир Putin')).toBe('putin');
+  it('preserves Greek script instead of erasing it (issue #40)', () => {
+    expect(normalizeText('Μαύρος Σεπτέμβρης')).not.toBe('');
+  });
+
+  it('preserves Arabic script instead of erasing it (issue #40)', () => {
+    expect(normalizeText('عبد المنان آغا')).not.toBe('');
+  });
+
+  it('preserves CJK script instead of erasing it (issue #40)', () => {
+    expect(normalizeText('习近平')).not.toBe('');
+    expect(normalizeText('习近平')).toBe('习近平');
+  });
+
+  it('a mixed-script name preserves both scripts, not just the Latin part (issue #40)', () => {
+    const result = normalizeText('Владимир Putin');
+    expect(result).toContain('putin');
+    expect(result).toContain('владимир');
+  });
+
+  it('an exact self-comparison is identical regardless of script (the actual issue #40 bug)', () => {
+    // This is the literal failure mode: querying a name against itself must
+    // never silently become '' === '' by both sides collapsing to empty.
+    const cyrillic = normalizeText('Организация „Абу Нидал”');
+    expect(cyrillic).not.toBe('');
+    expect(normalizeText('Организация „Абу Нидал”')).toBe(cyrillic);
+  });
+});
+
+describe('transliterate — Cyrillic/Greek cross-script matching (issue #40, decision c)', () => {
+  it('transliterates a real Cyrillic alias to a Latin-readable form', () => {
+    // From logicalId=201 — "Абу Нидал" (Abu Nidal) embedded in a Bulgarian alias.
+    expect(transliterate('Абу Нидал')).toBe('abu nidal');
+  });
+
+  it('transliterates only the non-Latin part of a mixed-script string', () => {
+    expect(transliterate('Abu Нидал')).toBe('abu nidal');
+  });
+
+  it('transliterates Greek text to a Latin-readable form', () => {
+    const result = transliterate('Μαύρος Σεπτέμβρης');
+    expect(result).not.toBeNull();
+    expect(result).toMatch(/^[a-z\s]+$/);
+  });
+
+  it('returns null for pure-Latin text — nothing to add to the token set', () => {
+    expect(transliterate('Vladimir Putin')).toBeNull();
+  });
+
+  it('returns null for Arabic — explicitly out of scope for this pass (documented in the PR)', () => {
+    expect(transliterate('عبد المنان آغا')).toBeNull();
+  });
+
+  it('returns null for CJK — explicitly out of scope for this pass', () => {
+    expect(transliterate('习近平')).toBeNull();
+  });
+
+  it('handles empty input without throwing', () => {
+    expect(transliterate('')).toBeNull();
   });
 });
 
@@ -94,14 +148,21 @@ describe('generateSearchTokens', () => {
     expect(generateSearchTokens('V. Putin')).toEqual(['putin']);
   });
 
-  // --- Characterisation of a real limitation. ---
-  // The 2-character floor combined with the Latin-only filter means some real
-  // names produce NO tokens whatsoever, making the record permanently
-  // unsearchable by name.
-  it('KNOWN GAP: yields no tokens at all for a short or non-Latin name', () => {
+  it('KNOWN LIMITATION (unrelated to issue #40): the 2-character floor still applies', () => {
     expect(generateSearchTokens('Xi')).toEqual(['xi']); // 2 chars — just makes it
     expect(generateSearchTokens('Y Z')).toEqual([]);    // every token too short
-    expect(generateSearchTokens('习近平')).toEqual([]);   // non-Latin, erased
+  });
+
+  it('issue #40: a CJK name now yields its own token instead of none', () => {
+    expect(generateSearchTokens('习近平')).toEqual(['习近平']);
+  });
+
+  it('issue #40: a Cyrillic name yields both its own token and a transliterated one', () => {
+    const tokens = generateSearchTokens('Абу Нидал');
+    expect(tokens).toContain('абу');
+    expect(tokens).toContain('нидал');
+    expect(tokens).toContain('abu');
+    expect(tokens).toContain('nidal');
   });
 
   it('handles an empty primary name without throwing', () => {

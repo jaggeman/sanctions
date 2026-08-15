@@ -15,7 +15,8 @@
     "/api/search": {
       "get": {
         "summary": "Sök i sanktionslistor",
-        "description": "Sök efter personer eller organisationer baserat på namn, alias eller ID i EU:s, FN:s, USA:s och PEP-listor.",
+        "description": "Sök efter personer eller organisationer baserat på namn, alias eller ID i EU:s, FN:s, USA:s och PEP-listor. Kräver antingen en inloggad session eller en API-token med read-scope (issue #36).",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
         "parameters": [
           {
             "name": "q",
@@ -82,6 +83,12 @@
           },
           "400": {
             "description": "Felaktig sökförfrågan (t.ex. saknat sökord)"
+          },
+          "401": {
+            "description": "Ingen giltig session eller API-token"
+          },
+          "403": {
+            "description": "API-token saknar read-scope"
           }
         }
       }
@@ -89,7 +96,8 @@
     "/api/sanctions/{id}": {
       "get": {
         "summary": "Hämta en specifik sanktionspost",
-        "description": "Hämta detaljerad information om en sanktionerad person eller organisation baserat på dess unika ID.",
+        "description": "Hämta detaljerad information om en sanktionerad person eller organisation baserat på dess unika ID. Kräver antingen en inloggad session eller en API-token med read-scope (issue #36).",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
         "parameters": [
           {
             "name": "id",
@@ -112,6 +120,12 @@
               }
             }
           },
+          "401": {
+            "description": "Ingen giltig session eller API-token"
+          },
+          "403": {
+            "description": "API-token saknar read-scope"
+          },
           "404": {
             "description": "Hittade inte posten"
           }
@@ -121,7 +135,8 @@
     "/api/import": {
       "post": {
         "summary": "Trigga en uppdatering/import av data",
-        "description": "Startar en bakgrundsimport för att ladda ner och uppdatera sanktionslistorna.",
+        "description": "Startar en bakgrundsimport för att ladda ner och uppdatera sanktionslistorna. Kräver antingen en inloggad session eller en API-token med write-scope (issue #36).",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
         "requestBody": {
           "content": {
             "application/json": {
@@ -200,36 +215,384 @@
             }
           },
           "400": {
-            "description": "Ogiltiga \"sources\" eller ogiltigt \"mode\""
+            "description": "\"sources\" är inte en array"
+          },
+          "401": {
+            "description": "Ingen giltig session eller API-token"
+          },
+          "403": {
+            "description": "API-token saknar write-scope"
+          }
+        }
+      }
+    },
+    "/api/upload": {
+      "post": {
+        "summary": "Ladda upp en CSV- eller XML-fil för import",
+        "description": "Laddar upp en fil för en angiven källa och startar en bakgrundsimport. Kräver antingen en inloggad session eller en API-token med write-scope (issue #36).",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Max 64 MB. Endast .csv och .xml accepteras."
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": ["EU", "UN", "US", "PEP", "CUSTOM"]
+                  }
+                },
+                "required": ["file", "source"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Fil mottagen, import startad i bakgrunden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string" },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Ingen fil bifogad, ogiltig filtyp, eller okänt \"source\"-värde"
+          },
+          "401": {
+            "description": "Ingen giltig session eller API-token"
+          },
+          "403": {
+            "description": "API-token saknar write-scope"
+          },
+          "413": {
+            "description": "Filen överskrider 64 MB-gränsen"
+          }
+        }
+      }
+    },
+    "/api/overrides/{id}": {
+      "put": {
+        "summary": "Skapa eller ersätta en override för en sanktionspost",
+        "description": "Lägger en fältvis rättelse ovanpå en importerad post (issue #35). Den lagrade posten muteras aldrig — tar man bort overriden kommer de senast importerade värdena tillbaka exakt. Ersätter (upsert), mergar inte fältvis med en tidigare override. Kräver inloggad session; overriddenBy sätts alltid från den inloggade användaren, aldrig från request-body.",
+        "security": [{ "cookieAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID för sanktionsposten som ska overridas (t.ex. EU-1234)",
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["fields", "reason"],
+                "properties": {
+                  "fields": {
+                    "type": "object",
+                    "description": "Icke-tomt objekt med fält att rätta. id/source/type/createdAt/searchNames/status kan inte overridas.",
+                    "example": { "sanctionReason": "Korrigerad orsakstext" }
+                  },
+                  "reason": {
+                    "type": "string",
+                    "example": "Källans transliterering var felaktig"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Override sparad",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Override" }
+              }
+            }
+          },
+          "400": {
+            "description": "Saknat/tomt \"fields\" eller \"reason\", eller försök att overrida ett skyddat fält"
+          },
+          "401": {
+            "description": "Ingen giltig session (ej inloggad)"
+          },
+          "404": {
+            "description": "Ingen sanktionspost med detta ID hittades"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Ta bort en override",
+        "description": "Återställer exakt de senast importerade värdena för posten — den lagrade posten muterades aldrig av overriden.",
+        "security": [{ "cookieAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Override borttagen (idempotent — 200 även om ingen fanns)",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "ok": { "type": "boolean" } } }
+              }
+            }
+          },
+          "401": {
+            "description": "Ingen giltig session (ej inloggad)"
+          }
+        }
+      }
+    },
+    "/api/admin/tokens": {
+      "post": {
+        "summary": "Skapa en ny API-token",
+        "description": "Skapar en API-token med angivna scopes (read/write). Den fullständiga token-strängen returneras endast i detta svar och sparas aldrig i klartext. Kräver en inloggad admin-session — admin-status kontrolleras på nytt vid varje anrop mot ADMIN_EMAILS (issue #17), inte cachad i sessionen.",
+        "security": [{ "cookieAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "scopes"],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "example": "CI pipeline"
+                  },
+                  "scopes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": ["read", "write"]
+                    },
+                    "example": ["read"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Token skapad",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "type": "object", "properties": { "token": { "type": "string", "example": "sanc_5f2c...a91b" } } },
+                    { "$ref": "#/components/schemas/ApiToken" }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Ogiltigt namn eller ogiltiga scopes"
+          },
+          "401": {
+            "description": "Ingen giltig session (ej inloggad)"
+          },
+          "403": {
+            "description": "Inloggad men inte admin (se ADMIN_EMAILS, issue #17)"
+          }
+        }
+      },
+      "get": {
+        "summary": "Lista alla API-tokens",
+        "description": "Returnerar alla tokens (utan hemliga värden) inklusive scope, senast använd och status. Kräver en inloggad admin-session.",
+        "security": [{ "cookieAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Lista över tokens",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/ApiToken" }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Ingen giltig session (ej inloggad)"
+          },
+          "403": {
+            "description": "Inloggad men inte admin (se ADMIN_EMAILS, issue #17)"
+          }
+        }
+      }
+    },
+    "/api/admin/tokens/{id}/revoke": {
+      "post": {
+        "summary": "Återkalla en API-token",
+        "description": "Markerar en token som återkallad. Token raderas inte, för att bevara historik. Kräver en inloggad admin-session.",
+        "security": [{ "cookieAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Token återkallad",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ApiToken" }
+              }
+            }
+          },
+          "401": {
+            "description": "Ingen giltig session (ej inloggad)"
+          },
+          "403": {
+            "description": "Inloggad men inte admin (se ADMIN_EMAILS, issue #17)"
+          },
+          "404": {
+            "description": "Ingen token med detta ID hittades"
+          }
+        }
+      }
+    },
+    "/api/decisions": {
+      "post": {
+        "summary": "Registrera eller uppdatera en screening-adjudikation",
+        "description": "Skapar eller skriver över (upsert) den aktuella false-positive/true-positive-bedömningen för ett entity+subject-par. `decidedBy` sätts alltid från den inloggade sessionen, aldrig från request body. Att adjudikera på nytt (t.ex. en annan analytiker som är oense) skriver bara över tidigare bedömning för samma par — det är normalfallet, inte ett fel (issue #22).",
+        "security": [{ "cookieAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["entityId", "subjectId", "verdict"],
+                "properties": {
+                  "entityId": { "type": "string", "example": "EU-1234" },
+                  "subjectId": { "type": "string", "example": "customer-acme" },
+                  "verdict": { "type": "string", "enum": ["false_positive", "true_positive"] },
+                  "notes": { "type": "string", "example": "Confirmed match on passport number" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Bedömning sparad",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Decision" }
+              }
+            }
+          },
+          "400": {
+            "description": "Ogiltig entityId/subjectId/verdict, eller decidedBy saknas"
+          },
+          "401": {
+            "description": "Ingen giltig session (ej inloggad)"
+          }
+        }
+      }
+    },
+    "/api/decisions/{entityId}": {
+      "get": {
+        "summary": "Lista alla bedömningar för en entity",
+        "description": "Returnerar varje sparad bedömning för entityn, över alla subjects.",
+        "security": [{ "cookieAuth": [] }],
+        "parameters": [
+          {
+            "name": "entityId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista över bedömningar",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Decision" }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Ingen giltig session (ej inloggad)"
           }
         }
       }
     }
   },
   "components": {
+    "securitySchemes": {
+      "cookieAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "sid",
+        "description": "Session-cookie satt av POST /api/auth/verify-otp efter lyckad e-post-OTP-inloggning. Krävs av alla /api/*-rutter förutom auth-rutterna själva och /api/admin/tokens/* (endast admin-session, se requireAdmin)."
+      },
+      "apiTokenAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "sanc_<random>",
+        "description": "API-token skapad via POST /api/admin/tokens, skickad som 'Authorization: Bearer sanc_...'. Ett alternativ till cookieAuth på datavägarna (GET /api/search, GET /api/sanctions/{id} kräver read-scope; POST /api/import, POST /api/upload kräver write-scope) — issue #36. Accepteras INTE av /api/admin/tokens/* själv."
+      }
+    },
     "schemas": {
-      "DiffResult": {
+      "ApiToken": {
         "type": "object",
-        "description": "Issue #8 — per-source reconciliation result from computeDiff/runDiffForSource.",
         "properties": {
-          "source": { "type": "string", "enum": ["EU", "UN", "US", "PEP", "CUSTOM"] },
-          "counts": {
-            "type": "object",
-            "properties": {
-              "parsed": { "type": "integer" },
-              "added": { "type": "integer" },
-              "updated": { "type": "integer" },
-              "unchanged": { "type": "integer" },
-              "delisted": { "type": "integer" },
-              "skipped": { "type": "integer" }
-            }
+          "id": { "type": "string", "example": "aB3dE9fGhI" },
+          "name": { "type": "string", "example": "CI pipeline" },
+          "tokenPreview": { "type": "string", "example": "sanc_...a91b" },
+          "scopes": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["read", "write"] }
           },
-          "toDelistIds": { "type": "array", "items": { "type": "string" } },
-          "activeCount": { "type": "integer" },
-          "guardTripped": {
-            "type": "boolean",
-            "description": "true if delisting would exceed 20% of the source's active records without force:true"
-          }
+          "createdAt": { "type": "string", "format": "date-time" },
+          "lastUsedAt": { "type": "string", "format": "date-time", "nullable": true },
+          "revoked": { "type": "boolean" },
+          "revokedAt": { "type": "string", "format": "date-time", "nullable": true }
+        }
+      },
+      "Decision": {
+        "type": "object",
+        "properties": {
+          "entityId": { "type": "string", "example": "EU-1234" },
+          "subjectId": { "type": "string", "example": "customer-acme" },
+          "verdict": { "type": "string", "enum": ["false_positive", "true_positive"] },
+          "decidedBy": { "type": "string", "example": "analyst@example.com" },
+          "decidedAt": { "type": "string", "format": "date-time" },
+          "notes": { "type": "string", "nullable": true }
         }
       },
       "SanctionRecord": {
@@ -332,7 +695,32 @@
             "type": "string",
             "format": "date-time",
             "description": "When this record most recently went missing from an import."
+          },
+          "overriddenFields": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Field names currently overridden by a local correction (issue #35). Not part of the persisted document — computed on every read by merging overrides/{id} onto the stored record, so the caller can tell official source data apart from a local correction. Empty when no override exists for this record.",
+            "example": ["sanctionReason"]
           }
+        }
+      },
+      "Override": {
+        "type": "object",
+        "required": ["entityId", "fields", "overriddenBy", "overriddenAt", "reason"],
+        "properties": {
+          "entityId": { "type": "string", "example": "EU-1234" },
+          "fields": {
+            "type": "object",
+            "description": "Sparse set of fields to override. Immutable identity/bookkeeping fields (id, source, type, createdAt, searchNames, status) are rejected — status cannot be overridden so a correction can never resurrect a delisted record.",
+            "additionalProperties": true
+          },
+          "overriddenBy": {
+            "type": "string",
+            "description": "Always the authenticated caller's email — never taken from the request body.",
+            "example": "analyst@example.com"
+          },
+          "overriddenAt": { "type": "string", "format": "date-time" },
+          "reason": { "type": "string", "example": "Source transliteration was inaccurate" }
         }
       }
     }

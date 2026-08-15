@@ -24,10 +24,14 @@ program
     try {
       console.log(`Söker efter "${queryStr}"...`);
 
+      // issue #37: `|| 10` treats an explicit --limit 0 the same as "not
+      // provided". Check for NaN explicitly so a real 0 survives.
+      const parsedLimit = parseInt(options.limit, 10);
+
       const { results, totalMatches, truncated } = await runSearch(queryStr, {
         source: options.sources,
         type: options.type ? options.type.toLowerCase() : undefined,
-        limit: parseInt(options.limit) || 10,
+        limit: Number.isNaN(parsedLimit) ? 10 : parsedLimit,
       });
 
       if (results.length === 0) {

@@ -2,39 +2,25 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import type { SanctionRecord } from '../../src/shared/types';
 
-// --- Fake Firestore query builder -------------------------------------
-// api/index.ts builds a query as:
-//   sanctionsCollection.where('searchNames', 'array-contains', firstToken)
-//     [.where('type', '==', typeFilter)]
-//     .limit(500).get()
-// and separately collection('sanctions').doc(id).get(). This fake records
-// every .where() call so tests can assert on what was actually queried, and
-// returns a canned snapshot for .get().
-let snapshotDocs: SanctionRecord[] = [];
+// GET /api/sanctions/:id still talks to Firestore directly, so it keeps a
+// fake db. GET /api/search now goes through the shared src/search runSearch
+// (see src/search/index.ts) instead of querying Firestore itself, so it's
+// mocked separately below rather than via fakeDb.
 let docGetResult: { exists: boolean; data?: () => any } = { exists: false };
-const whereCalls: Array<[string, string, any]> = [];
-
-function makeQuery() {
-  return {
-    where: vi.fn((field: string, op: string, value: any) => {
-      whereCalls.push([field, op, value]);
-      return makeQuery();
-    }),
-    limit: vi.fn(() => ({
-      get: vi.fn(async () => ({
-        forEach: (cb: (doc: any) => void) => {
-          snapshotDocs.forEach((record) => cb({ data: () => record }));
-        },
-      })),
-    })),
-  };
-}
+// Issue #35: GET /api/sanctions/:id now also fetches a matching override doc.
+let overrideDocResult: { exists: boolean; data?: () => any } = { exists: false };
 
 const fakeDb = {
   collection: vi.fn((name: string) => {
+    if (name === 'overrides') {
+      return {
+        doc: vi.fn((id: string) => ({
+          get: vi.fn(async () => ({ ...overrideDocResult, id })),
+        })),
+      };
+    }
     if (name !== 'sanctions') throw new Error(`unexpected collection ${name}`);
     return {
-      ...makeQuery(),
       doc: vi.fn((id: string) => ({
         get: vi.fn(async () => ({ ...docGetResult, id })),
       })),
@@ -42,8 +28,13 @@ const fakeDb = {
   }),
 };
 
+const runSearch = vi.fn();
+const verifyApiToken = vi.fn();
+
 vi.mock('../../src/shared/firebase', () => ({ db: fakeDb }));
 vi.mock('../../src/importer', () => ({ runImport: vi.fn(async () => ({ success: true, importedCounts: {} })) }));
+vi.mock('../../src/search', () => ({ runSearch }));
+vi.mock('../../src/shared/apiTokens', () => ({ verifyApiToken }));
 vi.stubEnv('NODE_ENV', 'test');
 
 function record(overrides: Partial<SanctionRecord> = {}): SanctionRecord {
@@ -68,87 +59,83 @@ const { api } = await import('../../src/api');
 const agent = request.agent(api);
 
 beforeEach(async () => {
-  snapshotDocs = [];
   docGetResult = { exists: false };
-  whereCalls.length = 0;
+  overrideDocResult = { exists: false };
+  runSearch.mockReset();
+  runSearch.mockResolvedValue({ results: [], totalMatches: 0, truncated: false });
+  verifyApiToken.mockReset();
   vi.clearAllMocks();
   await agent.post('/api/auth/verify-otp').send({ email: 'admin@sanctions.com', code: '123456' });
 });
+
+function scoredRecord(overrides: Partial<SanctionRecord & { score: number; matchedAlias: string }> = {}) {
+  return { ...record(overrides), score: 92, matchedAlias: 'Vladimir Putin', ...overrides };
+}
 
 describe('GET /api/search', () => {
   it('requires the q parameter', async () => {
     const res = await agent.get('/api/search');
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/required/i);
+    expect(runSearch).not.toHaveBeenCalled();
   });
 
-  it('returns an empty array when every token is below the 2-char floor', async () => {
-    const res = await agent.get('/api/search').query({ q: 'a b' });
+  it('delegates to the shared runSearch with the query and parsed options', async () => {
+    await agent.get('/api/search').query({ q: 'Vladimir Putin', source: 'PEP,EU', type: 'individual', limit: '5', threshold: '70' });
+
+    expect(runSearch).toHaveBeenCalledWith('Vladimir Putin', {
+      source: 'PEP,EU',
+      type: 'individual',
+      limit: 5,
+      threshold: 70,
+      includeDelisted: false,
+    });
+  });
+
+  it('returns each hit with its score and matched alias', async () => {
+    runSearch.mockResolvedValue({ results: [scoredRecord()], totalMatches: 1, truncated: false });
+    const res = await agent.get('/api/search').query({ q: 'Vladmir Putin' });
+
     expect(res.status).toBe(200);
-    expect(res.body).toEqual([]);
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0].score).toBe(92);
+    expect(res.body.results[0].matchedAlias).toBe('Vladimir Putin');
   });
 
-  it('queries array-contains on the first normalized token', async () => {
-    snapshotDocs = [record()];
-    const res = await agent.get('/api/search').query({ q: 'Vladimir Putin' });
+  it('reports totalMatches and truncated instead of silently capping', async () => {
+    runSearch.mockResolvedValue({
+      results: [scoredRecord({ id: 'PEP-1' })],
+      totalMatches: 42,
+      truncated: true,
+    });
+    const res = await agent.get('/api/search').query({ q: 'Vladimir' });
 
-    expect(res.status).toBe(200);
-    expect(whereCalls[0]).toEqual(['searchNames', 'array-contains', 'vladimir']);
-    expect(res.body).toHaveLength(1);
-    expect(res.body[0].id).toBe('PEP-1');
-  });
-
-  it('filters out documents missing a later token, in-memory', async () => {
-    snapshotDocs = [
-      record({ id: 'PEP-1', primaryName: 'Vladimir Putin', searchNames: ['vladimir', 'putin'] }),
-      record({ id: 'PEP-2', primaryName: 'Vladimir Zelensky', searchNames: ['vladimir', 'zelensky'] }),
-    ];
-    const res = await agent.get('/api/search').query({ q: 'Vladimir Putin' });
-
-    expect(res.body.map((r: any) => r.id)).toEqual(['PEP-1']);
-  });
-
-  it('applies the type filter as a second where() clause', async () => {
-    snapshotDocs = [record()];
-    await agent.get('/api/search').query({ q: 'Vladimir', type: 'individual' });
-    expect(whereCalls).toContainEqual(['type', '==', 'individual']);
-  });
-
-  it('filters by source case-insensitively, in-memory', async () => {
-    snapshotDocs = [record({ source: 'PEP' })];
-    const res = await agent.get('/api/search').query({ q: 'Vladimir', source: 'pep' });
-    expect(res.body).toHaveLength(1);
-
-    const res2 = await agent.get('/api/search').query({ q: 'Vladimir', source: 'EU' });
-    expect(res2.body).toHaveLength(0);
-  });
-
-  it('accepts a comma-separated source list', async () => {
-    snapshotDocs = [record({ source: 'PEP' })];
-    const res = await agent.get('/api/search').query({ q: 'Vladimir', source: 'EU,PEP,UN' });
-    expect(res.body).toHaveLength(1);
+    expect(res.body.totalMatches).toBe(42);
+    expect(res.body.truncated).toBe(true);
   });
 
   it('caps the requested limit at 100 regardless of what was asked for', async () => {
-    snapshotDocs = Array.from({ length: 5 }, (_, i) => record({ id: `PEP-${i}`, searchNames: ['vladimir'] }));
-    const res = await agent.get('/api/search').query({ q: 'Vladimir', limit: '99999' });
-    // All 5 fit under the real cap of 100; this exercises the parseInt/min path
-    // without needing 100+ fixture docs.
-    expect(res.status).toBe(200);
-    expect(res.body).toHaveLength(5);
+    await agent.get('/api/search').query({ q: 'Vladimir', limit: '99999' });
+    expect(runSearch).toHaveBeenCalledWith('Vladimir', expect.objectContaining({ limit: 100 }));
   });
 
   it('falls back to the default limit of 20 when limit is not a number', async () => {
-    snapshotDocs = Array.from({ length: 3 }, (_, i) => record({ id: `PEP-${i}`, searchNames: ['vladimir'] }));
-    const res = await agent.get('/api/search').query({ q: 'Vladimir', limit: 'not-a-number' });
-    expect(res.status).toBe(200);
-    expect(res.body).toHaveLength(3);
+    await agent.get('/api/search').query({ q: 'Vladimir', limit: 'not-a-number' });
+    expect(runSearch).toHaveBeenCalledWith('Vladimir', expect.objectContaining({ limit: 20 }));
   });
 
-  it('returns 500 with details when Firestore throws', async () => {
-    fakeDb.collection.mockImplementationOnce(() => {
-      throw new Error('boom');
-    });
+  it('issue #37: honors an explicit limit=0 instead of silently falling back to the default', async () => {
+    await agent.get('/api/search').query({ q: 'Vladimir', limit: '0' });
+    expect(runSearch).toHaveBeenCalledWith('Vladimir', expect.objectContaining({ limit: 0 }));
+  });
+
+  it('falls back to the default limit of 20 when limit is omitted entirely', async () => {
+    await agent.get('/api/search').query({ q: 'Vladimir' });
+    expect(runSearch).toHaveBeenCalledWith('Vladimir', expect.objectContaining({ limit: 20 }));
+  });
+
+  it('returns 500 with details when the search engine throws', async () => {
+    runSearch.mockRejectedValue(new Error('boom'));
     const res = await agent.get('/api/search').query({ q: 'Vladimir' });
     expect(res.status).toBe(500);
     expect(res.body.details).toBe('boom');
@@ -169,6 +156,36 @@ describe('GET /api/sanctions/:id', () => {
     const res = await agent.get('/api/sanctions/PEP-1');
     expect(res.status).toBe(200);
     expect(res.body.id).toBe('PEP-1');
+  });
+
+  it('reports overriddenFields: [] when there is no override (issue #35)', async () => {
+    const rec = record({ id: 'PEP-1' });
+    docGetResult = { exists: true, data: () => rec };
+    overrideDocResult = { exists: false };
+
+    const res = await agent.get('/api/sanctions/PEP-1');
+    expect(res.body.overriddenFields).toEqual([]);
+    expect(res.body.sanctionReason).toBe(rec.sanctionReason);
+  });
+
+  it('merges an override onto the returned record and reports which fields were overridden (issue #35)', async () => {
+    const rec = record({ id: 'PEP-1', sanctionReason: 'Original reason' });
+    docGetResult = { exists: true, data: () => rec };
+    overrideDocResult = {
+      exists: true,
+      data: () => ({
+        entityId: 'PEP-1',
+        fields: { sanctionReason: 'Corrected reason' },
+        overriddenBy: 'analyst@example.com',
+        overriddenAt: '2026-01-01T00:00:00.000Z',
+        reason: 'Fix',
+      }),
+    };
+
+    const res = await agent.get('/api/sanctions/PEP-1');
+    expect(res.status).toBe(200);
+    expect(res.body.sanctionReason).toBe('Corrected reason');
+    expect(res.body.overriddenFields).toEqual(['sanctionReason']);
   });
 });
 
@@ -217,21 +234,88 @@ describe('POST /api/import', () => {
   });
 });
 
-describe('POST /api/upload', () => {
-  it('rejects a request with no file attached', async () => {
-    const res = await agent.post('/api/upload').field('source', 'PEP');
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/no file/i);
+// POST /api/upload's tests live in tests/unit/api-upload.test.ts — the
+// handler was rewritten for issue #7 (hashing, format detection, dedup,
+// Storage, the imports audit collection), replacing the old fire-and-forget
+// 202 response this block used to assert. The two multer-level validation
+// tests (disallowed extension, oversized file) that were added here on main
+// moved there too, alongside this rewrite's own source/dedup/format tests.
+
+// Issue #36: requireScope was fully built and tested in isolation but never
+// actually reachable — a bearer-token-only request (no session cookie) was
+// rejected by the blanket session gate before any route-level scope check
+// could run. These tests use a plain (session-less) `request(api)` client,
+// never `agent`, to prove a token alone is now sufficient.
+describe('bearer-token (API key) auth on the read routes — issue #36', () => {
+  it('GET /api/search accepts a valid read-scoped token with no session cookie at all', async () => {
+    verifyApiToken.mockResolvedValue({ valid: true, tokenId: 'tok-1', scopes: ['read'] });
+    runSearch.mockResolvedValue({ results: [scoredRecord()], totalMatches: 1, truncated: false });
+
+    const res = await request(api).get('/api/search').query({ q: 'Vladimir' }).set('Authorization', 'Bearer sanc_good');
+
+    expect(res.status).toBe(200);
+    expect(verifyApiToken).toHaveBeenCalledWith('sanc_good', 'read');
+    expect(res.body.results).toHaveLength(1);
   });
 
-  it('accepts an uploaded file and returns 202 immediately', async () => {
-    const res = await agent
-      .post('/api/upload')
-      .field('source', 'PEP')
-      .attach('file', Buffer.from('id;name\n1;Test Person\n'), 'people.csv');
+  it('GET /api/sanctions/:id accepts a valid read-scoped token with no session cookie at all', async () => {
+    const rec = record({ id: 'PEP-1' });
+    docGetResult = { exists: true, data: () => rec };
+    verifyApiToken.mockResolvedValue({ valid: true, tokenId: 'tok-1', scopes: ['read'] });
+
+    const res = await request(api).get('/api/sanctions/PEP-1').set('Authorization', 'Bearer sanc_good');
+
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe('PEP-1');
+  });
+
+  it('rejects a write-only-scoped token on the read routes with 403', async () => {
+    verifyApiToken.mockResolvedValue({
+      valid: false,
+      reason: 'insufficient_scope',
+      tokenId: 'tok-1',
+      scopes: ['write'],
+    });
+
+    const res = await request(api).get('/api/search').query({ q: 'Vladimir' }).set('Authorization', 'Bearer sanc_writeonly');
+
+    expect(res.status).toBe(403);
+    expect(runSearch).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid or revoked token with 401, without falling back to session auth', async () => {
+    verifyApiToken.mockResolvedValue({ valid: false, reason: 'not_found' });
+
+    const res = await request(api).get('/api/search').query({ q: 'Vladimir' }).set('Authorization', 'Bearer sanc_bogus');
+
+    expect(res.status).toBe(401);
+  });
+
+  it('still rejects a plain, unauthenticated request (no cookie, no token) with 401', async () => {
+    const res = await request(api).get('/api/search').query({ q: 'Vladimir' });
+    expect(res.status).toBe(401);
+  });
+
+  it('POST /api/import accepts a write-scoped token with no session cookie', async () => {
+    verifyApiToken.mockResolvedValue({ valid: true, tokenId: 'tok-1', scopes: ['write'] });
+
+    const res = await request(api).post('/api/import').set('Authorization', 'Bearer sanc_writer').send({ sources: ['EU'] });
 
     expect(res.status).toBe(202);
-    expect(res.body.status).toBe('upload_received');
+    expect(verifyApiToken).toHaveBeenCalledWith('sanc_writer', 'write');
+  });
+
+  it('rejects a read-only-scoped token on POST /api/import with 403', async () => {
+    verifyApiToken.mockResolvedValue({
+      valid: false,
+      reason: 'insufficient_scope',
+      tokenId: 'tok-1',
+      scopes: ['read'],
+    });
+
+    const res = await request(api).post('/api/import').set('Authorization', 'Bearer sanc_readonly').send({ sources: ['EU'] });
+
+    expect(res.status).toBe(403);
   });
 
   it('rejects a mode that is not "sync" or "append"', async () => {
@@ -254,24 +338,5 @@ describe('POST /api/upload', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/importId/i);
-  });
-
-  it('dryRun:"true" awaits the import and returns its result synchronously instead of 202', async () => {
-    const { runImport } = await import('../../src/importer');
-    (runImport as any).mockResolvedValueOnce({
-      success: true,
-      importedCounts: { PEP: 1 },
-      diffs: [{ source: 'PEP', counts: { parsed: 1, added: 1, updated: 0, unchanged: 0, delisted: 0, skipped: 0 } }],
-    });
-
-    const res = await agent
-      .post('/api/upload')
-      .field('source', 'PEP')
-      .field('dryRun', 'true')
-      .attach('file', Buffer.from('id;name\n1;Test Person\n'), 'people.csv');
-
-    expect(res.status).toBe(200);
-    expect(res.body.diffs[0].counts.added).toBe(1);
-    expect(runImport).toHaveBeenCalledWith(expect.objectContaining({ dryRun: true }));
   });
 });

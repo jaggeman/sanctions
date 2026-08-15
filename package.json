@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.1",
+    "@types/sax": "^1.2.7",
     "axios": "^1.7.4",
     "commander": "^12.1.0",
     "cookie-parser": "^1.4.7",
@@ -33,6 +34,7 @@
     "fs-extra": "^11.2.0",
     "multer": "^2.2.0",
     "nodemailer": "^9.0.5",
+    "sax": "^1.6.1",
     "swagger-ui-express": "^5.0.1"
   },
   "devDependencies": {

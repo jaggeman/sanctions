@@ -1,10 +1,12 @@
 import { db } from '../shared/firebase';
-import { SanctionRecord } from '../shared/types';
+import { SanctionRecord, Override } from '../shared/types';
 import { scoreNameMatch } from './matcher';
+import { applyOverride } from '../overrides';
 
 export interface ScoredResult extends SanctionRecord {
   score: number;
   matchedAlias: string;
+  overriddenFields: string[];
 }
 
 export interface SearchOptions {
@@ -13,6 +15,7 @@ export interface SearchOptions {
   limit?: number;
   threshold?: number; // 0..100
   dob?: string; // booster, not a hard filter — source data has year-only values
+  includeDelisted?: boolean; // default false — soft-deleted records are hidden (issue #9)
 }
 
 export interface SearchResponse {
@@ -33,16 +36,39 @@ const MIN_PASSPORT_QUERY_LENGTH = 4; // avoids matching every ID on a 1-2 char q
  * `invalidateSearchIndex` should be called after a successful import so the
  * next search picks up new/changed records rather than serving a stale set.
  */
-let cachedRecords: SanctionRecord[] | null = null;
+type IndexedRecord = SanctionRecord & { overriddenFields: string[] };
+
+let cachedRecords: IndexedRecord[] | null = null;
 
 export function invalidateSearchIndex(): void {
   cachedRecords = null;
 }
 
-async function getRecords(): Promise<SanctionRecord[]> {
+/**
+ * Merges each record's override in at index-build time, not after a result
+ * is already chosen — this is what makes an overridden primaryName actually
+ * searchable (issue #35), not just visible once found some other way. Every
+ * caller of runSearch (API, CLI, MCP) shares this one cache, so all three
+ * see the same overridden data. Call invalidateSearchIndex() after any
+ * override write/delete, or the cache serves stale data until the next import.
+ */
+async function getRecords(): Promise<IndexedRecord[]> {
   if (cachedRecords === null) {
-    const snapshot = await db.collection('sanctions').get();
-    cachedRecords = snapshot.docs.map((doc: any) => doc.data() as SanctionRecord);
+    const [sanctionsSnapshot, overridesSnapshot] = await Promise.all([
+      db.collection('sanctions').get(),
+      db.collection('overrides').get(),
+    ]);
+
+    const overridesByEntityId = new Map<string, Override>();
+    overridesSnapshot.docs.forEach((doc: any) => {
+      overridesByEntityId.set(doc.id, doc.data() as Override);
+    });
+
+    cachedRecords = sanctionsSnapshot.docs.map((doc: any) => {
+      const record = doc.data() as SanctionRecord;
+      const { record: merged, overriddenFields } = applyOverride(record, overridesByEntityId.get(record.id));
+      return { ...merged, overriddenFields };
+    });
   }
   return cachedRecords;
 }
@@ -81,6 +107,10 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
   const limit = Math.min(options.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
 
   const candidates = records.filter((r) => {
+    // A delisted person is no longer sanctioned; returning them as a confident
+    // match is the exact failure issue #9 exists to prevent. Records predating
+    // the status field have no `status` and are treated as active.
+    if (!options.includeDelisted && r.status === 'delisted') return false;
     if (sourcesFilter && !sourcesFilter.includes(r.source.toUpperCase())) return false;
     if (typeFilter && r.type !== typeFilter) return false;
     return true;

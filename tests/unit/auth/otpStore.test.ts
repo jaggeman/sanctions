@@ -51,9 +51,33 @@ describe('otpStore', () => {
   });
 
   it('creating a new code resets the attempt counter', () => {
+    vi.useFakeTimers();
     createOtp('user@example.com');
     for (let i = 0; i < 5; i++) verifyOtp('user@example.com', 'wrong-code');
+    vi.advanceTimersByTime(61 * 1000); // past the request cooldown
     const freshCode = createOtp('user@example.com');
-    expect(verifyOtp('user@example.com', freshCode)).toBe(true);
+    expect(verifyOtp('user@example.com', freshCode as string)).toBe(true);
+  });
+
+  describe('request cooldown (issue #16)', () => {
+    it('returns null (rate limited) when requested again for the same email within the cooldown', () => {
+      const first = createOtp('user@example.com');
+      expect(first).toBeTruthy();
+      expect(createOtp('user@example.com')).toBeNull();
+    });
+
+    it('allows a new request once the cooldown window has passed', () => {
+      vi.useFakeTimers();
+      const first = createOtp('user@example.com');
+      vi.advanceTimersByTime(61 * 1000);
+      const second = createOtp('user@example.com');
+      expect(second).toBeTruthy();
+      expect(second).not.toBe(first);
+    });
+
+    it('cools down independently per email', () => {
+      expect(createOtp('a@example.com')).toBeTruthy();
+      expect(createOtp('b@example.com')).toBeTruthy();
+    });
   });
 });
