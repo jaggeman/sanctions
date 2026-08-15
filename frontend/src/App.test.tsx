@@ -51,7 +51,17 @@ describe('App component navigation tabs', () => {
     expect(screen.getByText('User Manual & Help')).toBeInTheDocument();
     expect(screen.getByText('How to Search')).toBeInTheDocument();
     expect(screen.getByText('Uploading Lists')).toBeInTheDocument();
+    expect(screen.getByText('Managing API Tokens')).toBeInTheDocument();
     expect(screen.getByText('Official Sources')).toBeInTheDocument();
+  });
+
+  it('documents fuzzy match scoring and all upload sources in the manual', async () => {
+    await renderLoggedIn();
+    fireEvent.click(screen.getByText('Help & Manual'));
+
+    expect(screen.getByText(/match score/i)).toBeInTheDocument();
+    expect(screen.getByText(/non-Latin/i)).toBeInTheDocument();
+    expect(screen.getByText(/PEP.*CUSTOM|CUSTOM.*PEP/)).toBeInTheDocument();
   });
 
   it('stays on the login screen when there is no session', async () => {
