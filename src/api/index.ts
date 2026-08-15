@@ -15,6 +15,8 @@ import { sendOtpEmail } from '../auth/mailer';
 import { createSession, destroySession } from '../auth/session';
 import { requireAuth, SESSION_COOKIE_NAME } from '../auth/middleware';
 import { TEST_LOGIN_EMAIL, TEST_LOGIN_CODE, isTestLoginEnabled, isTestLoginEmail } from '../auth/testAccount';
+import { requestLogger } from './middleware/requestLogger';
+import { errorLogger } from './middleware/errorLogger';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -34,6 +36,7 @@ const SESSION_COOKIE_OPTIONS = {
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN || false, credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
+app.use(requestLogger);
 
 /**
  * POST /api/auth/request-otp
@@ -241,6 +244,10 @@ app.post('/api/upload', upload.single('file'), async (req, res): Promise<any> =>
     message: 'File received and import process started.',
   });
 });
+
+// Catch-all error logger — must be registered after every route/middleware
+// above so Express routes uncaught errors to it.
+app.use(errorLogger);
 
 // When run directly (local dev via ts-node/node), also listen on PORT.
 // Under `firebase deploy`/emulators, this file is only ever required as a
