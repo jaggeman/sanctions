@@ -134,7 +134,6 @@ export async function parseUSList(filePath: string): Promise<SanctionRecord[]> {
       passports: passports.length > 0 ? passports : undefined,
       addresses: addresses.length > 0 ? addresses : undefined,
       sanctionReason: sanctionReason || undefined,
-      rawSourceData: entry,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });

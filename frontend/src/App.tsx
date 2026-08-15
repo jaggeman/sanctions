@@ -26,6 +26,9 @@ import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Brightness7Icon from '@mui/icons-material/Brightness7';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import InfoIcon from '@mui/icons-material/Info';
+import ApiTokensTab from './ApiTokensTab';
+import LogoutIcon from '@mui/icons-material/Logout';
+import Login from './components/Login';
 
 // Function to generate theme based on mode
 const getTheme = (mode: PaletteMode) => createTheme({
@@ -97,10 +100,29 @@ function App() {
   // Generate theme dynamically
   const theme = useMemo(() => getTheme(mode), [mode]);
 
+  // Auth State
+  const [authChecked, setAuthChecked] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('/api/auth/session')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setUserEmail(data?.email ?? null))
+      .catch(() => setUserEmail(null))
+      .finally(() => setAuthChecked(true));
+  }, []);
+
+  const handleLogout = async () => {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    setUserEmail(null);
+  };
+
   // App State
   const [tabValue, setTabValue] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [results, setResults] = useState<any[]>([]);
+  const [totalMatches, setTotalMatches] = useState(0);
+  const [truncated, setTruncated] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
   const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
@@ -113,7 +135,9 @@ function App() {
     try {
       const res = await fetch(`/api/search?q=${encodeURIComponent(searchQuery)}`);
       const data = await res.json();
-      setResults(Array.isArray(data) ? data : []);
+      setResults(Array.isArray(data.results) ? data.results : []);
+      setTotalMatches(typeof data.totalMatches === 'number' ? data.totalMatches : 0);
+      setTruncated(Boolean(data.truncated));
     } catch (err) {
       console.error(err);
       alert('Search failed');
@@ -147,6 +171,26 @@ function App() {
     setIsLoading(false);
   };
 
+  if (!authChecked) {
+    return (
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <Box sx={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <CircularProgress />
+        </Box>
+      </ThemeProvider>
+    );
+  }
+
+  if (!userEmail) {
+    return (
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <Login onLoggedIn={setUserEmail} />
+      </ThemeProvider>
+    );
+  }
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -155,8 +199,14 @@ function App() {
           <Typography variant="h6" component="div" sx={{ flexGrow: 1, fontWeight: 'bold', color: 'primary.main' }}>
             Sanctions Intelligence
           </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mr: 1 }}>
+            {userEmail}
+          </Typography>
           <IconButton sx={{ ml: 1 }} onClick={toggleColorMode} color="inherit">
             {mode === 'dark' ? <Brightness7Icon /> : <Brightness4Icon />}
+          </IconButton>
+          <IconButton sx={{ ml: 1 }} onClick={handleLogout} color="inherit" aria-label="Log out">
+            <LogoutIcon />
           </IconButton>
         </Toolbar>
       </AppBar>
@@ -167,6 +217,7 @@ function App() {
             <Tab label="Search" />
             <Tab label="Upload Lists" />
             <Tab label="Official EU Lists" />
+            <Tab label="API Tokens" />
             <Tab label="Help & Manual" />
           </Tabs>
         </Box>
@@ -201,6 +252,14 @@ function App() {
               </CardContent>
             </Card>
 
+            {results.length > 0 && (
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                {truncated
+                  ? `Showing ${results.length} of ${totalMatches} matches — narrow your search or raise the limit to see more.`
+                  : `${totalMatches} match${totalMatches === 1 ? '' : 'es'}`}
+              </Typography>
+            )}
+
             <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: '1fr 1fr 1fr' }, gap: 3 }}>
               {results.map((r, i) => (
                 <Box key={i}>
@@ -213,6 +272,14 @@ function App() {
                       <Typography variant="h6" component="h2" gutterBottom>
                         {r.primaryName}
                       </Typography>
+                      {typeof r.score === 'number' && (
+                        <Chip
+                          label={`${r.score}% match${r.matchedAlias ? ` — "${r.matchedAlias}"` : ''}`}
+                          size="small"
+                          color={r.score >= 90 ? 'success' : r.score >= 75 ? 'warning' : 'default'}
+                          sx={{ mb: 2 }}
+                        />
+                      )}
                       {r.aliases && r.aliases.length > 0 && (
                         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                           <strong>Aliases:</strong> {r.aliases.slice(0, 3).join(', ')}
@@ -361,7 +428,9 @@ function App() {
           </Box>
         )}
 
-        {tabValue === 3 && (
+        {tabValue === 3 && <ApiTokensTab />}
+
+        {tabValue === 4 && (
           <Box>
             <Typography variant="h5" gutterBottom sx={{ mb: 3 }}>
               User Manual & Help

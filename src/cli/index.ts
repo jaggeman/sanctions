@@ -1,11 +1,9 @@
 import { Command } from 'commander';
-import * as admin from 'firebase-admin';
 import { db } from '../shared/firebase';
-import { normalizeText } from '../importer/uploader';
 import { runImport } from '../importer';
-import { SanctionRecord } from '../shared/types';
+import { runSearch } from '../search';
 
-const program = new Command();
+export const program = new Command();
 
 program
   .name('sanctions')
@@ -24,55 +22,27 @@ program
   .option('-l, --limit <limit>', 'Max antal träffar att visa', '10')
   .action(async (queryStr, options) => {
     try {
-      const normalized = normalizeText(queryStr);
-      const tokens = normalized.split(' ').filter(t => t.length >= 2);
-
-      if (tokens.length === 0) {
-        console.error('❌ Sökordet måste vara minst 2 tecken långt.');
-        process.exit(1);
-      }
-
       console.log(`Söker efter "${queryStr}"...`);
 
-      const firstToken = tokens[0];
-      const sanctionsCollection = db.collection('sanctions');
-      let query: admin.firestore.Query = sanctionsCollection.where('searchNames', 'array-contains', firstToken);
-
-      if (options.type) {
-        query = query.where('type', '==', options.type.toLowerCase());
-      }
-
-      const snapshot = await query.limit(300).get();
-      const results: SanctionRecord[] = [];
-      const sourcesFilter = options.sources ? options.sources.split(',').map((s: string) => s.trim().toUpperCase()) : null;
-
-      snapshot.forEach((doc: any) => {
-        const record = doc.data() as SanctionRecord;
-        const matchesAll = tokens.every(token => 
-          record.searchNames.includes(token) || 
-          normalizeText(record.primaryName).includes(token)
-        );
-
-        if (!matchesAll) return;
-        if (sourcesFilter && !sourcesFilter.includes(record.source.toUpperCase())) return;
-
-        results.push(record);
+      const { results, totalMatches, truncated } = await runSearch(queryStr, {
+        source: options.sources,
+        type: options.type ? options.type.toLowerCase() : undefined,
+        limit: parseInt(options.limit) || 10,
       });
 
-      const limit = parseInt(options.limit) || 10;
-      const sliced = results.slice(0, limit);
-
-      if (sliced.length === 0) {
+      if (results.length === 0) {
         console.log('ℹ️ Inga träffar hittades.');
         process.exit(0);
+        return; // process.exit never returns; this guards a stubbed exit in tests
       }
 
-      console.log(`\nHittade ${results.length} träffar (visar första ${sliced.length}):\n`);
-      
-      sliced.forEach(r => {
+      console.log(`\nHittade ${totalMatches} träffar (visar första ${results.length}):\n`);
+
+      results.forEach(r => {
         console.log(`--------------------------------------------------`);
         console.log(`🆔 ID:      ${r.id}`);
         console.log(`👤 Namn:    \x1b[1m\x1b[32m${r.primaryName}\x1b[0m`);
+        console.log(`🎯 Träff:   ${r.score}% (matchade "${r.matchedAlias}")`);
         if (r.aliases && r.aliases.length > 0) {
           console.log(`🗣️ Alias:   ${r.aliases.join(', ')}`);
         }
@@ -93,8 +63,13 @@ program
           console.log(`📝 Orsak:   ${r.sanctionReason.substring(0, 150)}${r.sanctionReason.length > 150 ? '...' : ''}`);
         }
       });
-      console.log(`--------------------------------------------------\n`);
+      console.log(`--------------------------------------------------`);
+      if (truncated) {
+        console.log(`ℹ️ Visar ${results.length} av ${totalMatches} totala träffar. Höj --limit eller skärp sökningen för fler.`);
+      }
+      console.log();
       process.exit(0);
+      return;
 
     } catch (error: any) {
       console.error('❌ Ett fel uppstod vid sökning:', error.message);
@@ -202,4 +177,8 @@ program
     }
   });
 
-program.parse(process.argv);
+// Guarded so importing this module (e.g. from tests) doesn't also parse the
+// importer's own process.argv.
+if (require.main === module) {
+  program.parse(process.argv);
+}
