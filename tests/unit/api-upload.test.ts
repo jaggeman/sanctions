@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
+import { createSession } from '../../src/auth/session';
+import { SESSION_COOKIE_NAME } from '../../src/auth/middleware';
 
 const processUpload = vi.fn();
 vi.mock('../../src/importer/uploadPipeline', () => ({ processUpload }));
@@ -185,5 +187,43 @@ describe('POST /api/upload', () => {
     expect(processUpload).toHaveBeenCalledWith(
       expect.objectContaining({ importOptions: expect.objectContaining({ dryRun: true }) }),
     );
+  });
+
+  // Issue #105: force:true bypasses the diff engine's delist safety guard —
+  // restricted to admin sessions specifically (multipart fields always
+  // arrive as strings, so 'true' rather than the boolean true).
+  describe('force:true restricted to admins (issue #105)', () => {
+    it('allows force:true for an admin session', async () => {
+      processUpload.mockResolvedValue({ outcome: 'applied', importId: 'abc123', counts: { parsed: 1, uploaded: 1 } });
+
+      const res = await agent
+        .post('/api/upload')
+        .field('source', 'PEP')
+        .field('force', 'true')
+        .attach('file', Buffer.from('id;name\n1;Test\n'), 'people.csv');
+
+      expect(res.status).toBe(200);
+      expect(processUpload).toHaveBeenCalledWith(
+        expect.objectContaining({ importOptions: expect.objectContaining({ force: true }) }),
+      );
+    });
+
+    it('rejects force:true for a logged-in non-admin session with 403, and cleans up the temp file', async () => {
+      vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'example.com');
+      const sid = createSession('analyst@example.com');
+
+      const res = await request(api)
+        .post('/api/upload')
+        .set('Cookie', `${SESSION_COOKIE_NAME}=${sid}`)
+        .field('source', 'PEP')
+        .field('force', 'true')
+        .attach('file', Buffer.from('id;name\n1;Test\n'), 'people.csv');
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toMatch(/admin/i);
+      expect(processUpload).not.toHaveBeenCalled();
+      expect(removeMock).toHaveBeenCalled();
+      vi.unstubAllEnvs();
+    });
   });
 });

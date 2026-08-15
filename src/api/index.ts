@@ -70,6 +70,29 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // (CLAUDE.md §6). Matches the shape runImport auto-generates
 // (import_<timestamp>_<hex>) plus reasonable room for a caller-chosen id.
 const IMPORT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
+/**
+ * `force: true` bypasses the diff engine's delist safety guard (issue #8) —
+ * the one thing standing between a bad import and mass-delisting a whole
+ * sanctions source. `requireAuthOrScope('write')` alone only proves the
+ * caller is logged in (or holds a write-scoped token), not that they're
+ * trusted with overriding a safety mechanism — restricting it to real admin
+ * sessions specifically (issue #105). A write-scoped API token has no
+ * associated identity to check admin status against at all, so it's
+ * rejected outright rather than silently treated as non-admin.
+ */
+function assertForceAllowed(req: express.Request, res: express.Response, force: boolean): boolean {
+  if (!force) return true;
+
+  const email = (req as any).userEmail;
+  if (!email || !isAdminEmail(email)) {
+    res.status(403).json({ error: '"force" (delist safety guard override) requires an admin session.' });
+    return false;
+  }
+
+  console.warn(`[audit] Delist guard override (force=true) used by ${email}`);
+  return true;
+}
 const SESSION_COOKIE_OPTIONS = {
   httpOnly: true,
   sameSite: 'lax' as const,
@@ -316,6 +339,7 @@ app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<a
   if (importId !== undefined && !IMPORT_ID_PATTERN.test(importId)) {
     return res.status(400).json({ error: '"importId" must match ^[A-Za-z0-9_-]{1,128}$.' });
   }
+  if (!assertForceAllowed(req, res, !!force)) return;
 
   const importOptions = {
     sources,
@@ -410,6 +434,10 @@ app.post('/api/upload', requireAuthOrScope('write'), uploadSingleFile('file'), a
   if (importId !== undefined && !IMPORT_ID_PATTERN.test(importId)) {
     await fs.remove(req.file.path).catch((e) => console.error('Failed to cleanup temp file', e));
     return res.status(400).json({ error: '"importId" must match ^[A-Za-z0-9_-]{1,128}$.' });
+  }
+  if (!assertForceAllowed(req, res, force)) {
+    await fs.remove(req.file.path).catch((e) => console.error('Failed to cleanup temp file', e));
+    return;
   }
 
   const uploadedPath = req.file.path;
