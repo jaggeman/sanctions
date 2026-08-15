@@ -227,6 +227,89 @@
         }
       }
     },
+    "/api/overrides/{id}": {
+      "put": {
+        "summary": "Skapa eller ersätta en override för en sanktionspost",
+        "description": "Lägger en fältvis rättelse ovanpå en importerad post (issue #35). Den lagrade posten muteras aldrig — tar man bort overriden kommer de senast importerade värdena tillbaka exakt. Ersätter (upsert), mergar inte fältvis med en tidigare override. Kräver inloggad session; overriddenBy sätts alltid från den inloggade användaren, aldrig från request-body.",
+        "security": [{ "cookieAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID för sanktionsposten som ska overridas (t.ex. EU-1234)",
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["fields", "reason"],
+                "properties": {
+                  "fields": {
+                    "type": "object",
+                    "description": "Icke-tomt objekt med fält att rätta. id/source/type/createdAt/searchNames/status kan inte overridas.",
+                    "example": { "sanctionReason": "Korrigerad orsakstext" }
+                  },
+                  "reason": {
+                    "type": "string",
+                    "example": "Källans transliterering var felaktig"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Override sparad",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Override" }
+              }
+            }
+          },
+          "400": {
+            "description": "Saknat/tomt \"fields\" eller \"reason\", eller försök att overrida ett skyddat fält"
+          },
+          "401": {
+            "description": "Ingen giltig session (ej inloggad)"
+          },
+          "404": {
+            "description": "Ingen sanktionspost med detta ID hittades"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Ta bort en override",
+        "description": "Återställer exakt de senast importerade värdena för posten — den lagrade posten muterades aldrig av overriden.",
+        "security": [{ "cookieAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Override borttagen (idempotent — 200 även om ingen fanns)",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "ok": { "type": "boolean" } } }
+              }
+            }
+          },
+          "401": {
+            "description": "Ingen giltig session (ej inloggad)"
+          }
+        }
+      }
+    },
     "/api/admin/tokens": {
       "post": {
         "summary": "Skapa en ny API-token",
@@ -468,7 +551,32 @@
             "type": "string",
             "format": "date-time",
             "description": "When this record most recently went missing from an import."
+          },
+          "overriddenFields": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Field names currently overridden by a local correction (issue #35). Not part of the persisted document — computed on every read by merging overrides/{id} onto the stored record, so the caller can tell official source data apart from a local correction. Empty when no override exists for this record.",
+            "example": ["sanctionReason"]
           }
+        }
+      },
+      "Override": {
+        "type": "object",
+        "required": ["entityId", "fields", "overriddenBy", "overriddenAt", "reason"],
+        "properties": {
+          "entityId": { "type": "string", "example": "EU-1234" },
+          "fields": {
+            "type": "object",
+            "description": "Sparse set of fields to override. Immutable identity/bookkeeping fields (id, source, type, createdAt, searchNames, status) are rejected — status cannot be overridden so a correction can never resurrect a delisted record.",
+            "additionalProperties": true
+          },
+          "overriddenBy": {
+            "type": "string",
+            "description": "Always the authenticated caller's email — never taken from the request body.",
+            "example": "analyst@example.com"
+          },
+          "overriddenAt": { "type": "string", "format": "date-time" },
+          "reason": { "type": "string", "example": "Source transliteration was inaccurate" }
         }
       }
     }

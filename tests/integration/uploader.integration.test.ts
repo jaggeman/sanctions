@@ -18,6 +18,7 @@ process.env.FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'sanctions-
 
 const { db } = await import('../../src/shared/firebase');
 const { uploadRecords, delistRecords, generateSearchTokens } = await import('../../src/importer/uploader');
+const { getOverride, saveOverride, deleteOverride, applyOverride } = await import('../../src/overrides');
 
 function record(overrides: Record<string, any> = {}) {
   return {
@@ -39,6 +40,9 @@ async function clearCollection() {
   // does not cascade-delete subcollections on its own (see issue #9 gotchas).
   const snap = await db.collection('sanctions').get();
   await Promise.all(snap.docs.map((doc) => db.recursiveDelete(doc.ref)));
+
+  const overridesSnap = await db.collection('overrides').get();
+  await Promise.all(overridesSnap.docs.map((doc: any) => doc.ref.delete()));
 }
 
 beforeEach(async () => {
@@ -189,5 +193,81 @@ describe('uploadRecords — custom records survive an unrelated import (issue #1
 
     const after = (await db.collection('sanctions').doc('CUSTOM-1').get()).data();
     expect(after).toEqual(before);
+  });
+});
+
+describe('overrides — real Firestore write path (issue #35)', () => {
+  it('survives a full re-import of its source, and still wins over the freshly re-imported value', async () => {
+    await uploadRecords([
+      record({ id: 'EU-override-1', primaryName: 'Original Name', sanctionReason: 'Original reason' }),
+    ]);
+
+    await saveOverride(
+      'EU-override-1',
+      { sanctionReason: 'Analyst-corrected reason' },
+      { overriddenBy: 'analyst@example.com', reason: 'Source reason was inaccurate' },
+    );
+
+    // Simulates a full re-import of the same source: the parser produced a
+    // genuinely updated sanctionReason from the official source this time.
+    await uploadRecords([
+      record({ id: 'EU-override-1', primaryName: 'Original Name', sanctionReason: 'Updated source reason' }),
+    ]);
+
+    const rawDoc = (await db.collection('sanctions').doc('EU-override-1').get()).data()!;
+    // The import itself is unaffected by the override — it wrote the real,
+    // fresh source value straight through.
+    expect(rawDoc.sanctionReason).toBe('Updated source reason');
+
+    const override = await getOverride('EU-override-1');
+    const { record: merged, overriddenFields } = applyOverride(rawDoc, override);
+    expect(merged.sanctionReason).toBe('Analyst-corrected reason');
+    expect(overriddenFields).toEqual(['sanctionReason']);
+  });
+
+  it('removing an override restores exactly the CURRENT imported values, not a frozen pre-override snapshot', async () => {
+    await uploadRecords([
+      record({ id: 'EU-override-2', primaryName: 'Original Name', sanctionReason: 'Original reason' }),
+    ]);
+    await saveOverride(
+      'EU-override-2',
+      { sanctionReason: 'Analyst-corrected reason' },
+      { overriddenBy: 'analyst@example.com', reason: 'Fix' },
+    );
+
+    // A re-import lands new source data WHILE the override is still active.
+    await uploadRecords([
+      record({ id: 'EU-override-2', primaryName: 'Original Name', sanctionReason: 'Second source update' }),
+    ]);
+
+    await deleteOverride('EU-override-2');
+
+    const rawDoc = (await db.collection('sanctions').doc('EU-override-2').get()).data()!;
+    const override = await getOverride('EU-override-2');
+    const { record: merged, overriddenFields } = applyOverride(rawDoc, override);
+
+    // Not 'Original reason' (the pre-override snapshot) — the record itself
+    // was never mutated by the override, so removing it just reveals
+    // whatever the source most recently and genuinely said.
+    expect(merged.sanctionReason).toBe('Second source update');
+    expect(overriddenFields).toEqual([]);
+  });
+
+  it('does not resurrect a delisted record even with an override attempting to flip status back to active', async () => {
+    await uploadRecords([record({ id: 'EU-override-3', primaryName: 'Some Name' })], 'import-1');
+    await delistRecords(['EU-override-3'], 'import-2');
+
+    await saveOverride(
+      'EU-override-3',
+      { status: 'active' } as any,
+      { overriddenBy: 'analyst@example.com', reason: 'Attempted resurrection' },
+    );
+
+    const rawDoc = (await db.collection('sanctions').doc('EU-override-3').get()).data()!;
+    const override = await getOverride('EU-override-3');
+    const { record: merged, overriddenFields } = applyOverride(rawDoc, override);
+
+    expect(merged.status).toBe('delisted');
+    expect(overriddenFields).toEqual([]);
   });
 });

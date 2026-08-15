@@ -1,11 +1,40 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// overrides/index.ts must not import ../shared/firebase at all — the merge
-// logic is pure and needs no database. If a future change accidentally wires
-// in `db`, this test file has no mock for it and will fail loudly at import
-// time, which is the point.
-import { applyOverride } from '../../src/overrides';
+// Issue #35: overrides/index.ts now also persists (getOverride/saveOverride/
+// deleteOverride), so it needs `db`. Same in-memory-doc fake as
+// tests/unit/customRecords.test.ts — applyOverride itself stays pure and
+// untouched by this mock.
+let store: Record<string, unknown> = {};
+
+const fakeDb = {
+  collection: vi.fn((name: string) => {
+    if (name !== 'overrides') throw new Error(`unexpected collection ${name}`);
+    return {
+      doc: vi.fn((id: string) => ({
+        get: vi.fn(async () => ({
+          exists: id in store,
+          data: () => store[id],
+        })),
+        set: vi.fn(async (data: unknown) => {
+          store[id] = data;
+        }),
+        delete: vi.fn(async () => {
+          delete store[id];
+        }),
+      })),
+    };
+  }),
+};
+
+vi.mock('../../src/shared/firebase', () => ({ db: fakeDb }));
+
+const { applyOverride, getOverride, saveOverride, deleteOverride, IMMUTABLE_KEYS } = await import('../../src/overrides');
 import type { SanctionRecord, Override } from '../../src/shared/types';
+
+beforeEach(() => {
+  store = {};
+  vi.clearAllMocks();
+});
 
 function record(overrides: Partial<SanctionRecord> = {}): SanctionRecord {
   return {
@@ -99,10 +128,10 @@ describe('applyOverride', () => {
     expect(result.overriddenFields).toEqual([]);
   });
 
-  it('ignores a status field even though SanctionRecord does not define one yet (forward guard for issue #8)', () => {
-    const rec = record();
-    const result = applyOverride(rec, override({ status: 'delisted' } as any));
-    expect((result.record as any).status).toBeUndefined();
+  it('cannot resurrect a delisted record — status stays in IMMUTABLE_KEYS now that RecordStatus is real (issue #35)', () => {
+    const rec = record({ status: 'delisted', delistedAt: '2026-01-01T00:00:00.000Z' });
+    const result = applyOverride(rec, override({ status: 'active' } as any));
+    expect(result.record.status).toBe('delisted');
     expect(result.overriddenFields).toEqual([]);
   });
 
@@ -123,5 +152,67 @@ describe('applyOverride', () => {
     expect(result.record.sanctionReason).toBe('New reason');
     expect(result.record.legalBasis).toBe('New legal basis');
     expect(result.overriddenFields.sort()).toEqual(['legalBasis', 'sanctionReason']);
+  });
+});
+
+describe('IMMUTABLE_KEYS', () => {
+  it('is exported for reuse by the write-time validation in the CRUD route', () => {
+    expect(IMMUTABLE_KEYS.has('id')).toBe(true);
+    expect(IMMUTABLE_KEYS.has('source')).toBe(true);
+    expect(IMMUTABLE_KEYS.has('type')).toBe(true);
+    expect(IMMUTABLE_KEYS.has('createdAt')).toBe(true);
+    expect(IMMUTABLE_KEYS.has('searchNames')).toBe(true);
+    expect(IMMUTABLE_KEYS.has('status')).toBe(true);
+  });
+});
+
+describe('getOverride', () => {
+  it('returns null when no override exists for the entity', async () => {
+    expect(await getOverride('EU-1')).toBeNull();
+  });
+
+  it('returns the stored override when one exists', async () => {
+    store['EU-1'] = { entityId: 'EU-1', fields: { sanctionReason: 'x' }, overriddenBy: 'a@example.com', overriddenAt: '2026-01-01T00:00:00.000Z', reason: 'r' };
+    const result = await getOverride('EU-1');
+    expect(result?.entityId).toBe('EU-1');
+    expect(result?.fields.sanctionReason).toBe('x');
+  });
+});
+
+describe('saveOverride', () => {
+  it('creates a new override document keyed by entityId', async () => {
+    const result = await saveOverride('EU-1', { sanctionReason: 'Corrected' }, {
+      overriddenBy: 'analyst@example.com',
+      reason: 'Transliteration fix',
+    });
+
+    expect(result.entityId).toBe('EU-1');
+    expect(result.fields).toEqual({ sanctionReason: 'Corrected' });
+    expect(result.overriddenBy).toBe('analyst@example.com');
+    expect(result.reason).toBe('Transliteration fix');
+    expect(result.overriddenAt).toBeTruthy();
+    expect(store['EU-1']).toEqual(result);
+  });
+
+  it('replaces an existing override (upsert) rather than merging field-by-field', async () => {
+    await saveOverride('EU-1', { sanctionReason: 'First' }, { overriddenBy: 'a@example.com', reason: 'r1' });
+    await saveOverride('EU-1', { legalBasis: 'New basis' }, { overriddenBy: 'b@example.com', reason: 'r2' });
+
+    const result = await getOverride('EU-1');
+    // The first override's field is gone — saveOverride replaces, it doesn't merge.
+    expect(result?.fields).toEqual({ legalBasis: 'New basis' });
+    expect(result?.overriddenBy).toBe('b@example.com');
+  });
+});
+
+describe('deleteOverride', () => {
+  it('removes an existing override', async () => {
+    await saveOverride('EU-1', { sanctionReason: 'x' }, { overriddenBy: 'a@example.com', reason: 'r' });
+    await deleteOverride('EU-1');
+    expect(await getOverride('EU-1')).toBeNull();
+  });
+
+  it('does not throw when there is nothing to delete (idempotent)', async () => {
+    await expect(deleteOverride('DOES-NOT-EXIST')).resolves.toBeUndefined();
   });
 });

@@ -7,9 +7,18 @@ import type { SanctionRecord } from '../../src/shared/types';
 // (see src/search/index.ts) instead of querying Firestore itself, so it's
 // mocked separately below rather than via fakeDb.
 let docGetResult: { exists: boolean; data?: () => any } = { exists: false };
+// Issue #35: GET /api/sanctions/:id now also fetches a matching override doc.
+let overrideDocResult: { exists: boolean; data?: () => any } = { exists: false };
 
 const fakeDb = {
   collection: vi.fn((name: string) => {
+    if (name === 'overrides') {
+      return {
+        doc: vi.fn((id: string) => ({
+          get: vi.fn(async () => ({ ...overrideDocResult, id })),
+        })),
+      };
+    }
     if (name !== 'sanctions') throw new Error(`unexpected collection ${name}`);
     return {
       doc: vi.fn((id: string) => ({
@@ -49,6 +58,7 @@ const agent = request.agent(api);
 
 beforeEach(async () => {
   docGetResult = { exists: false };
+  overrideDocResult = { exists: false };
   runSearch.mockReset();
   runSearch.mockResolvedValue({ results: [], totalMatches: 0, truncated: false });
   vi.clearAllMocks();
@@ -133,6 +143,36 @@ describe('GET /api/sanctions/:id', () => {
     const res = await agent.get('/api/sanctions/PEP-1');
     expect(res.status).toBe(200);
     expect(res.body.id).toBe('PEP-1');
+  });
+
+  it('reports overriddenFields: [] when there is no override (issue #35)', async () => {
+    const rec = record({ id: 'PEP-1' });
+    docGetResult = { exists: true, data: () => rec };
+    overrideDocResult = { exists: false };
+
+    const res = await agent.get('/api/sanctions/PEP-1');
+    expect(res.body.overriddenFields).toEqual([]);
+    expect(res.body.sanctionReason).toBe(rec.sanctionReason);
+  });
+
+  it('merges an override onto the returned record and reports which fields were overridden (issue #35)', async () => {
+    const rec = record({ id: 'PEP-1', sanctionReason: 'Original reason' });
+    docGetResult = { exists: true, data: () => rec };
+    overrideDocResult = {
+      exists: true,
+      data: () => ({
+        entityId: 'PEP-1',
+        fields: { sanctionReason: 'Corrected reason' },
+        overriddenBy: 'analyst@example.com',
+        overriddenAt: '2026-01-01T00:00:00.000Z',
+        reason: 'Fix',
+      }),
+    };
+
+    const res = await agent.get('/api/sanctions/PEP-1');
+    expect(res.status).toBe(200);
+    expect(res.body.sanctionReason).toBe('Corrected reason');
+    expect(res.body.overriddenFields).toEqual(['sanctionReason']);
   });
 });
 

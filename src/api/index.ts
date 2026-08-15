@@ -12,7 +12,9 @@ import { runImport } from '../importer';
 import { processUpload } from '../importer/uploadPipeline';
 import { tokensRouter } from './routes/tokens';
 import { runSearch } from '../search';
-import { SanctionSource } from '../shared/types';
+import { SanctionSource, SanctionRecord } from '../shared/types';
+import { applyOverride, getOverride } from '../overrides';
+import { overridesRouter } from './routes/overrides';
 import { createOtp, verifyOtp } from '../auth/otpStore';
 import { sendOtpEmail } from '../auth/mailer';
 import { createSession, destroySession } from '../auth/session';
@@ -186,6 +188,14 @@ app.get('/openapi.json', (req, res) => {
 app.use('/api/admin/tokens', tokensRouter);
 
 /**
+ * PUT/DELETE /api/overrides/:id
+ * Field-level corrections layered on top of an imported record (issue #35).
+ * Inherits the blanket requireAuth session gate above — any authenticated
+ * caller may write, never anonymous. See src/api/routes/overrides.ts.
+ */
+app.use('/api/overrides', overridesRouter);
+
+/**
  * GET /api/search
  * Fuzzy name search (phonetic + edit-distance + token-set matching), plus an
  * exact passport/ID fast path. See src/search/matcher.ts — the same matcher
@@ -226,6 +236,11 @@ app.get('/api/search', async (req, res): Promise<any> => {
  * an imported record is never hard-deleted (issue #9), so a delisted record
  * is a valid, meaningful answer and is returned with its status/delistedAt,
  * not a 404.
+ *
+ * Merges any override on top of the stored record before responding (issue
+ * #35) — the stored doc itself is never touched, which is what keeps an
+ * override reversible. `overriddenFields` in the response tells the caller
+ * which fields are local corrections rather than official source data.
  */
 app.get('/api/sanctions/:id', async (req, res): Promise<any> => {
   const { id } = req.params;
@@ -235,7 +250,10 @@ app.get('/api/sanctions/:id', async (req, res): Promise<any> => {
     if (!doc.exists) {
       return res.status(404).json({ error: `Sanction record with ID ${id} not found.` });
     }
-    res.json(doc.data());
+
+    const override = await getOverride(id);
+    const { record, overriddenFields } = applyOverride(doc.data() as SanctionRecord, override);
+    res.json({ ...record, overriddenFields });
   } catch (error: any) {
     console.error('Get details error:', error);
     res.status(500).json({ error: 'Internal server error', details: error.message });
