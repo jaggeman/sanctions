@@ -105,7 +105,21 @@ const fakeDb = {
           ...ref,
           collection: (subName: string) => {
             if (subName !== 'versions') throw new Error(`unexpected subcollection ${subName}`);
-            return { doc: (versionId: string) => makeVersionRef(id, versionId) };
+            return {
+              doc: (versionId: string) => makeVersionRef(id, versionId),
+              orderBy: (field: string, dir: 'asc' | 'desc' = 'asc') => ({
+                get: async () => {
+                  const stored = store.get(id);
+                  const entries = Array.from(stored?.versions.values() ?? []);
+                  entries.sort((a: any, b: any) => {
+                    if (a[field] === b[field]) return 0;
+                    const cmp = a[field] > b[field] ? 1 : -1;
+                    return dir === 'desc' ? -cmp : cmp;
+                  });
+                  return { docs: entries.map((v) => ({ data: () => ({ ...v }) })) };
+                },
+              }),
+            };
           },
         };
       },
@@ -119,7 +133,7 @@ const fakeDb = {
 
 vi.mock('../../src/shared/firebase', () => ({ db: fakeDb }));
 
-const { uploadRecords, delistRecords, computeContentHash } = await import('../../src/importer/uploader');
+const { uploadRecords, delistRecords, computeContentHash, listRecordVersions } = await import('../../src/importer/uploader');
 
 function record(overrides: Partial<SanctionRecord> = {}): SanctionRecord {
   return {
@@ -247,5 +261,27 @@ describe('delistRecords', () => {
 
   it('does nothing (no throw) when given an empty array', async () => {
     await expect(delistRecords([], 'import-1')).resolves.toBeUndefined();
+  });
+});
+
+describe('listRecordVersions (issue #12)', () => {
+  it('returns an empty array for a record with no version history', async () => {
+    expect(await listRecordVersions('NOPE')).toEqual([]);
+  });
+
+  it('returns the version trail newest first', async () => {
+    // Fake timers so each write gets a distinguishable changedAt — three
+    // synchronous writes can otherwise land on the identical millisecond.
+    vi.useFakeTimers();
+    await uploadRecords([record({ primaryName: 'Original Name' })], 'import-1');
+    vi.advanceTimersByTime(1000);
+    await uploadRecords([record({ primaryName: 'Updated Name' })], 'import-2');
+    vi.advanceTimersByTime(1000);
+    await delistRecords(['PEP-1'], 'import-3');
+    vi.useRealTimers();
+
+    const versions = await listRecordVersions('PEP-1');
+    expect(versions.map((v) => v.importId)).toEqual(['import-3', 'import-2', 'import-1']);
+    expect(versions.map((v) => v.changeType)).toEqual(['delisted', 'updated', 'created']);
   });
 });

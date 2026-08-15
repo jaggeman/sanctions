@@ -288,3 +288,14 @@ export async function delistRecords(ids: string[], importId?: string): Promise<v
     await batch.commit();
   }
 }
+
+/**
+ * Returns a record's full version trail, newest first (issue #12 — record
+ * detail view). Empty array if the record has no version history (or
+ * doesn't exist) — callers that need to distinguish "no history" from
+ * "no such record" should check the record itself first.
+ */
+export async function listRecordVersions(id: string): Promise<RecordVersion[]> {
+  const snapshot = await db.collection('sanctions').doc(id).collection('versions').orderBy('changedAt', 'desc').get();
+  return snapshot.docs.map((doc: any) => doc.data() as RecordVersion);
+}

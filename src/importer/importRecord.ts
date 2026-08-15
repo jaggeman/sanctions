@@ -60,3 +60,9 @@ export async function markImportFailed(sha256: string, error: string): Promise<v
 export async function markImportRejected(sha256: string, duplicateOfImportId: string): Promise<void> {
   await db.collection(COLLECTION).doc(sha256).update({ status: 'rejected', duplicateOfImportId });
 }
+
+/** Lists import audit records newest first (issue #12 — import history view). */
+export async function listImports(limit: number): Promise<ImportRecord[]> {
+  const snapshot = await db.collection(COLLECTION).orderBy('uploadedAt', 'desc').limit(limit).get();
+  return snapshot.docs.map((doc: any) => doc.data() as ImportRecord);
+}

@@ -60,4 +60,49 @@ describe('App component navigation tabs', () => {
 
     await waitFor(() => expect(screen.queryByText('Search Entities')).not.toBeInTheDocument());
   });
+
+  it('navigates to the Import History tab (issue #12)', async () => {
+    await renderLoggedIn();
+    fireEvent.click(screen.getByText('Import History'));
+
+    await waitFor(() => expect(screen.getByText(/no imports yet/i)).toBeInTheDocument());
+  });
+
+  it('opens the record detail view when a search result is clicked (issue #12)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('/api/auth/session')) {
+          return { ok: true, json: async () => ({ email: 'analyst@example.com' }) } as Response;
+        }
+        if (url.includes('/api/search')) {
+          return {
+            ok: true,
+            json: async () => ({
+              results: [{ id: 'EU-1', source: 'EU', type: 'individual', primaryName: 'Test Person', aliases: [] }],
+              totalMatches: 1,
+              truncated: false,
+            }),
+          } as Response;
+        }
+        if (url.includes('/versions')) {
+          return { ok: true, json: async () => [] } as Response;
+        }
+        if (url.includes('/api/sanctions/')) {
+          return { ok: true, json: async () => ({ id: 'EU-1', source: 'EU', type: 'individual', primaryName: 'Test Person', aliases: [] }) } as Response;
+        }
+        return { ok: true, json: async () => ({}) } as Response;
+      }),
+    );
+
+    await renderLoggedIn();
+    fireEvent.change(screen.getByPlaceholderText(/search by name/i), { target: { value: 'Test Person' } });
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }));
+
+    await waitFor(() => expect(screen.getAllByText('Test Person').length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByText('Test Person')[0]);
+
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+  });
 });

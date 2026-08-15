@@ -21,7 +21,8 @@ import {
   Select,
   MenuItem,
   FormControl,
-  InputLabel
+  InputLabel,
+  Alert
 } from '@mui/material';
 import type { PaletteMode, SelectChangeEvent } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
@@ -31,6 +32,8 @@ import Brightness7Icon from '@mui/icons-material/Brightness7';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import InfoIcon from '@mui/icons-material/Info';
 import ApiTokensTab from './ApiTokensTab';
+import ImportHistoryTab from './ImportHistoryTab';
+import RecordDetail from './RecordDetail';
 import LogoutIcon from '@mui/icons-material/Logout';
 import Login from './components/Login';
 
@@ -129,6 +132,14 @@ function App() {
   const [truncated, setTruncated] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [uploadSource, setUploadSource] = useState('EU');
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
+  const [uploadFeedback, setUploadFeedback] = useState<{
+    severity: 'success' | 'error' | 'warning';
+    message: string;
+    duplicateImportId?: string;
+  } | null>(null);
+  const [historyFocusId, setHistoryFocusId] = useState<string | undefined>(undefined);
 
   const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
@@ -137,6 +148,7 @@ function App() {
   const handleSearch = async () => {
     if (!searchQuery) return;
     setIsLoading(true);
+    setSearchError(null);
     try {
       const res = await fetch(`/api/search?q=${encodeURIComponent(searchQuery)}`);
       const data = await res.json();
@@ -145,7 +157,7 @@ function App() {
       setTruncated(Boolean(data.truncated));
     } catch (err) {
       console.error(err);
-      alert('Search failed');
+      setSearchError('Search failed. Please try again.');
     }
     setIsLoading(false);
   };
@@ -153,26 +165,38 @@ function App() {
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
     const file = e.target.files[0];
-    
+
     const formData = new FormData();
     formData.append('file', file);
     formData.append('source', uploadSource);
 
     setIsLoading(true);
+    setUploadFeedback(null);
     try {
       const res = await fetch('/api/upload', {
         method: 'POST',
         body: formData
       });
-      if (res.ok) {
-        alert('File uploaded successfully! Import process has started.');
+      const data = await res.json().catch(() => ({}));
+
+      if (res.status === 200 && data.status === 'applied') {
+        const counts = data.counts || {};
+        setUploadFeedback({
+          severity: 'success',
+          message: `Import applied — parsed ${counts.parsed ?? 0}, uploaded ${counts.uploaded ?? 0}.`,
+        });
+      } else if (res.status === 409 && data.duplicateOfImportId) {
+        setUploadFeedback({
+          severity: 'warning',
+          message: `Identical file already imported as import #${data.duplicateOfImportId}.`,
+          duplicateImportId: data.duplicateOfImportId,
+        });
       } else {
-        const data = await res.json().catch(() => ({}));
-        alert(data.error || 'Upload failed.');
+        setUploadFeedback({ severity: 'error', message: data.error || 'Upload failed.' });
       }
     } catch (err) {
       console.error(err);
-      alert('Upload failed.');
+      setUploadFeedback({ severity: 'error', message: 'Upload failed.' });
     }
     setIsLoading(false);
   };
@@ -222,6 +246,7 @@ function App() {
           <Tabs value={tabValue} onChange={handleTabChange} aria-label="app tabs">
             <Tab label="Search" />
             <Tab label="Upload Lists" />
+            <Tab label="Import History" />
             <Tab label="Official EU Lists" />
             <Tab label="API Tokens" />
             <Tab label="Help & Manual" />
@@ -258,6 +283,12 @@ function App() {
               </CardContent>
             </Card>
 
+            {searchError && (
+              <Alert severity="error" sx={{ mb: 2 }} onClose={() => setSearchError(null)}>
+                {searchError}
+              </Alert>
+            )}
+
             {results.length > 0 && (
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                 {truncated
@@ -269,7 +300,10 @@ function App() {
             <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: '1fr 1fr 1fr' }, gap: 3 }}>
               {results.map((r, i) => (
                 <Box key={i}>
-                  <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+                  <Card
+                    sx={{ height: '100%', display: 'flex', flexDirection: 'column', cursor: 'pointer' }}
+                    onClick={() => setSelectedRecordId(r.id)}
+                  >
                     <CardContent sx={{ flexGrow: 1 }}>
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
                         <Chip label={r.source} size="small" color="primary" variant="outlined" />
@@ -278,14 +312,18 @@ function App() {
                       <Typography variant="h6" component="h2" gutterBottom>
                         {r.primaryName}
                       </Typography>
-                      {typeof r.score === 'number' && (
-                        <Chip
-                          label={`${r.score}% match${r.matchedAlias ? ` — "${r.matchedAlias}"` : ''}`}
-                          size="small"
-                          color={r.score >= 90 ? 'success' : r.score >= 75 ? 'warning' : 'default'}
-                          sx={{ mb: 2 }}
-                        />
-                      )}
+                      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
+                        {typeof r.score === 'number' && (
+                          <Chip
+                            label={`${r.score}% match${r.matchedAlias ? ` — "${r.matchedAlias}"` : ''}`}
+                            size="small"
+                            color={r.score >= 90 ? 'success' : r.score >= 75 ? 'warning' : 'default'}
+                          />
+                        )}
+                        {r.status === 'delisted' && (
+                          <Chip label="Delisted" size="small" color="default" variant="outlined" />
+                        )}
+                      </Box>
                       {r.aliases && r.aliases.length > 0 && (
                         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                           <strong>Aliases:</strong> {r.aliases.slice(0, 3).join(', ')}
@@ -320,7 +358,7 @@ function App() {
                   Import Sanctions List
                 </Typography>
                 <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
-                  Upload CSV or XML files to sync with the database. Processing happens in the background.
+                  Upload CSV or XML files to sync with the database. The file is parsed and applied immediately, and you'll see the outcome below.
                 </Typography>
 
                 <FormControl size="small" sx={{ minWidth: 200 }}>
@@ -366,12 +404,37 @@ function App() {
                     Supported formats: CSV, XML
                   </Typography>
                 </Paper>
+
+                {uploadFeedback && (
+                  <Alert
+                    severity={uploadFeedback.severity}
+                    sx={{ mt: 3 }}
+                    onClose={() => setUploadFeedback(null)}
+                    action={
+                      uploadFeedback.duplicateImportId ? (
+                        <Button
+                          size="small"
+                          onClick={() => {
+                            setHistoryFocusId(uploadFeedback.duplicateImportId);
+                            setTabValue(2);
+                          }}
+                        >
+                          View import
+                        </Button>
+                      ) : undefined
+                    }
+                  >
+                    {uploadFeedback.message}
+                  </Alert>
+                )}
               </CardContent>
             </Card>
           </Box>
         )}
 
-        {tabValue === 2 && (
+        {tabValue === 2 && <ImportHistoryTab focusImportId={historyFocusId} />}
+
+        {tabValue === 3 && (
           <Box>
             <Typography variant="h5" gutterBottom sx={{ mb: 3 }}>
               Official European Union Sanctions Lists
@@ -451,9 +514,9 @@ function App() {
           </Box>
         )}
 
-        {tabValue === 3 && <ApiTokensTab />}
+        {tabValue === 4 && <ApiTokensTab />}
 
-        {tabValue === 4 && (
+        {tabValue === 5 && (
           <Box>
             <Typography variant="h5" gutterBottom sx={{ mb: 3 }}>
               User Manual & Help
@@ -485,7 +548,7 @@ function App() {
                     The <strong>Upload Lists</strong> tab enables you to manually synchronize new sanctions files into the system database. 
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Currently supported formats include structured <strong>CSV</strong> files and <strong>XML</strong> format lists (specifically parsing the EU, UN, and US standard schema). The processing of the files occurs automatically in the background. Note that large files may take a minute or two to fully parse and index.
+                    Currently supported formats include structured <strong>CSV</strong> files and <strong>XML</strong> format lists (specifically parsing the EU, UN, and US standard schema). Uploading an identical file twice is rejected as a duplicate, with a link to the original import in the <strong>Import History</strong> tab.
                   </Typography>
                 </CardContent>
               </Card>
@@ -509,6 +572,8 @@ function App() {
           </Box>
         )}
       </Container>
+
+      <RecordDetail recordId={selectedRecordId} onClose={() => setSelectedRecordId(null)} />
     </ThemeProvider>
   );
 }
