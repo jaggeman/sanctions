@@ -1,6 +1,9 @@
 import { XMLParser } from 'fast-xml-parser';
 import * as fs from 'fs-extra';
 import { SanctionRecord, Address, NameAlias, BirthDate } from '../../shared/types';
+import { logger } from '../../shared/logger';
+
+const log = logger.child({ module: 'importer.parsers.un' });
 
 function toArray(val: any): any[] {
   if (val === undefined || val === null) return [];
@@ -29,9 +32,9 @@ function deriveBirthDates(datesOfBirth: string[]): BirthDate[] {
 }
 
 export async function parseUNList(filePath: string): Promise<SanctionRecord[]> {
-  console.log(`Parsing UN sanctions list from ${filePath}...`);
+  log.info('parse.start', { filePath });
   const xmlContent = await fs.readFile(filePath, 'utf-8');
-  
+
   const parser = new XMLParser({
     ignoreAttributes: false,
     parseAttributeValue: true,
@@ -42,7 +45,7 @@ export async function parseUNList(filePath: string): Promise<SanctionRecord[]> {
   const consolidatedList = parsed?.CONSOLIDATED_LIST;
 
   if (!consolidatedList) {
-    console.warn('No CONSOLIDATED_LIST found in UN XML file.');
+    log.warn('parse.no_consolidated_list_found', { filePath });
     return [];
   }
 
@@ -50,8 +53,8 @@ export async function parseUNList(filePath: string): Promise<SanctionRecord[]> {
 
   // 1. Process INDIVIDUALS
   const individuals = toArray(consolidatedList.INDIVIDUALS?.INDIVIDUAL);
-  console.log(`Found ${individuals.length} UN individuals to parse.`);
-  
+  log.info('parse.individuals_found', { filePath, count: individuals.length });
+
   for (const ind of individuals) {
     const dataId = ind.DATAID;
     if (!dataId) continue;
@@ -160,7 +163,7 @@ export async function parseUNList(filePath: string): Promise<SanctionRecord[]> {
 
   // 2. Process ENTITIES
   const entities = toArray(consolidatedList.ENTITIES?.ENTITY);
-  console.log(`Found ${entities.length} UN entities to parse.`);
+  log.info('parse.entities_found', { filePath, count: entities.length });
 
   for (const ent of entities) {
     const dataId = ent.DATAID;
@@ -213,6 +216,6 @@ export async function parseUNList(filePath: string): Promise<SanctionRecord[]> {
     });
   }
 
-  console.log(`Parsed ${records.length} UN records.`);
+  log.info('parse.complete', { filePath, recordCount: records.length });
   return records;
 }

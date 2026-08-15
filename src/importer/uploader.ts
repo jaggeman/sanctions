@@ -2,6 +2,9 @@ import * as crypto from 'crypto';
 import * as admin from 'firebase-admin';
 import { db } from '../shared/firebase';
 import { SanctionRecord, RecordVersion, ChangeType } from '../shared/types';
+import { logger } from '../shared/logger';
+
+const log = logger.child({ module: 'importer.uploader' });
 
 /**
  * Normalizes text to lowercase and removes accents/diacritics for uniform search.
@@ -112,7 +115,11 @@ export function generateSearchTokens(primaryName: string, aliases: string[] = []
 // Fields excluded from the content hash: status/listedAt/delistedAt are the
 // soft-delete lifecycle itself, not content — including them would make every
 // relist look like a content "update". createdAt/updatedAt/searchNames are
-// derived/bookkeeping, not source content.
+// derived/bookkeeping, not source content. firstSeenImport/lastSeenImport are
+// the same kind of pipeline bookkeeping (issue #68) — nothing sets them yet,
+// but the moment something does (e.g. the diff engine stamping
+// lastSeenImport per parsed record), including them here would make every
+// re-import of an otherwise-unchanged record look "updated."
 const CONTENT_HASH_EXCLUDED_FIELDS = new Set([
   'status',
   'listedAt',
@@ -121,7 +128,39 @@ const CONTENT_HASH_EXCLUDED_FIELDS = new Set([
   'createdAt',
   'updatedAt',
   'searchNames',
+  'firstSeenImport',
+  'lastSeenImport',
 ]);
+
+/**
+ * Recursively puts a value into a canonical form before hashing (issue #68):
+ * object keys sorted, and array elements sorted by their own canonical JSON
+ * representation. Without this, the EU FSD export reordering e.g. an
+ * entity's <address> or <nameAlias> elements between two otherwise-identical
+ * publications would produce a different hash for semantically unchanged
+ * content. None of `SanctionRecord`'s array/object fields depend on element
+ * order for meaning (aliases, addresses, names, identifications, ... are all
+ * unordered collections), so sorting them is safe.
+ */
+function canonicalize(value: any): any {
+  if (Array.isArray(value)) {
+    return value
+      .map(canonicalize)
+      .sort((a, b) => {
+        const sa = JSON.stringify(a);
+        const sb = JSON.stringify(b);
+        return sa < sb ? -1 : sa > sb ? 1 : 0;
+      });
+  }
+  if (value && typeof value === 'object') {
+    const out: Record<string, any> = {};
+    for (const key of Object.keys(value).sort()) {
+      out[key] = canonicalize(value[key]);
+    }
+    return out;
+  }
+  return value;
+}
 
 /**
  * Strips any `source: 'CUSTOM'` record out of a batch headed for the
@@ -134,11 +173,10 @@ const CONTENT_HASH_EXCLUDED_FIELDS = new Set([
 export function filterAutomatedBatch(records: SanctionRecord[]): SanctionRecord[] {
   const dropped = records.filter((r) => r.source === 'CUSTOM');
   if (dropped.length > 0) {
-    console.warn(
-      `Dropping ${dropped.length} CUSTOM-sourced record(s) from an automated import batch ` +
-      `(ids: ${dropped.map((r) => r.id).join(', ')}) — custom records may only be created ` +
-      `via the dedicated custom-records path.`,
-    );
+    log.warn('batch.custom_records_dropped', {
+      count: dropped.length,
+      ids: dropped.map((r) => r.id),
+    });
   }
   return records.filter((r) => r.source !== 'CUSTOM');
 }
@@ -152,7 +190,7 @@ export function computeContentHash(record: SanctionRecord): string {
   const content: Record<string, any> = {};
   for (const key of Object.keys(record).sort()) {
     if (!CONTENT_HASH_EXCLUDED_FIELDS.has(key)) {
-      content[key] = (record as any)[key];
+      content[key] = canonicalize((record as any)[key]);
     }
   }
   return crypto.createHash('sha256').update(JSON.stringify(content)).digest('hex');
@@ -185,7 +223,7 @@ export async function uploadRecords(records: SanctionRecord[], importId?: string
   const batchSize = 500;
   const effectiveImportId = importId || generateImportId();
 
-  console.log(`Starting upload of ${records.length} records to Firestore...`);
+  log.info('upload.start', { recordCount: records.length, importId: effectiveImportId });
 
   for (let i = 0; i < records.length; i += batchSize) {
     const chunk = records.slice(i, i + batchSize);
@@ -201,7 +239,6 @@ export async function uploadRecords(records: SanctionRecord[], importId?: string
 
       // Add search tokens to the record before saving
       record.searchNames = generateSearchTokens(record.primaryName, record.aliases);
-      record.updatedAt = now;
       record.contentHash = computeContentHash(record);
 
       let changeType: ChangeType | null;
@@ -209,21 +246,34 @@ export async function uploadRecords(records: SanctionRecord[], importId?: string
       if (!existingDoc.exists) {
         record.status = 'active';
         record.listedAt = now;
+        record.updatedAt = now;
         changeType = 'created';
       } else {
         const existing = existingDoc.data() as SanctionRecord;
         const wasDelisted = existing.status === 'delisted';
         const contentChanged = existing.contentHash !== record.contentHash;
 
-        record.listedAt = existing.listedAt || now; // preserve first-listed date
         record.status = 'active';
 
         if (wasDelisted) {
           changeType = 'relisted';
+          record.listedAt = existing.listedAt || now; // preserve first-listed date
+          record.updatedAt = now;
         } else if (contentChanged) {
           changeType = 'updated';
+          record.listedAt = existing.listedAt || now; // preserve first-listed date
+          record.updatedAt = now;
         } else {
-          changeType = null; // unchanged — no version entry
+          // Truly unchanged (issue #68): don't let updatedAt/listedAt drift
+          // forward on every import run just because the record was
+          // re-uploaded — that would contradict "an unchanged re-import
+          // writes nothing" above and silently corrupt listedAt for legacy
+          // records that never had one stored (it would otherwise reset to
+          // "today" on every re-import until the first real content change
+          // happened to lock it in).
+          changeType = null;
+          record.listedAt = existing.listedAt;
+          record.updatedAt = existing.updatedAt;
         }
       }
 
@@ -242,10 +292,15 @@ export async function uploadRecords(records: SanctionRecord[], importId?: string
     });
 
     await batch.commit();
-    console.log(`Uploaded batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(records.length / batchSize)} (${chunk.length} records)`);
+    log.info('upload.batch_committed', {
+      importId: effectiveImportId,
+      batchNumber: Math.floor(i / batchSize) + 1,
+      totalBatches: Math.ceil(records.length / batchSize),
+      batchSize: chunk.length,
+    });
   }
 
-  console.log('All records uploaded successfully!');
+  log.info('upload.complete', { importId: effectiveImportId, recordCount: records.length });
 }
 
 /**

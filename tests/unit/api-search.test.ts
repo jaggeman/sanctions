@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import type { SanctionRecord } from '../../src/shared/types';
+import { createSession } from '../../src/auth/session';
+import { SESSION_COOKIE_NAME } from '../../src/auth/middleware';
 
 // GET /api/sanctions/:id still talks to Firestore directly, so it keeps a
 // fake db. GET /api/search now goes through the shared src/search runSearch
@@ -187,6 +189,22 @@ describe('GET /api/sanctions/:id', () => {
     expect(res.body.sanctionReason).toBe('Corrected reason');
     expect(res.body.overriddenFields).toEqual(['sanctionReason']);
   });
+
+  it('rejects an id containing a URL-encoded slash before it ever reaches Firestore', async () => {
+    // %2F decodes to "/" within a single path segment — the real attack this
+    // guards against: a literal "/" in the raw URL would just 404 via normal
+    // Express routing, but an encoded one reaches the :id param intact.
+    const res = await agent.get('/api/sanctions/EU-1%2F..%2Fadmins%2Fattacker');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/invalid/i);
+    expect(fakeDb.collection).not.toHaveBeenCalled();
+  });
+
+  it('rejects an id with other structural characters (400, not a 500 from Firestore)', async () => {
+    const res = await agent.get('/api/sanctions/EU@evil.com');
+    expect(res.status).toBe(400);
+    expect(fakeDb.collection).not.toHaveBeenCalled();
+  });
 });
 
 describe('POST /api/import', () => {
@@ -199,6 +217,95 @@ describe('POST /api/import', () => {
     const res = await agent.post('/api/import').send({ sources: ['EU'] });
     expect(res.status).toBe(202);
     expect(res.body.status).toBe('import_started');
+  });
+
+  it('rejects a mode that is not "sync" or "append"', async () => {
+    const res = await agent.post('/api/import').send({ sources: ['EU'], mode: 'wipe-everything' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/mode/i);
+  });
+
+  it('rejects an importId containing a path separator', async () => {
+    const res = await agent.post('/api/import').send({ sources: ['EU'], importId: '../../etc' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/importId/i);
+  });
+
+  it('accepts a well-formed importId', async () => {
+    const res = await agent.post('/api/import').send({ sources: ['EU'], importId: 'import_123_abc' });
+    expect(res.status).toBe(202);
+  });
+
+  it('dryRun:true awaits the import and returns its result synchronously instead of 202', async () => {
+    const { runImport } = await import('../../src/importer');
+    (runImport as any).mockResolvedValueOnce({
+      success: true,
+      importedCounts: { EU: 2 },
+      diffs: [{ source: 'EU', counts: { parsed: 2, added: 2, updated: 0, unchanged: 0, delisted: 0, skipped: 0 } }],
+    });
+
+    const res = await agent.post('/api/import').send({ sources: ['EU'], mode: 'sync', dryRun: true });
+
+    expect(res.status).toBe(200);
+    expect(res.body.diffs[0].counts.added).toBe(2);
+    expect(runImport).toHaveBeenCalledWith(expect.objectContaining({ mode: 'sync', dryRun: true }));
+  });
+});
+
+// Issue #105: force:true bypasses the diff engine's >20% delist safety guard
+// (issue #8) — restricted to admin sessions specifically, since
+// requireAuthOrScope('write') alone only proves "logged in or holds a
+// write-scoped token," not "trusted to override a safety mechanism."
+describe('POST /api/import — force:true restricted to admins (issue #105)', () => {
+  it('allows force:true for an admin session (admin@sanctions.com is admin by default when ADMIN_EMAILS is unset outside production)', async () => {
+    const res = await agent.post('/api/import').send({ sources: ['EU'], force: true });
+    expect(res.status).toBe(202);
+
+    const { runImport } = await import('../../src/importer');
+    expect(runImport).toHaveBeenCalledWith(expect.objectContaining({ force: true }));
+  });
+
+  it('rejects force:true for a logged-in non-admin session with 403, without ever calling runImport', async () => {
+    vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'example.com');
+    const sid = createSession('analyst@example.com');
+
+    const { runImport } = await import('../../src/importer');
+    (runImport as any).mockClear();
+
+    const res = await request(api)
+      .post('/api/import')
+      .set('Cookie', `${SESSION_COOKIE_NAME}=${sid}`)
+      .send({ sources: ['EU'], force: true });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/admin/i);
+    expect(runImport).not.toHaveBeenCalled();
+    vi.unstubAllEnvs();
+  });
+
+  it('rejects force:true from a write-scoped API token with 403 — a token has no identity to check admin status against', async () => {
+    verifyApiToken.mockResolvedValue({ valid: true, tokenId: 'tok-1', scopes: ['write'] });
+    const { runImport } = await import('../../src/importer');
+    (runImport as any).mockClear();
+
+    const res = await request(api)
+      .post('/api/import')
+      .set('Authorization', 'Bearer sanc_writer')
+      .send({ sources: ['EU'], force: true });
+
+    expect(res.status).toBe(403);
+    expect(runImport).not.toHaveBeenCalled();
+  });
+
+  it('a write-scoped token can still import without force', async () => {
+    verifyApiToken.mockResolvedValue({ valid: true, tokenId: 'tok-1', scopes: ['write'] });
+
+    const res = await request(api)
+      .post('/api/import')
+      .set('Authorization', 'Bearer sanc_writer')
+      .send({ sources: ['EU'] });
+
+    expect(res.status).toBe(202);
   });
 });
 
@@ -284,5 +391,27 @@ describe('bearer-token (API key) auth on the read routes — issue #36', () => {
     const res = await request(api).post('/api/import').set('Authorization', 'Bearer sanc_readonly').send({ sources: ['EU'] });
 
     expect(res.status).toBe(403);
+  });
+
+  it('rejects a mode that is not "sync" or "append"', async () => {
+    const res = await agent
+      .post('/api/upload')
+      .field('source', 'PEP')
+      .field('mode', 'nonsense')
+      .attach('file', Buffer.from('id;name\n1;Test Person\n'), 'people.csv');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/mode/i);
+  });
+
+  it('rejects an importId containing a path separator, and cleans up the temp file', async () => {
+    const res = await agent
+      .post('/api/upload')
+      .field('source', 'PEP')
+      .field('importId', '../../etc')
+      .attach('file', Buffer.from('id;name\n1;Test Person\n'), 'people.csv');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/importId/i);
   });
 });

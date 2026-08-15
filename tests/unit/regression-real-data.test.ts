@@ -60,10 +60,48 @@ describe('regression: known name-variant pairs against the real EU corpus', () =
       expect(best!.entry.id, `"${query}" — ${note}`).toBe(expectedId);
     }
   });
+
+  // Removed from name-variants.json (issue #41): a bare "Qusay" used to
+  // reliably out-rank all 6,234 other entries and land on EU-20 (the
+  // "Qoussaï Saddam Hussein Al-Tikriti" / "Qusay Saddam Hussein Al-Tikriti"
+  // entity) — that was this suite's very first fixture, straight from
+  // issue #11. Fixing #41's asymmetric-coverage bug necessarily weakens a
+  // single-word query against a 4-part name (see the PR description for
+  // why no coverage-ratio formula can tell that apart from the bug this
+  // issue exists to fix, without corpus-wide name-frequency data this
+  // codebase doesn't have) — a conscious, user-approved trade-off, not an
+  // oversight. This test documents what actually happens now, rather than
+  // silently dropping the coverage: the true entity's score drops sharply,
+  // and at full-corpus scale it can now be out-ranked by an unrelated
+  // short alias that happens to cross the edit-distance threshold by pure
+  // chance (a pre-existing weakness of EDIT_DISTANCE_MATCH_THRESHOLD on
+  // short strings, which this fix didn't create but does make newly
+  // decisive) — filed as a separate follow-up issue, not fixed here.
+  it('KNOWN TRADE-OFF (issue #41): a bare first name alone no longer reliably out-ranks the whole corpus', () => {
+    const trueEntity = corpus.find((c) => c.id === 'EU-20')!;
+    const { score: trueScore } = scoreNameMatch('Qusay', [trueEntity.primaryName, ...trueEntity.aliases]);
+    const best = bestMatchInCorpus('Qusay', corpus);
+
+    // The true entity's own score dropped well below the match threshold...
+    expect(trueScore).toBeLessThan(65);
+    // ...and, at full-corpus scale, is no longer guaranteed to be the winner.
+    // This assertion exists to make that fact visible in the suite, not to
+    // lock in which unrelated entity wins — that's corpus-order-sensitive
+    // noise, not a property worth pinning down.
+    expect(best).not.toBeNull();
+  });
 });
 
 describe('benchmark: full-corpus scan timing (issue #11 acceptance criterion)', () => {
-  it('records p50/p95 latency and peak heap over repeated full-corpus searches', () => {
+  // v8 coverage instrumentation adds real overhead to a hot loop like this
+  // one (observed roughly 3x the per-query latency), which both pushes
+  // runtime past the default testTimeout AND pushes p95 past its own
+  // threshold below — coverage overhead corrupts the very thing this test
+  // measures. The timeout is raised here as a courtesy for a plain
+  // `vitest run --coverage`, but the p95 assertion will still legitimately
+  // fail under instrumentation; `npm run test:coverage` (issue #72) excludes
+  // this file entirely rather than loosen the threshold to accommodate it.
+  it('records p50/p95 latency and peak heap over repeated full-corpus searches', { timeout: 60_000 }, () => {
     const queries = [
       'Qusay', 'Qousaye Saddam Hussein Al-Tikriti', 'Izzat Ibrahim al-Dury',
       'Abed Hamid Mahmud', 'Vladimir Putin', 'Mohammed Al Amin', 'Random Unrelated Name',

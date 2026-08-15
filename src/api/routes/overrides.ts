@@ -2,16 +2,29 @@ import { Router } from 'express';
 import { db } from '../../shared/firebase';
 import { saveOverride, deleteOverride, IMMUTABLE_KEYS } from '../../overrides';
 import { invalidateSearchIndex } from '../../search';
+import { requireAuthOrScope } from '../middleware/requireAuthOrScope';
+import { validateEntityIdParam } from '../middleware/validateEntityIdParam';
 
 export const overridesRouter = Router();
+
+// Both routes on this router are mutations (create/replace, delete) —
+// require write access via a session or a write-scoped API token. There is
+// no blanket app.use('/api', requireAuth) gate (removed by issue #36); a
+// prior version of this comment claimed one still applied here, which was
+// stale and meant this router was actually reachable unauthenticated.
+overridesRouter.use(requireAuthOrScope('write'));
+
+// Param callbacks are local to the router they're registered on — this
+// router's own :id param needs its own copy (see src/api/index.ts's comment).
+overridesRouter.param('id', validateEntityIdParam);
 
 /**
  * PUT /api/overrides/:id
  * Creates or replaces the override for a sanctions record (upsert). Requires
  * a non-empty "fields" object and a "reason". `overriddenBy` always comes
- * from the authenticated caller (req.userEmail, set by the blanket
- * requireAuth gate in src/api/index.ts) — never from the request body, which
- * would let a caller attribute a correction to someone else.
+ * from the authenticated caller (req.userEmail, set by requireAuthOrScope
+ * above) — never from the request body, which would let a caller attribute a
+ * correction to someone else.
  */
 overridesRouter.put('/:id', async (req, res): Promise<any> => {
   const { id } = req.params;

@@ -178,3 +178,30 @@ describe('getCustomRecord', () => {
     expect(rec?.primaryName).toBe('Jane Doe');
   });
 });
+
+// Not wired to any HTTP route yet, but these functions are the eventual
+// attack surface: an id built from an untrusted source must never reach
+// .doc(id) unvalidated (CLAUDE.md §6) — a "/" would silently address a
+// different, unintended document nested in the collection hierarchy.
+describe('id validation', () => {
+  const INVALID_ID = 'CUSTOM-1/../../admins/attacker@example.com';
+
+  it('createCustomRecord rejects an invalid id without touching Firestore', async () => {
+    await expect(
+      createCustomRecord({ id: INVALID_ID, type: 'individual', primaryName: 'Jane Doe' }),
+    ).rejects.toThrow(/invalid/i);
+    expect(store[INVALID_ID]).toBeUndefined();
+  });
+
+  it('updateCustomRecord rejects an invalid id without touching Firestore', async () => {
+    await expect(updateCustomRecord(INVALID_ID, { primaryName: 'x' })).rejects.toThrow(/invalid/i);
+  });
+
+  it('deleteCustomRecord rejects an invalid id without touching Firestore', async () => {
+    await expect(deleteCustomRecord(INVALID_ID, { confirm: true })).rejects.toThrow(/invalid/i);
+  });
+
+  it('getCustomRecord rejects an invalid id without touching Firestore', async () => {
+    await expect(getCustomRecord(INVALID_ID)).rejects.toThrow(/invalid/i);
+  });
+});
