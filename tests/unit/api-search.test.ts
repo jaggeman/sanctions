@@ -75,6 +75,7 @@ describe('GET /api/search', () => {
       type: 'individual',
       limit: 5,
       threshold: 70,
+      includeDelisted: false,
     });
   });
 

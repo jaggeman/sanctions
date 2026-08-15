@@ -179,7 +179,7 @@ app.use('/api/admin/tokens', tokensRouter);
  * backs this endpoint, the MCP server, and the CLI (issue #11).
  */
 app.get('/api/search', async (req, res): Promise<any> => {
-  const { q, source, type, limit, threshold } = req.query;
+  const { q, source, type, limit, threshold, includeDelisted } = req.query;
 
   if (!q || typeof q !== 'string') {
     return res.status(400).json({ error: 'Query parameter "q" is required.' });
@@ -193,6 +193,10 @@ app.get('/api/search', async (req, res): Promise<any> => {
       type: typeof type === 'string' ? type : undefined,
       limit: requestedLimit,
       threshold: threshold !== undefined ? parseInt(threshold as string) : undefined,
+      // Delisted records are excluded by default (issue #9); ?includeDelisted=true
+      // opts in. Filtered inside runSearch rather than here, so a delisted record
+      // never enters the matcher and cannot surface as a scored hit.
+      includeDelisted: includeDelisted === 'true',
     });
 
     res.json({ results, totalMatches, truncated });
@@ -205,7 +209,10 @@ app.get('/api/search', async (req, res): Promise<any> => {
 
 /**
  * GET /api/sanctions/:id
- * Retrieve detail record by ID
+ * Retrieve detail record by ID. No status filtering here, unlike /api/search:
+ * an imported record is never hard-deleted (issue #9), so a delisted record
+ * is a valid, meaningful answer and is returned with its status/delistedAt,
+ * not a 404.
  */
 app.get('/api/sanctions/:id', async (req, res): Promise<any> => {
   const { id } = req.params;

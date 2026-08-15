@@ -54,6 +54,16 @@
               "type": "integer",
               "default": 20
             }
+          },
+          {
+            "name": "includeDelisted",
+            "in": "query",
+            "description": "Om 'true', inkludera avlistade (soft-deleted) poster i träfflistan. Standard är att endast visa aktiva poster.",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
           }
         ],
         "responses": {
@@ -442,6 +452,22 @@
           "updatedAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["active", "delisted"],
+            "description": "Soft-delete status. A missing value should be treated as 'active'.",
+            "example": "active"
+          },
+          "listedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When this record first appeared in an import."
+          },
+          "delistedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When this record most recently went missing from an import."
           }
         }
       }
