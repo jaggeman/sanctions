@@ -9,6 +9,7 @@ import {
   Alert,
   CircularProgress,
 } from '@mui/material';
+import ShieldOutlinedIcon from '@mui/icons-material/ShieldOutlined';
 
 interface LoginProps {
   onLoggedIn: (email: string) => void;
@@ -74,9 +75,12 @@ function Login({ onLoggedIn }: LoginProps) {
     >
       <Card sx={{ maxWidth: 400, width: '100%', p: 2 }}>
         <CardContent>
-          <Typography variant="h5" gutterBottom sx={{ fontWeight: 'bold' }}>
-            Sanctions Intelligence
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
+            <ShieldOutlinedIcon sx={{ color: 'primary.main', fontSize: 28 }} />
+            <Typography variant="h5" sx={{ fontWeight: 700, letterSpacing: '-0.01em' }}>
+              Sanctions Intelligence
+            </Typography>
+          </Box>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
             {step === 'email'
               ? 'Sign in with a one-time code sent to your email.'

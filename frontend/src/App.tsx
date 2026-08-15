@@ -30,11 +30,20 @@ import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Brightness7Icon from '@mui/icons-material/Brightness7';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import InfoIcon from '@mui/icons-material/Info';
+import ShieldOutlinedIcon from '@mui/icons-material/ShieldOutlined';
 import VpnKeyIcon from '@mui/icons-material/VpnKey';
 import ApiTokensTab from './ApiTokensTab';
 import LogoutIcon from '@mui/icons-material/Logout';
 import Login from './components/Login';
 import { apiFetch, setOnSessionExpired } from './apiFetch';
+
+// Brand bar stays a consistent deep navy in both light and dark mode —
+// a fixed identity color reads as more "product" than a bar that changes
+// with the toggle, and it's what actually separates the header from the
+// page (previously: a transparent bar with bold blue text as the only
+// signal, which is the "doesn't look professional" complaint this fixes).
+const BRAND_BAR = '#0F172A';
+const BRAND_ACCENT = '#60A5FA';
 
 // Function to generate theme based on mode
 const getTheme = (mode: PaletteMode) => createTheme({
@@ -43,20 +52,21 @@ const getTheme = (mode: PaletteMode) => createTheme({
     ...(mode === 'dark'
       ? {
           // Dark Mode Palette
-          primary: { main: '#90caf9' },
-          secondary: { main: '#f48fb1' },
-          background: { default: '#0a1929', paper: '#001e3c' },
+          primary: { main: '#60A5FA' },
+          secondary: { main: '#A78BFA' },
+          background: { default: '#0B1220', paper: '#111C2E' },
         }
       : {
           // Light Mode Palette
-          primary: { main: '#1976d2' },
-          secondary: { main: '#9c27b0' },
-          background: { default: '#f5f7fa', paper: '#ffffff' },
+          primary: { main: '#2563EB' },
+          secondary: { main: '#7C3AED' },
+          background: { default: '#F8FAFC', paper: '#ffffff' },
         }),
   },
   typography: {
     fontFamily: '"Inter", "Roboto", "Helvetica", "Arial", sans-serif',
     h5: { fontWeight: 600 },
+    h6: { fontWeight: 700, letterSpacing: '-0.01em' },
   },
   shape: {
     borderRadius: 12,
@@ -224,12 +234,21 @@ function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <AppBar position="static" elevation={0} sx={{ background: 'transparent', borderBottom: 1, borderColor: 'divider' }}>
+      <AppBar
+        position="static"
+        elevation={0}
+        sx={{
+          background: BRAND_BAR,
+          color: '#fff',
+          boxShadow: '0 1px 0 0 rgba(255,255,255,0.06), 0 4px 16px 0 rgba(0,0,0,0.25)',
+        }}
+      >
         <Toolbar>
-          <Typography variant="h6" component="div" sx={{ flexGrow: 1, fontWeight: 'bold', color: 'primary.main' }}>
+          <ShieldOutlinedIcon sx={{ mr: 1.25, color: BRAND_ACCENT, fontSize: 26 }} />
+          <Typography variant="h6" component="div" sx={{ flexGrow: 1, color: '#fff' }}>
             Sanctions Intelligence
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mr: 1 }}>
+          <Typography variant="body2" sx={{ mr: 1, color: 'rgba(255,255,255,0.7)' }}>
             {userEmail}
           </Typography>
           <IconButton sx={{ ml: 1 }} onClick={toggleColorMode} color="inherit">
