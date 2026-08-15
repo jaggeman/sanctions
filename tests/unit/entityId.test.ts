@@ -52,4 +52,20 @@ describe('isValidEntityId', () => {
     expect(isValidEntityId('EU#1')).toBe(false);
     expect(isValidEntityId('EU\n1')).toBe(false);
   });
+
+  it('rejects ids reserved by Firestore itself (__*__), even though they pass the plain charset check (issue #93)', () => {
+    // __proto__ is plain alphanumeric/underscore — matches the charset
+    // allow-list, but Firestore reserves any id matching /^__.*__$/ and
+    // rejects it with a raw driver error that echoed the project id and
+    // internal document path straight back to the client (issue #93's
+    // live pen-test reproduction).
+    expect(isValidEntityId('__proto__')).toBe(false);
+    expect(isValidEntityId('__anything__')).toBe(false);
+    expect(isValidEntityId('__x__')).toBe(false);
+  });
+
+  it('does not reject a legitimate id that merely starts or ends with a single underscore', () => {
+    expect(isValidEntityId('_CUSTOM-1')).toBe(true);
+    expect(isValidEntityId('CUSTOM-1_')).toBe(true);
+  });
 });
