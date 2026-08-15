@@ -3,6 +3,7 @@ import { db } from '../../shared/firebase';
 import { saveOverride, deleteOverride, IMMUTABLE_KEYS } from '../../overrides';
 import { invalidateSearchIndex } from '../../search';
 import { requireAuthOrScope } from '../middleware/requireAuthOrScope';
+import { validateEntityIdParam } from '../middleware/validateEntityIdParam';
 
 export const overridesRouter = Router();
 
@@ -12,6 +13,10 @@ export const overridesRouter = Router();
 // prior version of this comment claimed one still applied here, which was
 // stale and meant this router was actually reachable unauthenticated.
 overridesRouter.use(requireAuthOrScope('write'));
+
+// Param callbacks are local to the router they're registered on — this
+// router's own :id param needs its own copy (see src/api/index.ts's comment).
+overridesRouter.param('id', validateEntityIdParam);
 
 /**
  * PUT /api/overrides/:id

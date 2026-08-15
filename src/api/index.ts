@@ -16,6 +16,7 @@ import { runSearch } from '../search';
 import { SanctionSource, SanctionRecord } from '../shared/types';
 import { applyOverride, getOverride } from '../overrides';
 import { overridesRouter } from './routes/overrides';
+import { validateEntityIdParam } from './middleware/validateEntityIdParam';
 import { createOtp, verifyOtp } from '../auth/otpStore';
 import { sendOtpEmail } from '../auth/mailer';
 import { createSession, destroySession } from '../auth/session';
@@ -83,6 +84,13 @@ app.use(cors({ origin: process.env.FRONTEND_ORIGIN || false, credentials: true }
 app.use(express.json());
 app.use(cookieParser());
 app.use(requestLogger);
+
+// Rejects any :id route param before it can reach a Firestore .doc(id) call
+// (CLAUDE.md §6) — param callbacks are local to the router they're
+// registered on, so this only covers routes defined directly on `app`
+// (GET /api/sanctions/:id); overridesRouter and tokensRouter register their
+// own copy.
+app.param('id', validateEntityIdParam);
 
 /**
  * POST /api/auth/request-otp
