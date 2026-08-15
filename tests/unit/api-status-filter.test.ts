@@ -27,6 +27,15 @@ function makeQuery() {
 
 const fakeDb = {
   collection: vi.fn((name: string) => {
+    // Issue #35: both src/search/getRecords() (whole-collection get()) and
+    // GET /api/sanctions/:id (per-id doc().get()) now also touch `overrides`.
+    // Empty/not-found here since this file isn't testing override merging.
+    if (name === 'overrides') {
+      return {
+        get: vi.fn(async () => ({ docs: [] })),
+        doc: vi.fn(() => ({ get: vi.fn(async () => ({ exists: false })) })),
+      };
+    }
     if (name !== 'sanctions') throw new Error(`unexpected collection ${name}`);
     return {
       ...makeQuery(),

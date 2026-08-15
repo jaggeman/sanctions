@@ -1,26 +1,51 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { SanctionRecord } from '../../src/shared/types';
+import type { SanctionRecord, Override } from '../../src/shared/types';
 
 let allRecords: SanctionRecord[] = [];
+let allOverrides: Override[] = [];
 let getCallCount = 0;
 
+// Issue #35: getRecords() now also fetches the `overrides` collection
+// alongside `sanctions` and merges each override in. Empty by default so
+// every pre-existing test in this file is unaffected unless it opts in via
+// `allOverrides`.
 const fakeDb = {
   collection: vi.fn((name: string) => {
-    if (name !== 'sanctions') throw new Error(`unexpected collection ${name}`);
-    return {
-      get: vi.fn(async () => {
-        getCallCount++;
-        return {
-          docs: allRecords.map((r) => ({ data: () => r })),
-        };
-      }),
-    };
+    if (name === 'sanctions') {
+      return {
+        get: vi.fn(async () => {
+          getCallCount++;
+          return {
+            docs: allRecords.map((r) => ({ data: () => r })),
+          };
+        }),
+      };
+    }
+    if (name === 'overrides') {
+      return {
+        get: vi.fn(async () => ({
+          docs: allOverrides.map((o) => ({ id: o.entityId, data: () => o })),
+        })),
+      };
+    }
+    throw new Error(`unexpected collection ${name}`);
   }),
 };
 
 vi.mock('../../src/shared/firebase', () => ({ db: fakeDb }));
 
 const { runSearch, invalidateSearchIndex } = await import('../../src/search');
+
+function override(entityId: string, fields: Override['fields'], rest: Partial<Override> = {}): Override {
+  return {
+    entityId,
+    fields,
+    overriddenBy: 'analyst@example.com',
+    overriddenAt: '2026-01-01T00:00:00.000Z',
+    reason: 'Correction',
+    ...rest,
+  };
+}
 
 function record(overrides: Partial<SanctionRecord> = {}): SanctionRecord {
   return {
@@ -38,6 +63,7 @@ function record(overrides: Partial<SanctionRecord> = {}): SanctionRecord {
 
 beforeEach(() => {
   allRecords = [];
+  allOverrides = [];
   getCallCount = 0;
   invalidateSearchIndex();
   vi.clearAllMocks();
@@ -175,5 +201,65 @@ describe('runSearch — index caching', () => {
     invalidateSearchIndex();
     await runSearch('Vladimir Putin');
     expect(getCallCount).toBe(2);
+  });
+});
+
+// Issue #35: overrides must be merged into the same in-memory index every
+// caller of runSearch shares (API, CLI, MCP) — not applied only after the
+// fact in one route — so an overridden name is actually searchable, not
+// just visible in a result that was already found some other way.
+describe('runSearch — overrides merged into the index (issue #35)', () => {
+  it('finds a record by its OVERRIDDEN primaryName, not just the original', async () => {
+    allRecords = [record({ id: 'EU-1', primaryName: 'Original Name' })];
+    allOverrides = [override('EU-1', { primaryName: 'Wladimir Putin' })];
+
+    const byOriginal = await runSearch('Original Name');
+    const byOverride = await runSearch('Wladimir Putin');
+
+    expect(byOverride.results.map((r) => r.id)).toEqual(['EU-1']);
+    // The whole point of merging at the index level, not after: searching the
+    // stale original name must no longer find it once it's been corrected.
+    expect(byOriginal.results).toEqual([]);
+  });
+
+  it('reports overriddenFields on the result so the API can tell official from local data apart', async () => {
+    allRecords = [record({ id: 'EU-1', primaryName: 'Vladimir Putin', sanctionReason: 'Original reason' })];
+    allOverrides = [override('EU-1', { sanctionReason: 'Corrected reason' })];
+
+    const { results } = await runSearch('Vladimir Putin');
+    expect(results[0].sanctionReason).toBe('Corrected reason');
+    expect(results[0].overriddenFields).toEqual(['sanctionReason']);
+  });
+
+  it('reports an empty overriddenFields array for a record with no override', async () => {
+    allRecords = [record({ id: 'EU-1', primaryName: 'Vladimir Putin' })];
+    const { results } = await runSearch('Vladimir Putin');
+    expect(results[0].overriddenFields).toEqual([]);
+  });
+
+  it('does not apply one entity’s override to a different entity', async () => {
+    allRecords = [
+      record({ id: 'EU-1', primaryName: 'Vladimir Putin' }),
+      record({ id: 'EU-2', primaryName: 'Vladimir Putin' }),
+    ];
+    allOverrides = [override('EU-1', { sanctionReason: 'Only for EU-1' })];
+
+    const { results } = await runSearch('Vladimir Putin');
+    const eu1 = results.find((r) => r.id === 'EU-1');
+    const eu2 = results.find((r) => r.id === 'EU-2');
+    expect(eu1?.sanctionReason).toBe('Only for EU-1');
+    expect(eu2?.sanctionReason).toBeUndefined();
+    expect(eu2?.overriddenFields).toEqual([]);
+  });
+
+  it('picks up a newly-saved override after invalidateSearchIndex() — no stale cache', async () => {
+    allRecords = [record({ id: 'EU-1', primaryName: 'Vladimir Putin', sanctionReason: 'Original' })];
+    await runSearch('Vladimir Putin'); // populate the cache with no override yet
+
+    allOverrides = [override('EU-1', { sanctionReason: 'Corrected' })];
+    invalidateSearchIndex();
+
+    const { results } = await runSearch('Vladimir Putin');
+    expect(results[0].sanctionReason).toBe('Corrected');
   });
 });
