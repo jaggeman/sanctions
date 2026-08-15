@@ -183,6 +183,38 @@ describe('POST /api/import', () => {
     expect(res.status).toBe(202);
     expect(res.body.status).toBe('import_started');
   });
+
+  it('rejects a mode that is not "sync" or "append"', async () => {
+    const res = await agent.post('/api/import').send({ sources: ['EU'], mode: 'wipe-everything' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/mode/i);
+  });
+
+  it('rejects an importId containing a path separator', async () => {
+    const res = await agent.post('/api/import').send({ sources: ['EU'], importId: '../../etc' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/importId/i);
+  });
+
+  it('accepts a well-formed importId', async () => {
+    const res = await agent.post('/api/import').send({ sources: ['EU'], importId: 'import_123_abc' });
+    expect(res.status).toBe(202);
+  });
+
+  it('dryRun:true awaits the import and returns its result synchronously instead of 202', async () => {
+    const { runImport } = await import('../../src/importer');
+    (runImport as any).mockResolvedValueOnce({
+      success: true,
+      importedCounts: { EU: 2 },
+      diffs: [{ source: 'EU', counts: { parsed: 2, added: 2, updated: 0, unchanged: 0, delisted: 0, skipped: 0 } }],
+    });
+
+    const res = await agent.post('/api/import').send({ sources: ['EU'], mode: 'sync', dryRun: true });
+
+    expect(res.status).toBe(200);
+    expect(res.body.diffs[0].counts.added).toBe(2);
+    expect(runImport).toHaveBeenCalledWith(expect.objectContaining({ mode: 'sync', dryRun: true }));
+  });
 });
 
 describe('POST /api/upload', () => {
@@ -200,5 +232,46 @@ describe('POST /api/upload', () => {
 
     expect(res.status).toBe(202);
     expect(res.body.status).toBe('upload_received');
+  });
+
+  it('rejects a mode that is not "sync" or "append"', async () => {
+    const res = await agent
+      .post('/api/upload')
+      .field('source', 'PEP')
+      .field('mode', 'nonsense')
+      .attach('file', Buffer.from('id;name\n1;Test Person\n'), 'people.csv');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/mode/i);
+  });
+
+  it('rejects an importId containing a path separator, and cleans up the temp file', async () => {
+    const res = await agent
+      .post('/api/upload')
+      .field('source', 'PEP')
+      .field('importId', '../../etc')
+      .attach('file', Buffer.from('id;name\n1;Test Person\n'), 'people.csv');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/importId/i);
+  });
+
+  it('dryRun:"true" awaits the import and returns its result synchronously instead of 202', async () => {
+    const { runImport } = await import('../../src/importer');
+    (runImport as any).mockResolvedValueOnce({
+      success: true,
+      importedCounts: { PEP: 1 },
+      diffs: [{ source: 'PEP', counts: { parsed: 1, added: 1, updated: 0, unchanged: 0, delisted: 0, skipped: 0 } }],
+    });
+
+    const res = await agent
+      .post('/api/upload')
+      .field('source', 'PEP')
+      .field('dryRun', 'true')
+      .attach('file', Buffer.from('id;name\n1;Test Person\n'), 'people.csv');
+
+    expect(res.status).toBe(200);
+    expect(res.body.diffs[0].counts.added).toBe(1);
+    expect(runImport).toHaveBeenCalledWith(expect.objectContaining({ dryRun: true }));
   });
 });

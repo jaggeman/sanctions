@@ -5,15 +5,23 @@ import { parseEUList } from './parsers/eu';
 import { parseUNList } from './parsers/un';
 import { parseUSList } from './parsers/us';
 import { parseCSVList } from './parsers/csv';
-import { uploadRecords } from './uploader';
+import { runDiffForSource, DEFAULT_IMPORT_MODE, ImportMode, DiffResult } from './diff';
 import { invalidateSearchIndex } from '../search';
-import { SanctionRecord } from '../shared/types';
+import { SanctionRecord, SanctionSource } from '../shared/types';
 
 interface ImportOptions {
   sources?: ('EU' | 'UN' | 'US')[];
   csvPath?: string;
   csvSource?: 'PEP' | 'CUSTOM';
   csvSeparator?: string;
+  // Issue #8: reconcile against current state instead of blindly overwriting.
+  // Defaults to 'append' (never delists) — 'sync' must be opted into per
+  // call, since getting this wrong on a partial/CSV-style file would delist
+  // an entire source.
+  mode?: ImportMode;
+  dryRun?: boolean;
+  force?: boolean;
+  importId?: string;
 }
 
 /**
@@ -22,6 +30,7 @@ interface ImportOptions {
 export async function runImport(options: ImportOptions = {}): Promise<{
   success: boolean;
   importedCounts: Record<string, number>;
+  diffs?: DiffResult[];
   error?: string;
 }> {
   const sources = options.sources || ['EU', 'UN', 'US'];
@@ -94,12 +103,34 @@ export async function runImport(options: ImportOptions = {}): Promise<{
       }
     }
 
-    // 5. Upload everything to Firestore
+    // 5. Reconcile each source's records against its current state (issue #8)
     if (allRecords.length > 0) {
-      await uploadRecords(allRecords);
-      invalidateSearchIndex(); // next search rebuilds the in-memory index with the new data
-      console.log(`Successfully processed and uploaded total of ${allRecords.length} records.`);
-      return { success: true, importedCounts };
+      // Scope the diff/delist pass to one source at a time — comparing "all
+      // active records missing from this batch" across mixed sources would
+      // delist every UN/US record the moment an EU-only file comes through.
+      const bySource = new Map<SanctionSource, SanctionRecord[]>();
+      for (const record of allRecords) {
+        const bucket = bySource.get(record.source) || [];
+        bucket.push(record);
+        bySource.set(record.source, bucket);
+      }
+
+      const diffs: DiffResult[] = [];
+      for (const [source, recordsForSource] of bySource) {
+        const diff = await runDiffForSource(source, recordsForSource, {
+          mode: options.mode || DEFAULT_IMPORT_MODE,
+          dryRun: options.dryRun,
+          force: options.force,
+          importId: options.importId,
+        });
+        diffs.push(diff);
+      }
+
+      if (!options.dryRun) {
+        invalidateSearchIndex(); // next search rebuilds the in-memory index with the new data
+      }
+      console.log(`Successfully processed ${allRecords.length} records across ${bySource.size} source(s).`);
+      return { success: true, importedCounts, diffs };
     } else {
       console.warn('No records were parsed or imported.');
       return { success: false, importedCounts, error: 'No records parsed' };

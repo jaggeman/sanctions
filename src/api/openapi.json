@@ -138,6 +138,24 @@
                   "csvPath": {
                     "type": "string",
                     "description": "Lokal sökväg till en CSV-fil för PEP/CUSTOM import"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": ["sync", "append"],
+                    "default": "append",
+                    "description": "Issue #8: 'sync' behandlar filen som fullständig sanning för källan och avlistar aktiva poster som saknas i filen. 'append' (standard) avlistar aldrig — rätt för PEP/CUSTOM/kompletterande filer."
+                  },
+                  "dryRun": {
+                    "type": "boolean",
+                    "description": "Kör klassificeringen (added/updated/unchanged/delisted) utan att skriva något. Svarar synkront med resultatet istället för 202."
+                  },
+                  "force": {
+                    "type": "boolean",
+                    "description": "Kringgå 20%-spärren mot att avlista en for stor andel av en källas aktiva poster."
+                  },
+                  "importId": {
+                    "type": "string",
+                    "description": "Valfritt explicit import-ID för versionshistorik; genereras annars automatiskt."
                   }
                 }
               }
@@ -145,8 +163,26 @@
           }
         },
         "responses": {
+          "200": {
+            "description": "Endast vid dryRun:true — förhandsgranskning med räknare per källa, inget skrivet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "importedCounts": { "type": "object" },
+                    "diffs": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/DiffResult" }
+                    }
+                  }
+                }
+              }
+            }
+          },
           "202": {
-            "description": "Import startad i bakgrunden",
+            "description": "Import startad i bakgrunden (endast när dryRun inte är satt)",
             "content": {
               "application/json": {
                 "schema": {
@@ -162,6 +198,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Ogiltiga \"sources\" eller ogiltigt \"mode\""
           }
         }
       }
@@ -169,6 +208,30 @@
   },
   "components": {
     "schemas": {
+      "DiffResult": {
+        "type": "object",
+        "description": "Issue #8 — per-source reconciliation result from computeDiff/runDiffForSource.",
+        "properties": {
+          "source": { "type": "string", "enum": ["EU", "UN", "US", "PEP", "CUSTOM"] },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "parsed": { "type": "integer" },
+              "added": { "type": "integer" },
+              "updated": { "type": "integer" },
+              "unchanged": { "type": "integer" },
+              "delisted": { "type": "integer" },
+              "skipped": { "type": "integer" }
+            }
+          },
+          "toDelistIds": { "type": "array", "items": { "type": "string" } },
+          "activeCount": { "type": "integer" },
+          "guardTripped": {
+            "type": "boolean",
+            "description": "true if delisting would exceed 20% of the source's active records without force:true"
+          }
+        }
+      },
       "SanctionRecord": {
         "type": "object",
         "required": ["id", "source", "type", "primaryName", "aliases", "createdAt", "updatedAt"],

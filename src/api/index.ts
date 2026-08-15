@@ -23,6 +23,12 @@ const PORT = process.env.PORT || 3000;
 
 const upload = multer({ dest: os.tmpdir() });
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// importId (issue #8) becomes a Firestore document ID under
+// sanctions/{id}/versions/{importId} — validate it before it ever reaches
+// there, same as any other client-supplied value used as a storage key
+// (CLAUDE.md §6). Matches the shape runImport auto-generates
+// (import_<timestamp>_<hex>) plus reasonable room for a caller-chosen id.
+const IMPORT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const SESSION_COOKIE_OPTIONS = {
   httpOnly: true,
   sameSite: 'lax' as const,
@@ -227,26 +233,59 @@ app.get('/api/sanctions/:id', async (req, res): Promise<any> => {
  * Trigger background import process
  */
 app.post('/api/import', async (req, res): Promise<any> => {
-  const { sources, csvPath } = req.body;
+  const { sources, csvPath, mode, dryRun, force, importId } = req.body;
 
   // Validate sources if provided
   if (sources && !Array.isArray(sources)) {
     return res.status(400).json({ error: '"sources" must be an array.' });
   }
+  if (mode !== undefined && mode !== 'sync' && mode !== 'append') {
+    return res.status(400).json({ error: '"mode" must be "sync" or "append".' });
+  }
+  if (importId !== undefined && !IMPORT_ID_PATTERN.test(importId)) {
+    return res.status(400).json({ error: '"importId" must match ^[A-Za-z0-9_-]{1,128}$.' });
+  }
+
+  const importOptions = {
+    sources,
+    csvPath,
+    csvSource: 'PEP' as const,
+    csvSeparator: ';',
+    mode,
+    dryRun: !!dryRun,
+    force: !!force,
+    importId,
+  };
+
+  // Dry-run is a preview (issue #8): the caller needs the counts back to
+  // decide whether to apply for real, so this one path responds
+  // synchronously instead of the fire-and-forget 202 every other
+  // import/upload call uses.
+  if (dryRun) {
+    try {
+      const result = await runImport(importOptions);
+      return res.status(200).json(result);
+    } catch (error: any) {
+      console.error('Dry-run import failed:', error);
+      return res.status(500).json({ error: 'Internal server error', details: error.message });
+    }
+  }
 
   // Trigger import in the background
   console.log('Import triggered via REST API. Starting background run...');
-  
-  runImport({
-    sources: sources,
-    csvPath: csvPath,
-    csvSource: 'PEP',
-    csvSeparator: ';',
-  })
+
+  runImport(importOptions)
     .then((result) => {
       console.log('API Background Import finished:', result);
     })
     .catch((err) => {
+      // A refused delist guard (issue #8's DelistGuardError) surfaces only
+      // here today, same as any other background-import failure — the 202
+      // already went out by the time this rejects. Known gap, not solved by
+      // this change: making the sync-mode apply path synchronous (or adding
+      // a status-polling endpoint) is bigger than this diff engine's own
+      // scope and touches the same fire-and-forget pattern every endpoint
+      // in this file uses.
       console.error('API Background Import failed:', err);
     });
 
@@ -266,18 +305,51 @@ app.post('/api/upload', upload.single('file'), async (req, res): Promise<any> =>
     return res.status(400).json({ error: 'No file uploaded' });
   }
 
-  const { source } = req.body; // e.g. "PEP", "EU", "UN"
+  // multipart fields always arrive as strings, unlike the JSON /api/import body.
+  const { source, mode } = req.body;
+  const dryRun = req.body.dryRun === 'true';
+  const force = req.body.force === 'true';
+  const importId = req.body.importId;
   const uploadedPath = req.file.path;
 
+  if (mode !== undefined && mode !== 'sync' && mode !== 'append') {
+    await fs.remove(uploadedPath).catch((e) => console.error('Failed to cleanup temp file', e));
+    return res.status(400).json({ error: '"mode" must be "sync" or "append".' });
+  }
+  if (importId !== undefined && !IMPORT_ID_PATTERN.test(importId)) {
+    await fs.remove(uploadedPath).catch((e) => console.error('Failed to cleanup temp file', e));
+    return res.status(400).json({ error: '"importId" must match ^[A-Za-z0-9_-]{1,128}$.' });
+  }
+
   console.log(`Received uploaded file for source ${source}: ${uploadedPath}`);
-  
-  // Trigger background import with the uploaded file path
-  runImport({
+
+  const importOptions = {
     sources: source ? [source] : [],
     csvPath: uploadedPath,
     csvSource: source || 'MANUAL_CSV',
     csvSeparator: ';',
-  })
+    mode,
+    dryRun,
+    force,
+    importId,
+  };
+
+  // Dry-run responds synchronously so the caller gets the preview counts
+  // (issue #8) — same reasoning as the /api/import dry-run branch above.
+  if (dryRun) {
+    try {
+      const result = await runImport(importOptions);
+      return res.status(200).json(result);
+    } catch (error: any) {
+      console.error('Dry-run upload failed:', error);
+      return res.status(500).json({ error: 'Internal server error', details: error.message });
+    } finally {
+      fs.remove(uploadedPath).catch((e) => console.error('Failed to cleanup temp file', e));
+    }
+  }
+
+  // Trigger background import with the uploaded file path
+  runImport(importOptions)
     .then(() => {
       console.log('Upload Background Import finished.');
       fs.remove(uploadedPath).catch(e => console.error('Failed to cleanup temp file', e));
