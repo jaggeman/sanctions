@@ -31,6 +31,21 @@ const PROJECT_ID = 'sanctions-rules-test';
 
 let testEnv: RulesTestEnvironment;
 
+/**
+ * `firebase emulators:exec` exports FIRESTORE_EMULATOR_HOST with whatever port
+ * firebase.json actually resolved to. Reading it here rather than hardcoding
+ * 8080 is what lets this suite run when another session on the same machine
+ * already holds the default port (CLAUDE.md §1 — one emulator per session).
+ */
+function emulatorAddress(): { host: string; port: number } {
+  const raw = process.env.FIRESTORE_EMULATOR_HOST;
+  if (!raw) return { host: '127.0.0.1', port: 8080 };
+  const separator = raw.lastIndexOf(':');
+  const host = raw.slice(0, separator) || '127.0.0.1';
+  const port = Number(raw.slice(separator + 1));
+  return { host: host === 'localhost' ? '127.0.0.1' : host, port };
+}
+
 const SAMPLE_RECORD = {
   id: 'PEP-1',
   source: 'PEP',
@@ -47,8 +62,7 @@ beforeAll(async () => {
     projectId: PROJECT_ID,
     firestore: {
       rules: fs.readFileSync(RULES_PATH, 'utf-8'),
-      host: '127.0.0.1',
-      port: 8080,
+      ...emulatorAddress(),
     },
   });
 });
