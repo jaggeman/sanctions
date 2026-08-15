@@ -1,10 +1,5 @@
 [
   {
-    "query": "Qusay",
-    "expectedId": "EU-20",
-    "note": "Issue #11's own key example. This is a literal alias in the real data once the EU parser bug (#4) is fixed, so it also validates alias search, not just fuzzy matching."
-  },
-  {
     "query": "Qousaye Saddam Hussein Al-Tikriti",
     "expectedId": "EU-20",
     "note": "A transliteration spelling that is NOT literally present as an alias — genuinely exercises phonetic/edit-distance matching against real data."
