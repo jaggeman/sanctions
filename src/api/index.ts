@@ -194,14 +194,14 @@ app.use('/api/admin/tokens', requireAuth, tokensRouter);
 /**
  * PUT/DELETE /api/overrides/:id
  * Field-level corrections layered on top of an imported record (issue #35).
- * Inherits the blanket requireAuth session gate above — any authenticated
- * caller may write, never anonymous. See src/api/routes/overrides.ts.
+ * Requires an authenticated session — any authenticated caller may write,
+ * never anonymous. See src/api/routes/overrides.ts.
  */
-app.use('/api/overrides', overridesRouter);
+app.use('/api/overrides', requireAuth, overridesRouter);
 
 // Screening adjudications (false-positive/true-positive decisions, issue #22).
-// Inherits the blanket requireAuth session gate above.
-app.use('/api/decisions', decisionsRouter);
+// Requires an authenticated session.
+app.use('/api/decisions', requireAuth, decisionsRouter);
 
 /**
  * GET /api/search

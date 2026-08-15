@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import cookieParser from 'cookie-parser';
 
 const {
   mockSaveOverride,
@@ -35,12 +36,18 @@ vi.mock('../../src/shared/firebase', () => ({
 }));
 
 import { overridesRouter } from '../../src/api/routes/overrides';
+import { requireAuth, SESSION_COOKIE_NAME } from '../../src/auth/middleware';
+import { createSession, _resetSessionStoreForTests } from '../../src/auth/session';
 
 const CALLER_EMAIL = 'analyst@example.com';
 
-// In production, req.userEmail is set by the blanket requireAuth gate that
-// runs before overridesRouter (src/api/index.ts). This standalone app
-// simulates that directly.
+// req.userEmail is injected directly here rather than going through the real
+// requireAuth middleware, so this app is only useful for testing the route's
+// OWN logic (validation, overriddenBy attribution, etc) — it says nothing
+// about whether src/api/index.ts actually wires auth in front of this router
+// in production. That gap is exactly what let issue #86 (PUT/DELETE
+// /api/overrides/:id reachable with zero authentication) go unnoticed; the
+// real-app regression coverage for that lives in tests/unit/auth-routes.test.ts.
 function buildApp(callerEmail: string | undefined = CALLER_EMAIL) {
   const app = express();
   app.use(express.json());
@@ -49,6 +56,17 @@ function buildApp(callerEmail: string | undefined = CALLER_EMAIL) {
     next();
   });
   app.use('/api/overrides', overridesRouter);
+  return app;
+}
+
+// Exercises the REAL requireAuth middleware (not the injected-userEmail
+// fake above), so this specifically proves the router rejects an
+// unauthenticated caller when wired the way production wires it.
+function buildAppWithRealAuth() {
+  const app = express();
+  app.use(express.json());
+  app.use(cookieParser());
+  app.use('/api/overrides', requireAuth, overridesRouter);
   return app;
 }
 
@@ -63,6 +81,32 @@ beforeEach(() => {
     reason: meta.reason,
   }));
   mockDeleteOverride.mockResolvedValue(undefined);
+  _resetSessionStoreForTests();
+  // requireAuth re-checks the email allow-list (issue #33) on every request.
+  vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'example.com');
+});
+
+describe('requires authentication (issue #86 regression)', () => {
+  it('rejects PUT /api/overrides/:id without a session cookie', async () => {
+    const res = await request(buildAppWithRealAuth())
+      .put('/api/overrides/EU-1')
+      .send({ fields: { sanctionReason: 'x' }, reason: 'x' });
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects DELETE /api/overrides/:id without a session cookie', async () => {
+    const res = await request(buildAppWithRealAuth()).delete('/api/overrides/EU-1');
+    expect(res.status).toBe(401);
+  });
+
+  it('allows the write once a real session cookie is presented', async () => {
+    const sid = createSession(CALLER_EMAIL);
+    const res = await request(buildAppWithRealAuth())
+      .put('/api/overrides/EU-1')
+      .set('Cookie', `${SESSION_COOKIE_NAME}=${sid}`)
+      .send({ fields: { sanctionReason: 'x' }, reason: 'x' });
+    expect(res.status).toBe(200);
+  });
 });
 
 describe('PUT /api/overrides/:id', () => {

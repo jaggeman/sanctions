@@ -148,6 +148,39 @@ describe('protected routes', () => {
     const res = await agent.get('/api/search').query({ q: 'a b' });
     expect(res.status).toBe(200);
   });
+
+  // Regression for a real incident (issue #86, found by a live pen test):
+  // these two mounts had no auth middleware at all in src/api/index.ts — a
+  // stale comment claimed they "inherit the blanket requireAuth gate above",
+  // but that blanket gate had been replaced by per-route auth on every other
+  // route during the requireScope/API-split refactors, and these two were
+  // missed. The isolated route-test files for both routers build their own
+  // standalone Express app and either inject req.userEmail directly
+  // (overridesRoutes.test.ts) or attach requireAuth themselves
+  // (decisionsRoutes.test.ts) — neither exercises the real src/api/index.ts
+  // wiring, so neither caught the gap. Asserting against the real `api`
+  // export here is what actually catches a future regression of this kind.
+  it('returns 401 for PUT /api/overrides/:id without a session cookie', async () => {
+    const res = await request(api).put('/api/overrides/EU-1').send({ fields: { sanctionReason: 'x' }, reason: 'x' });
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 401 for DELETE /api/overrides/:id without a session cookie', async () => {
+    const res = await request(api).delete('/api/overrides/EU-1');
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 401 for GET /api/decisions/:entityId without a session cookie', async () => {
+    const res = await request(api).get('/api/decisions/EU-1');
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 401 for POST /api/decisions without a session cookie', async () => {
+    const res = await request(api)
+      .post('/api/decisions')
+      .send({ entityId: 'EU-1', subjectId: 'cust-a', verdict: 'false_positive' });
+    expect(res.status).toBe(401);
+  });
 });
 
 describe('GET /api/auth/session', () => {
