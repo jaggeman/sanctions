@@ -25,6 +25,8 @@ import SearchIcon from '@mui/icons-material/Search';
 import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Brightness7Icon from '@mui/icons-material/Brightness7';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import LogoutIcon from '@mui/icons-material/Logout';
+import Login from './components/Login';
 
 // Function to generate theme based on mode
 const getTheme = (mode: PaletteMode) => createTheme({
@@ -96,6 +98,23 @@ function App() {
   // Generate theme dynamically
   const theme = useMemo(() => getTheme(mode), [mode]);
 
+  // Auth State
+  const [authChecked, setAuthChecked] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('/api/auth/session')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setUserEmail(data?.email ?? null))
+      .catch(() => setUserEmail(null))
+      .finally(() => setAuthChecked(true));
+  }, []);
+
+  const handleLogout = async () => {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    setUserEmail(null);
+  };
+
   // App State
   const [tabValue, setTabValue] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
@@ -146,6 +165,26 @@ function App() {
     setIsLoading(false);
   };
 
+  if (!authChecked) {
+    return (
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <Box sx={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <CircularProgress />
+        </Box>
+      </ThemeProvider>
+    );
+  }
+
+  if (!userEmail) {
+    return (
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <Login onLoggedIn={setUserEmail} />
+      </ThemeProvider>
+    );
+  }
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -154,8 +193,14 @@ function App() {
           <Typography variant="h6" component="div" sx={{ flexGrow: 1, fontWeight: 'bold', color: 'primary.main' }}>
             Sanctions Intelligence
           </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mr: 1 }}>
+            {userEmail}
+          </Typography>
           <IconButton sx={{ ml: 1 }} onClick={toggleColorMode} color="inherit">
             {mode === 'dark' ? <Brightness7Icon /> : <Brightness4Icon />}
+          </IconButton>
+          <IconButton sx={{ ml: 1 }} onClick={handleLogout} color="inherit" aria-label="Log out">
+            <LogoutIcon />
           </IconButton>
         </Toolbar>
       </AppBar>
