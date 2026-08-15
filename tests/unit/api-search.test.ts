@@ -1,8 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import type { SanctionRecord } from '../../src/shared/types';
-import { createSession } from '../../src/auth/session';
-import { SESSION_COOKIE_NAME } from '../../src/auth/middleware';
+import { createFakeDb } from './helpers/fakeFirestore';
 
 // GET /api/sanctions/:id still talks to Firestore directly, so it keeps a
 // fake db. GET /api/search now goes through the shared src/search runSearch
@@ -12,8 +11,17 @@ let docGetResult: { exists: boolean; data?: () => any } = { exists: false };
 // Issue #35: GET /api/sanctions/:id now also fetches a matching override doc.
 let overrideDocResult: { exists: boolean; data?: () => any } = { exists: false };
 
+// Issue #63: this suite logs in through the real POST /api/auth/verify-otp
+// route (below), which now persists the session through `db` — delegate the
+// `sessions`/`otpCodes` collections to the shared fake Firestore rather than
+// hand-rolling that here too.
+const { db: authFakeDb } = createFakeDb();
+
 const fakeDb = {
   collection: vi.fn((name: string) => {
+    if (name === 'sessions' || name === 'otpCodes') {
+      return authFakeDb.collection(name);
+    }
     if (name === 'overrides') {
       return {
         doc: vi.fn((id: string) => ({
@@ -56,6 +64,11 @@ function record(overrides: Partial<SanctionRecord> = {}): SanctionRecord {
 
 // api under test — imported after the mocks above so it picks up the fakes.
 const { api } = await import('../../src/api');
+// Dynamic, not static: session.ts transitively imports src/shared/firebase,
+// and a static import here would be hoisted above the `fakeDb`/`authFakeDb`
+// initialization above, throwing "Cannot access 'fakeDb' before initialization".
+const { createSession } = await import('../../src/auth/session');
+const { SESSION_COOKIE_NAME } = await import('../../src/auth/middleware');
 
 // All routes below require an authenticated session (see src/auth/middleware.ts);
 // log in once via the hardcoded dev test account and reuse the session cookie.
@@ -210,13 +223,17 @@ describe('GET /api/sanctions/:id', () => {
     const res = await agent.get('/api/sanctions/EU-1%2F..%2Fadmins%2Fattacker');
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/invalid/i);
-    expect(fakeDb.collection).not.toHaveBeenCalled();
+    // Not "never called at all": an authenticated agent's session lookup
+    // (issue #63, Firestore-backed) legitimately touches `sessions` on every
+    // request. The actual guarantee here is that the invalid id itself never
+    // reaches a `sanctions` lookup.
+    expect(fakeDb.collection).not.toHaveBeenCalledWith('sanctions');
   });
 
   it('rejects an id with other structural characters (400, not a 500 from Firestore)', async () => {
     const res = await agent.get('/api/sanctions/EU@evil.com');
     expect(res.status).toBe(400);
-    expect(fakeDb.collection).not.toHaveBeenCalled();
+    expect(fakeDb.collection).not.toHaveBeenCalledWith('sanctions');
   });
 });
 
@@ -283,7 +300,7 @@ describe('POST /api/import — force:true restricted to admins (issue #105)', ()
 
   it('rejects force:true for a logged-in non-admin session with 403, without ever calling runImport', async () => {
     vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'example.com');
-    const sid = createSession('analyst@example.com');
+    const sid = await createSession('analyst@example.com');
 
     const { runImport } = await import('../../src/importer');
     (runImport as any).mockClear();

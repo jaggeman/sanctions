@@ -12,8 +12,28 @@ vi.mock('../../src/importer/taskQueue', () => ({ enqueueImportTask }));
 const runImportMock = vi.fn();
 vi.mock('../../src/importer', () => ({ runImport: runImportMock }));
 vi.mock('../../src/importer/uploadPipeline', () => ({ processUpload: vi.fn() }));
+// session.ts (issue #63) reads/writes db.collection('sessions').doc(id) — a
+// tiny in-memory store behind the mock so verify-otp's set() is actually
+// visible to the requireAuth check's later get(), instead of every doc
+// looking permanently missing.
+const sessionStore = new Map<string, any>();
 vi.mock('../../src/shared/firebase', () => ({
-  db: { collection: vi.fn() },
+  db: {
+    collection: vi.fn(() => ({
+      doc: vi.fn((id: string) => ({
+        set: vi.fn(async (data: any) => {
+          sessionStore.set(id, data);
+        }),
+        get: vi.fn(async () => ({
+          exists: sessionStore.has(id),
+          data: () => sessionStore.get(id),
+        })),
+        delete: vi.fn(async () => {
+          sessionStore.delete(id);
+        }),
+      })),
+    })),
+  },
   getBucket: () => ({ file: vi.fn(() => ({ save: vi.fn() })) }),
 }));
 vi.mock('../../src/search', () => ({ runSearch: vi.fn() }));

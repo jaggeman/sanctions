@@ -1,12 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
-import { createSession } from '../../src/auth/session';
-import { SESSION_COOKIE_NAME } from '../../src/auth/middleware';
+import { createFakeDb } from './helpers/fakeFirestore';
 
 const processUpload = vi.fn();
 vi.mock('../../src/importer/uploadPipeline', () => ({ processUpload }));
+
+// Issue #63: this suite logs in through the real POST /api/auth/verify-otp
+// route (below), which now persists the session through `db` — a bare
+// `{ collection: vi.fn() }` stub no longer works since it returns undefined
+// on any call.
+const { db: authFakeDb } = createFakeDb();
 vi.mock('../../src/shared/firebase', () => ({
-  db: { collection: vi.fn() },
+  db: authFakeDb,
   getBucket: () => ({ file: vi.fn(() => ({ save: vi.fn() })) }),
 }));
 vi.mock('../../src/importer', () => ({ runImport: vi.fn() }));
@@ -20,6 +25,11 @@ vi.mock('fs-extra', async () => {
 });
 
 const { api } = await import('../../src/api');
+// Dynamic, not static: session.ts transitively imports src/shared/firebase,
+// and a static import here would be hoisted above the `authFakeDb`
+// initialization above, throwing "Cannot access 'fakeDb' before initialization".
+const { createSession } = await import('../../src/auth/session');
+const { SESSION_COOKIE_NAME } = await import('../../src/auth/middleware');
 const agent = request.agent(api);
 
 beforeEach(async () => {
@@ -210,7 +220,7 @@ describe('POST /api/upload', () => {
 
     it('rejects force:true for a logged-in non-admin session with 403, and cleans up the temp file', async () => {
       vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'example.com');
-      const sid = createSession('analyst@example.com');
+      const sid = await createSession('analyst@example.com');
 
       const res = await request(api)
         .post('/api/upload')

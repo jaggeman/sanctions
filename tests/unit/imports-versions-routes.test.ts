@@ -18,8 +18,30 @@ vi.mock('../../src/importer/uploader', async () => {
 });
 
 let docGetResult: { exists: boolean; data?: () => any } = { exists: false };
+
+// session.ts (issue #63) reads/writes db.collection('sessions').doc(id) — a
+// tiny in-memory store so verify-otp's set() is visible to requireAuth's
+// later get(), same fix as tests/unit/api-import.test.ts.
+const sessionStore = new Map<string, any>();
+
 const fakeDb = {
   collection: vi.fn((name: string) => {
+    if (name === 'sessions') {
+      return {
+        doc: vi.fn((id: string) => ({
+          set: vi.fn(async (data: any) => {
+            sessionStore.set(id, data);
+          }),
+          get: vi.fn(async () => ({
+            exists: sessionStore.has(id),
+            data: () => sessionStore.get(id),
+          })),
+          delete: vi.fn(async () => {
+            sessionStore.delete(id);
+          }),
+        })),
+      };
+    }
     if (name !== 'sanctions') throw new Error(`unexpected collection ${name}`);
     return { doc: vi.fn((id: string) => ({ get: vi.fn(async () => ({ ...docGetResult, id })) })) };
   }),

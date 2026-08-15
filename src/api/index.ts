@@ -161,7 +161,7 @@ app.post('/api/auth/request-otp', async (req, res): Promise<any> => {
     return res.json({ ok: true });
   }
 
-  const code = createOtp(email);
+  const code = await createOtp(email);
   if (!code) {
     return res.status(429).json({ error: 'A code was already sent recently. Please wait before requesting another.' });
   }
@@ -179,7 +179,7 @@ app.post('/api/auth/request-otp', async (req, res): Promise<any> => {
  * POST /api/auth/verify-otp
  * Verifies a one-time code and starts a session.
  */
-app.post('/api/auth/verify-otp', (req, res): any => {
+app.post('/api/auth/verify-otp', async (req, res): Promise<any> => {
   const { email, code } = req.body;
 
   if (!email || typeof email !== 'string' || !code || typeof code !== 'string') {
@@ -191,11 +191,11 @@ app.post('/api/auth/verify-otp', (req, res): any => {
   // issue #33: same allow-list check as request-otp, defense in depth — even
   // if a valid code somehow exists for a disallowed address, it can't be
   // exchanged for a session. Same 401 shape as an invalid/expired code.
-  if (!isTestLogin && (!isAllowedEmail(email) || !verifyOtp(email, code))) {
+  if (!isTestLogin && (!isAllowedEmail(email) || !(await verifyOtp(email, code)))) {
     return res.status(401).json({ error: 'Invalid or expired code.' });
   }
 
-  const sessionId = createSession(email.trim().toLowerCase());
+  const sessionId = await createSession(email.trim().toLowerCase());
   res.cookie(SESSION_COOKIE_NAME, sessionId, SESSION_COOKIE_OPTIONS);
   res.json({ ok: true });
 });
@@ -221,9 +221,9 @@ app.get('/api/auth/session', requireAuth, (req, res) => {
  * would reject the exact "my session already looks broken" case logout
  * exists to recover from.
  */
-app.post('/api/auth/logout', (req, res) => {
+app.post('/api/auth/logout', async (req, res) => {
   const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
-  if (sessionId) destroySession(sessionId);
+  if (sessionId) await destroySession(sessionId);
   res.clearCookie(SESSION_COOKIE_NAME);
   res.json({ ok: true });
 });
@@ -592,12 +592,20 @@ if (require.main === module) {
 }
 
 // Export Express App as a Firebase Cloud Function.
-// maxInstances is pinned to 1 (issue #16): OTP codes and sessions are kept
-// in an in-memory Map (src/auth/otpStore.ts, src/auth/session.ts), which
-// does not survive across multiple concurrent Cloud Functions instances —
-// a request-otp handled by instance A followed by verify-otp landing on
-// instance B would fail. This is the documented interim mitigation until
-// that storage moves to Firestore or another shared store.
+// issue #16 originally pinned this to maxInstances: 1 because OTP codes and
+// sessions lived in an in-memory Map, which fragmented across concurrent
+// instances. Issue #63 moved that storage to Firestore
+// (src/auth/otpStore.ts, src/auth/session.ts), shared across every instance
+// and durable across a cold start — that half of the reason is gone.
+//
+// The pin stays for now regardless: src/search/index.ts's `cachedRecords` is
+// its own separate in-memory, per-instance cache, invalidated only within
+// the process that ran the import. With a single instance that's trivially
+// consistent; with maxInstances > 1, a search served by a different
+// instance than the one that just imported would silently return stale
+// results. Issue #43 is adding a Firestore-backed invalidation marker for
+// exactly that — this pin should come out once #43 lands, in a follow-up
+// PR that removes it explicitly rather than as a side effect of this one.
 export const api = functions.https.onRequest({ maxInstances: 1 }, app);
 
 // Both re-exported so their deployable Cloud Functions are discovered:

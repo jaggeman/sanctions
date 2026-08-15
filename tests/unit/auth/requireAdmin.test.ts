@@ -2,16 +2,16 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
+import { createFakeDb } from '../helpers/fakeFirestore';
 
-import { requireAdmin } from '../../../src/api/middleware/requireAdmin';
-import { isAdminEmail } from '../../../src/auth/admins';
-import {
-  createSession,
-  destroySession,
-  _resetSessionStoreForTests,
-} from '../../../src/auth/session';
-import { SESSION_COOKIE_NAME } from '../../../src/auth/middleware';
-import { TEST_LOGIN_EMAIL } from '../../../src/auth/testAccount';
+const { db: fakeDb, reset: resetFakeDb } = createFakeDb();
+vi.mock('../../../src/shared/firebase', () => ({ db: fakeDb }));
+
+const { requireAdmin } = await import('../../../src/api/middleware/requireAdmin');
+const { isAdminEmail } = await import('../../../src/auth/admins');
+const { createSession, destroySession } = await import('../../../src/auth/session');
+const { SESSION_COOKIE_NAME } = await import('../../../src/auth/middleware');
+const { TEST_LOGIN_EMAIL } = await import('../../../src/auth/testAccount');
 
 function buildApp() {
   const app = express();
@@ -22,13 +22,13 @@ function buildApp() {
   return app;
 }
 
-const asUser = (email: string) =>
-  request(buildApp()).get('/admin').set('Cookie', `${SESSION_COOKIE_NAME}=${createSession(email)}`);
+const asUser = async (email: string) =>
+  request(buildApp()).get('/admin').set('Cookie', `${SESSION_COOKIE_NAME}=${await createSession(email)}`);
 
 const ORIGINAL_ENV = { ...process.env };
 
 beforeEach(() => {
-  _resetSessionStoreForTests();
+  resetFakeDb();
   process.env.NODE_ENV = 'test';
   delete process.env.ADMIN_EMAILS;
 });
@@ -126,7 +126,7 @@ describe('requireAdmin middleware', () => {
     // allow-list (CLAUDE.md §6 — re-verify, don't trust a cached claim).
     process.env.ADMIN_EMAILS = 'a@corp.com';
     const app = buildApp();
-    const cookie = `${SESSION_COOKIE_NAME}=${createSession('a@corp.com')}`;
+    const cookie = `${SESSION_COOKIE_NAME}=${await createSession('a@corp.com')}`;
 
     expect((await request(app).get('/admin').set('Cookie', cookie)).status).toBe(200);
 
@@ -137,8 +137,8 @@ describe('requireAdmin middleware', () => {
 
   it('rejects a destroyed session even for an admin address', async () => {
     process.env.ADMIN_EMAILS = 'a@corp.com';
-    const sessionId = createSession('a@corp.com');
-    destroySession(sessionId);
+    const sessionId = await createSession('a@corp.com');
+    await destroySession(sessionId);
     const res = await request(buildApp())
       .get('/admin')
       .set('Cookie', `${SESSION_COOKIE_NAME}=${sessionId}`);

@@ -16,15 +16,19 @@ export const SESSION_COOKIE_NAME = 'sid';
  * invalidates every session using it on that session's very next request,
  * with no separate revocation step needed.
  */
-export function requireAuth(req: Request, res: Response, next: NextFunction): void {
-  const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
-  const session = sessionId ? getSession(sessionId) : null;
+export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
+    const session = sessionId ? await getSession(sessionId) : null;
 
-  if (!session || !isAllowedEmail(session.email)) {
-    res.status(401).json({ error: 'Authentication required' });
-    return;
+    if (!session || !isAllowedEmail(session.email)) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    (req as any).userEmail = session.email;
+    next();
+  } catch (error: any) {
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   }
-
-  (req as any).userEmail = session.email;
-  next();
 }
