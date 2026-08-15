@@ -1,4 +1,4 @@
-import { normalizeText } from '../importer/uploader';
+import { normalizeText, transliterate } from '../importer/uploader';
 
 /**
  * Hand-rolled Soundex + Jaro-Winkler rather than a dependency (e.g. `natural`)
@@ -131,15 +131,25 @@ function tokenBestMatch(token: string, candidateTokens: string[]): number {
 }
 
 /**
- * Order-independent token-set score, 0..1: every query token is matched
+ * Order-independent token-set score, 0..1: every query word is matched
  * against its single best-scoring candidate token. Extra candidate tokens
  * (e.g. a middle name the query omitted) are never penalised, and word order
  * doesn't matter, per issue #11's scope.
+ *
+ * `queryWordGroups` holds one entry per original query WORD, each entry
+ * being that word's alternate spellings (script-preserved + transliterated,
+ * see `tokenizeGrouped`) — never both counted as separate words in the
+ * average. Averaging over flat tokens instead would let an unmatched
+ * original-script token silently dilute a word that its transliterated
+ * twin matched perfectly (issue #40: a Cyrillic query against a Latin
+ * candidate was scoring 50 instead of 100 for exactly this reason).
  */
-function tokenSetScore(queryTokens: string[], candidateTokens: string[]): number {
-  if (queryTokens.length === 0 || candidateTokens.length === 0) return 0;
-  const perToken = queryTokens.map((t) => tokenBestMatch(t, candidateTokens));
-  return perToken.reduce((sum, s) => sum + s, 0) / perToken.length;
+function tokenSetScore(queryWordGroups: string[][], candidateTokens: string[]): number {
+  if (queryWordGroups.length === 0 || candidateTokens.length === 0) return 0;
+  const perWord = queryWordGroups.map((variants) =>
+    variants.reduce((best, variant) => Math.max(best, tokenBestMatch(variant, candidateTokens)), 0),
+  );
+  return perWord.reduce((sum, s) => sum + s, 0) / perWord.length;
 }
 
 export interface NameMatch {
@@ -148,20 +158,61 @@ export interface NameMatch {
 }
 
 /**
+ * Tokenizes a name into a flat set of its normalized word tokens, plus —
+ * issue #40, decision (c) — a transliterated token for any Cyrillic/Greek
+ * word, alongside the original-script token. Used for the CANDIDATE side of
+ * scoreNameMatch, where flattening is safe: tokenBestMatch takes the best
+ * (max) match across this whole set, so an extra representation of the same
+ * word can only help, never dilute an average the way it would on the query
+ * side (see tokenizeGrouped).
+ */
+function tokenize(name: string): string[] {
+  const tokens = new Set<string>();
+  for (const t of normalizeText(name).split(' ').filter(Boolean)) tokens.add(t);
+
+  const translit = transliterate(name);
+  if (translit) {
+    for (const t of normalizeText(translit).split(' ').filter(Boolean)) tokens.add(t);
+  }
+
+  return Array.from(tokens);
+}
+
+/**
+ * Tokenizes a name for the QUERY side: one group per original word, each
+ * holding that word's script-preserved form and (if applicable) its
+ * transliterated form. `normalizeText(name)` and
+ * `normalizeText(transliterate(name))` split into the same number of words
+ * in the same order — transliteration maps character-by-character and never
+ * merges/splits words — so the two token lists line up positionally.
+ */
+function tokenizeGrouped(name: string): string[][] {
+  const words = normalizeText(name).split(' ').filter(Boolean);
+  const translit = transliterate(name);
+  const translitWords = translit ? normalizeText(translit).split(' ').filter(Boolean) : [];
+
+  return words.map((word, i) => {
+    const variants = new Set([word]);
+    if (translitWords[i]) variants.add(translitWords[i]);
+    return Array.from(variants);
+  });
+}
+
+/**
  * Scores a query against a list of candidate names (primary name + aliases),
  * returning the best-matching one and its 0..100 score. Reuses normalizeText
  * verbatim so query-side and index-side normalisation always agree.
  */
 export function scoreNameMatch(query: string, candidateNames: string[]): NameMatch {
-  const queryTokens = normalizeText(query).split(' ').filter(Boolean);
-  if (queryTokens.length === 0 || candidateNames.length === 0) {
+  const queryWordGroups = tokenizeGrouped(query);
+  if (queryWordGroups.length === 0 || candidateNames.length === 0) {
     return { score: 0, matchedName: '' };
   }
 
   let best: NameMatch = { score: 0, matchedName: '' };
   for (const name of candidateNames) {
-    const candidateTokens = normalizeText(name).split(' ').filter(Boolean);
-    const score = Math.round(tokenSetScore(queryTokens, candidateTokens) * 100);
+    const candidateTokens = tokenize(name);
+    const score = Math.round(tokenSetScore(queryWordGroups, candidateTokens) * 100);
     if (score > best.score) {
       best = { score, matchedName: name };
     }

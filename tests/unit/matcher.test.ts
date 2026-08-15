@@ -35,6 +35,20 @@ describe('soundex', () => {
   it('produces different codes for genuinely different names', () => {
     expect(soundex('Putin')).not.toBe(soundex('Zelensky'));
   });
+
+  // issue #40 requirement: soundex must never run meaningfully on raw
+  // non-Latin input — it's a Latin-alphabet algorithm by construction, and a
+  // coincidental code from garbage input would look like a real phonetic
+  // match. It should keep safely no-op'ing (empty string), not be "fixed" to
+  // produce a code from Cyrillic — that fix belongs in transliteration
+  // upstream, not here.
+  it('issue #40: still safely no-ops on raw Cyrillic rather than producing a meaningless code', () => {
+    expect(soundex('Абу Нидал')).toBe('');
+  });
+
+  it('issue #40: still safely no-ops on raw Greek', () => {
+    expect(soundex('Μαύρος')).toBe('');
+  });
 });
 
 describe('jaroWinkler', () => {
@@ -116,5 +130,42 @@ describe('scoreNameMatch', () => {
   it('handles typos via edit distance, not just exact/phonetic', () => {
     const { score } = scoreNameMatch('Vladimir Putin', ['Vladmir Putin']); // missing an 'i'
     expect(score).toBeGreaterThanOrEqual(80);
+  });
+});
+
+describe('scoreNameMatch — non-Latin script (issue #40)', () => {
+  // Real strings from lists/20260805-FULL-1_1(xsd).xml, logicalId=201 (the
+  // "Abu Nidal Organisation" entity, which the real EU export aliases across
+  // dozens of languages/scripts) and logicalId=514 (a real Arabic alias).
+
+  it('acceptance criterion: a Cyrillic query against an identical Cyrillic record scores ~100, not 0', () => {
+    const { score } = scoreNameMatch('Абу Нидал', ['Абу Нидал']);
+    expect(score).toBeGreaterThanOrEqual(95);
+  });
+
+  it('acceptance criterion: same for Greek', () => {
+    const { score } = scoreNameMatch('Μαύρος Σεπτέμβρης', ['Μαύρος Σεπτέμβρης']);
+    expect(score).toBeGreaterThanOrEqual(95);
+  });
+
+  it('acceptance criterion: same for Arabic', () => {
+    const name = 'عبد المنان آغا';
+    const { score } = scoreNameMatch(name, [name]);
+    expect(score).toBeGreaterThanOrEqual(95);
+  });
+
+  it('acceptance criterion: a Latin query finds a record stored in Cyrillic (decision c, cross-script)', () => {
+    const { score } = scoreNameMatch('Abu Nidal', ['Организация „Абу Нидал”']);
+    expect(score).toBeGreaterThanOrEqual(65);
+  });
+
+  it('acceptance criterion: and the reverse — a Cyrillic query finds a record stored in Latin', () => {
+    const { score } = scoreNameMatch('Абу Нидал', ['Abu Nidal Organisation']);
+    expect(score).toBeGreaterThanOrEqual(65);
+  });
+
+  it('a Cyrillic query does not spuriously match an unrelated Latin name', () => {
+    const { score } = scoreNameMatch('Абу Нидал', ['Kim Jong Un']);
+    expect(score).toBeLessThan(40);
   });
 });
