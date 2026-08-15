@@ -1,10 +1,15 @@
 import { Router } from 'express';
 import { createApiToken, listApiTokens, revokeApiToken, validateScopes } from '../../shared/apiTokens';
 import { requireAdmin } from '../middleware/requireAdmin';
+import { validateEntityIdParam } from '../middleware/validateEntityIdParam';
 
 export const tokensRouter = Router();
 
 tokensRouter.use(requireAdmin);
+
+// Param callbacks are local to the router they're registered on — this
+// router's own :id param (POST /:id/revoke) needs its own copy.
+tokensRouter.param('id', validateEntityIdParam);
 
 /**
  * POST /api/admin/tokens

@@ -1,5 +1,8 @@
 import * as fs from 'fs-extra';
 import { SanctionRecord, SanctionType, SanctionSource, Address, NameAlias, BirthDate } from '../../shared/types';
+import { logger } from '../../shared/logger';
+
+const log = logger.child({ module: 'importer.parsers.csv' });
 
 /** Issue #6: CSV rows have no strong/language/precision markers — derived from the already-parsed row fields. */
 function deriveNames(primaryName: string, aliases: string[]): NameAlias[] {
@@ -60,7 +63,7 @@ export async function parseCSVList(
   const separator = options.separator || ';'; // default to semicolon which is common in Europe/Sweden
   const defaultSource = options.defaultSource || 'PEP';
 
-  console.log(`Parsing CSV list from ${filePath}...`);
+  log.info('parse.start', { filePath, defaultSource });
   const content = await fs.readFile(filePath, 'utf-8');
   const lines = content.split(/\r?\n/).filter(line => line.trim() !== '');
 
@@ -143,6 +146,6 @@ export async function parseCSVList(
     });
   }
 
-  console.log(`Parsed ${records.length} CSV records.`);
+  log.info('parse.complete', { filePath, recordCount: records.length });
   return records;
 }

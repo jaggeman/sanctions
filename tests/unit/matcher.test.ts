@@ -88,9 +88,22 @@ describe('scoreNameMatch', () => {
     expect(matchedName).toBe('Vladimir Putin');
   });
 
-  it('KEY CASE (issue #11): "Qusay" finds the French transliteration "Qoussaï" via phonetics', () => {
+  it('RECALIBRATED (issue #41): a single-word query against a much longer name no longer clears the match threshold', () => {
+    // Was a "KEY CASE (issue #11)" asserting >= 65 (a perfect-sounding phonetic
+    // hit on ONE word of a four-word name was treated as a likely match).
+    // Fixing issue #41's asymmetric-scoring bug means candidate coverage now
+    // counts for real: this query only explains ~1 of 4 real name parts, which
+    // is structurally the same shape as the bug case below ("Al Hassan" also
+    // covers only a fraction of its candidate). No coverage-ratio formula can
+    // tell "legitimate first-name-only search" apart from "coincidental partial
+    // overlap" without name-frequency data this codebase doesn't have — see
+    // the PR description for the full tradeoff. Explicitly accepted: a bare
+    // first name against a full multi-part name is now a weak signal, not a
+    // confident match. It must still clearly beat a truly unrelated name.
     const { score } = scoreNameMatch('Qusay', ['Qoussaï Saddam Hussein Al-Tikriti']);
-    expect(score).toBeGreaterThanOrEqual(65);
+    const { score: unrelated } = scoreNameMatch('Qusay', ['Kim Jong Un']);
+    expect(score).toBeLessThan(65);
+    expect(score).toBeGreaterThan(unrelated);
   });
 
   it('KEY CASE (issue #11): "Mohammed" finds "Muhammad"-spelled records', () => {
@@ -130,6 +143,46 @@ describe('scoreNameMatch', () => {
   it('handles typos via edit distance, not just exact/phonetic', () => {
     const { score } = scoreNameMatch('Vladimir Putin', ['Vladmir Putin']); // missing an 'i'
     expect(score).toBeGreaterThanOrEqual(80);
+  });
+});
+
+describe('scoreNameMatch — asymmetric token-set scoring bug (issue #41)', () => {
+  it('BUG CASE: a short query fully contained in an unrelated long candidate no longer scores a perfect 100', () => {
+    // Root cause: the old tokenSetScore only measured query->candidate
+    // coverage. Every query word (even the generic particle "al") happened
+    // to appear somewhere in this unrelated candidate, so it scored 100 —
+    // indistinguishable from an exact match, and above DEFAULT_THRESHOLD (65).
+    const { score } = scoreNameMatch('Al Hassan', ['Al-Tikriti Hassan Omar']);
+    expect(score).toBeLessThan(65);
+  });
+
+  it('a candidate token cannot be consumed by more than one query word', () => {
+    // Old tokenBestMatch never marked a candidate token "used", so both
+    // query words independently matched the single candidate token at full
+    // score, averaging to a perfect 100.
+    const { score } = scoreNameMatch('Ali Ali', ['Ali']);
+    expect(score).not.toBe(100);
+  });
+
+  it('a generic particle overlap alone does not manufacture a match', () => {
+    const { score } = scoreNameMatch('Al Bin Omar', ['Al Rashid Bin Laden Al-Sayed']);
+    expect(score).toBeLessThan(65);
+  });
+
+  it('same two name parts in reverse order score high but not a perfect 100 (order-blind, but not literally identical)', () => {
+    const { score } = scoreNameMatch('Ali Hassan', ['Hassan Ali']);
+    expect(score).toBeGreaterThanOrEqual(80);
+    expect(score).toBeLessThan(100);
+  });
+
+  it('a genuine exact match still scores a perfect 100', () => {
+    const { score } = scoreNameMatch('Vladimir Putin', ['Vladimir Putin']);
+    expect(score).toBe(100);
+  });
+
+  it('an all-particle name is still searchable (particles are down-weighted, never stripped to empty)', () => {
+    const { score } = scoreNameMatch('Abu Ali', ['Abu Ali']);
+    expect(score).toBe(100);
   });
 });
 

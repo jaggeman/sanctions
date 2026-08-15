@@ -76,6 +76,18 @@ describe('requireAuth middleware', () => {
     expect(res.status).toBe(200);
   });
 
+  it('still admits the dev test account once ALLOWED_EMAIL_DOMAINS is configured, outside production (issue #92)', async () => {
+    // Reproduces the live pen-test finding: verify-otp lets the test account
+    // log in unconditionally outside production, but this middleware used to
+    // 401 that very same session on its next request the moment a real
+    // domain list was set — exactly the config any non-dev deployment must
+    // have per issue #33.
+    process.env.ALLOWED_EMAIL_DOMAINS = 'corp.com';
+    const res = await asUser(TEST_LOGIN_EMAIL);
+    expect(res.status).toBe(200);
+    expect(res.body.email).toBe(TEST_LOGIN_EMAIL);
+  });
+
   it('admits nobody when ALLOWED_EMAIL_DOMAINS is unset in production, not even the test account', async () => {
     process.env.NODE_ENV = 'production';
     const res = await asUser(TEST_LOGIN_EMAIL);

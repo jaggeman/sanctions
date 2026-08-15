@@ -23,6 +23,38 @@ vi.mock('../../src/importer/uploader', () => ({
   uploadRecords: vi.fn(async () => {}),
   filterAutomatedBatch: vi.fn((records: SanctionRecord[]) => records.filter((r) => r.source !== 'CUSTOM')),
 }));
+// runImport writes through the streaming diff session (issue #8) rather than
+// calling uploadRecords directly. This mock forwards addChunk straight to the
+// mocked uploadRecords, so the assertions below keep testing the same thing:
+// which records reach the write path.
+vi.mock('../../src/importer/diff', async () => {
+  const { uploadRecords, filterAutomatedBatch } = await import('../../src/importer/uploader');
+  return {
+    DEFAULT_IMPORT_MODE: 'append',
+    startDiffSession: vi.fn(async (source: string) => ({
+      addChunk: vi.fn(async (records: any[]) => {
+        const eligible = source === 'CUSTOM' ? records : filterAutomatedBatch(records);
+        if (eligible.length > 0) await uploadRecords(eligible);
+        return eligible.length;
+      }),
+      finish: vi.fn(async () => ({
+        source,
+        counts: { parsed: 0, added: 0, updated: 0, unchanged: 0, delisted: 0, skipped: 0 },
+        toDelistIds: [],
+        activeCount: 0,
+        guardTripped: false,
+      })),
+      abort: vi.fn(() => ({
+        source,
+        counts: { parsed: 0, added: 0, updated: 0, unchanged: 0, delisted: 0, skipped: 0 },
+        toDelistIds: [],
+        activeCount: 0,
+        guardTripped: false,
+      })),
+    })),
+  };
+});
+
 vi.mock('../../src/search', () => ({ invalidateSearchIndex: vi.fn() }));
 
 import { runImport } from '../../src/importer/index';
