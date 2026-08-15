@@ -4,9 +4,11 @@ import * as path from 'path';
 
 const ensureDir = vi.fn(async () => {});
 const createWriteStream = vi.fn(() => new PassThrough());
+const remove = vi.fn(async () => {});
 vi.mock('fs-extra', () => ({
   ensureDir: (...args: any[]) => ensureDir(...args),
   createWriteStream: (...args: any[]) => createWriteStream(...args),
+  remove: (...args: any[]) => remove(...args),
 }));
 
 const axiosMock = vi.fn();
@@ -35,7 +37,15 @@ function readableWithChunks(chunks: string[]): Readable {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  createWriteStream.mockImplementation(() => new PassThrough());
+  // .resume() puts the mock sink in flowing mode so it drains immediately —
+  // without a real disk (or another consumer) behind it, an unconsumed
+  // PassThrough backpressures and stalls once a write exceeds its internal
+  // highWaterMark, which a large-download test needs to push past.
+  createWriteStream.mockImplementation(() => {
+    const s = new PassThrough();
+    s.resume();
+    return s;
+  });
 });
 
 describe('downloadFile', () => {
@@ -72,6 +82,64 @@ describe('downloadFile', () => {
     await expect(downloadFile('https://example.test/list.xml', 'list.xml')).rejects.toThrow(
       /ENOTFOUND/,
     );
+  });
+
+  it('sets an explicit, bounded maxRedirects rather than trusting axios defaults (issue #107)', async () => {
+    axiosMock.mockResolvedValue({ data: readableWithChunks(['a']), headers: {} });
+
+    await downloadFile('https://example.test/list.xml', 'list.xml');
+
+    expect(axiosMock).toHaveBeenCalledWith(
+      expect.objectContaining({ maxRedirects: expect.any(Number) }),
+    );
+    const call = axiosMock.mock.calls[0][0];
+    expect(call.maxRedirects).toBeGreaterThanOrEqual(0);
+    expect(call.maxRedirects).toBeLessThanOrEqual(5);
+  });
+
+  it('aborts and cleans up the partial file once the download exceeds the size cap (issue #107)', async () => {
+    const stream = new Readable({ read() {} });
+    axiosMock.mockResolvedValue({ data: stream, headers: {} });
+
+    const promise = downloadFile('https://example.test/list.xml', 'list.xml');
+    await new Promise((r) => setImmediate(r));
+
+    // One chunk well over any reasonable cap for a sanctions-list XML file.
+    stream.push(Buffer.alloc(250 * 1024 * 1024, 'a'));
+
+    await expect(promise).rejects.toThrow(/size limit/i);
+    expect(remove).toHaveBeenCalledWith(path.join(DOWNLOADS_DIR, 'list.xml'));
+  });
+
+  it('rejects a download that stops short of the server-declared Content-Length (issue #107)', async () => {
+    const stream = new Readable({ read() {} });
+    axiosMock.mockResolvedValue({ data: stream, headers: { 'content-length': '1000' } });
+
+    const promise = downloadFile('https://example.test/list.xml', 'list.xml');
+    await new Promise((r) => setImmediate(r));
+
+    stream.push('short'); // 5 bytes, nowhere near the declared 1000
+    stream.push(null); // clean end-of-stream — a truncated-but-not-erroring connection
+
+    await expect(promise).rejects.toThrow(/incomplete/i);
+  });
+
+  it('succeeds normally when Content-Length matches the actual bytes received', async () => {
+    const body = '<xml/>';
+    axiosMock.mockResolvedValue({
+      data: readableWithChunks([body]),
+      headers: { 'content-length': String(Buffer.byteLength(body)) },
+    });
+
+    const result = await downloadFile('https://example.test/list.xml', 'list.xml');
+    expect(result).toBe(path.join(DOWNLOADS_DIR, 'list.xml'));
+  });
+
+  it('succeeds without a completeness check when the server sends no Content-Length at all', async () => {
+    axiosMock.mockResolvedValue({ data: readableWithChunks(['<xml/>']), headers: {} });
+
+    const result = await downloadFile('https://example.test/list.xml', 'list.xml');
+    expect(result).toBe(path.join(DOWNLOADS_DIR, 'list.xml'));
   });
 
   it('rejects if the response stream errors partway through (interrupted download)', async () => {
