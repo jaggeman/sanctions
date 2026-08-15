@@ -27,6 +27,8 @@ Selective/partial runs for fast local iteration — don't run the whole suite on
 - `npm test -- --changed`                # only tests matching changed source files (fast pre-check, not a substitute for the full suite before pushing)
 Run the whole suite before committing/opening a PR — that's the real gate.
 
+One emulator per session, owned by the test run itself. A shared emulator on a fixed port is not safe when several sessions are active: their tests clear and rewrite the same collections, and whoever started it can shut it down mid-run in another session. The failures that produces look exactly like real bugs — a batching test reporting `expected 490 to be 501`, or five integration tests failing at once. Let `npm test` start and own its emulator rather than pointing the runner at one that happens to be listening, and if a run fails in a layer you didn't touch, check whether the emulator is still up before you start reading code.
+
 Invoke the suite through the project's own script, not the underlying runner. The script usually wraps the runner in scaffolding the tests require: here `npm test` is `firebase emulators:exec --only firestore "vitest run"`, so reaching past it to `npx vitest run` starts no emulator and reports the integration and rules layers as failures that have nothing to do with your change. If you find yourself explaining away failures in a layer you didn't touch, check how you invoked the suite before you start diagnosing the code.
 
 Know your platform's test-runner limitations before fighting them. If a test layer (e.g. a bundled emulator) simply can't run on your OS due to a known sandboxing/networking limitation, that's an environment fact to document and route around (e.g. run it in a VM/container/CI only), not a bug to chase for hours. Write down the exact error signature once you've diagnosed it so the next session doesn't re-diagnose it.
@@ -42,7 +44,7 @@ A file-based "claim" board — a directory (e.g. `.agents/active/`, git-ignored)
 
 At the start of every task:
 
-- `git fetch origin main` and branch off (or rebase onto) latest — never build on a checkout more than a few commits behind. A stale branch that gets pushed later can silently revert already-merged work — always diff against the target before pushing (`git diff origin/main <branch> --stat`), don't just trust "no conflicts."
+- `git fetch origin main` and branch off (or rebase onto) latest — never build on a checkout more than a few commits behind. A stale branch that gets pushed later can silently revert already-merged work — always diff against the target before pushing, don't just trust "no conflicts." Use the **three-dot** form for this: `git diff origin/main...HEAD --stat` shows only what your branch changed relative to the merge base, which is the question you're actually asking. The two-dot `git diff origin/main HEAD` also lists everything that landed on main since you branched, so a branch that reverts nothing looks like it reverts the world — a false alarm that costs real time. Two-dot answers a different question ("how far behind am I"), and both are worth running: three-dot to see your own change, two-dot to see whether you need to rebase.
 - Read every active claim file + `git status` — know what's in flight.
 - Create your own claim file listing files/areas you'll touch.
 - If a file you need is already claimed, don't edit it — pick other work or ask to coordinate.
