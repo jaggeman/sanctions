@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs-extra';
 import { downloadFile, SOURCE_URLS } from './fetcher';
-import { parseEUList } from './parsers/eu';
+import { parseEUListStreaming } from './parsers/eu';
 import { parseUNList } from './parsers/un';
 import { parseUSList } from './parsers/us';
 import { parseCSVList } from './parsers/csv';
@@ -17,7 +17,25 @@ interface ImportOptions {
 }
 
 /**
+ * How many streamed EU records are buffered before being flushed to Firestore.
+ * Keeps this task's own memory bounded independently of `uploadRecords`'
+ * internal 500-per-batch write limit (issue #5) — a smaller buffer here would
+ * just mean more, smaller Firestore batch commits, not a correctness change.
+ */
+export const EU_UPLOAD_CHUNK_SIZE = 500;
+
+/**
  * Main import function that coordinates fetching, parsing, and uploading.
+ *
+ * Each source is uploaded as soon as it (or, for EU, each chunk of it) is
+ * parsed, rather than accumulated into one array across all sources before a
+ * single upload at the end (issue #5) — the EU export alone is large enough
+ * that holding it in memory next to UN and US was exhausting the deployed
+ * Cloud Function's memory budget. `importedCounts` still reports how many
+ * records each source *parsed*, matching the pre-existing contract;
+ * `filterAutomatedBatch` (issue #10) is applied per chunk/source right before
+ * each upload, equivalent to applying it once over the old combined array
+ * since it only inspects each record's own `source` field.
  */
 export async function runImport(options: ImportOptions = {}): Promise<{
   success: boolean;
@@ -26,47 +44,82 @@ export async function runImport(options: ImportOptions = {}): Promise<{
 }> {
   const sources = options.sources || ['EU', 'UN', 'US'];
   const importedCounts: Record<string, number> = {};
-  
+  let totalParsed = 0;
+  let totalUploaded = 0;
+
   console.log(`Starting import process for sources: ${sources.join(', ')}`);
 
+  const uploadFiltered = async (records: SanctionRecord[]): Promise<number> => {
+    const uploadable = filterAutomatedBatch(records);
+    if (uploadable.length > 0) {
+      await uploadRecords(uploadable);
+    }
+    return uploadable.length;
+  };
+
   try {
-    const allRecords: SanctionRecord[] = [];
     const downloadsDir = path.resolve(__dirname, '../../downloads');
     await fs.ensureDir(downloadsDir);
 
-    // 1. Process EU
+    // 1. Process EU. Streamed one entity at a time and uploaded in chunks —
+    // never held as a single array of every EU record.
     if (sources.includes('EU')) {
+      let buffer: SanctionRecord[] = [];
+      let parsed = 0;
+      let uploaded = 0;
+
+      const flush = async () => {
+        if (buffer.length === 0) return;
+        const chunk = buffer;
+        buffer = [];
+        uploaded += await uploadFiltered(chunk);
+      };
+
       try {
         const filePath = await downloadFile(SOURCE_URLS.EU, 'eu_sanctions.xml');
-        const records = await parseEUList(filePath);
-        allRecords.push(...records);
-        importedCounts.EU = records.length;
+        await parseEUListStreaming(filePath, async (record) => {
+          parsed++;
+          buffer.push(record);
+          if (buffer.length >= EU_UPLOAD_CHUNK_SIZE) {
+            await flush();
+          }
+        });
+        await flush();
       } catch (error: any) {
+        // Report what actually made it to Firestore before the failure,
+        // rather than silently claiming zero for records already persisted.
+        await flush().catch(() => {});
         console.error(`Error importing EU sanctions list: ${error.message}`);
-        importedCounts.EU = 0;
       }
+
+      importedCounts.EU = parsed;
+      totalParsed += parsed;
+      totalUploaded += uploaded;
     }
 
-    // 2. Process UN
+    // 2. Process UN. Uploaded immediately after parsing, not held alongside
+    // EU/US records.
     if (sources.includes('UN')) {
       try {
         const filePath = await downloadFile(SOURCE_URLS.UN, 'un_sanctions.xml');
         const records = await parseUNList(filePath);
-        allRecords.push(...records);
         importedCounts.UN = records.length;
+        totalParsed += records.length;
+        totalUploaded += await uploadFiltered(records);
       } catch (error: any) {
         console.error(`Error importing UN sanctions list: ${error.message}`);
         importedCounts.UN = 0;
       }
     }
 
-    // 3. Process US (OFAC SDN)
+    // 3. Process US (OFAC SDN). Same pattern as UN.
     if (sources.includes('US')) {
       try {
         const filePath = await downloadFile(SOURCE_URLS.US, 'us_sdn.xml');
         const records = await parseUSList(filePath);
-        allRecords.push(...records);
         importedCounts.US = records.length;
+        totalParsed += records.length;
+        totalUploaded += await uploadFiltered(records);
       } catch (error: any) {
         console.error(`Error importing US sanctions list: ${error.message}`);
         importedCounts.US = 0;
@@ -84,8 +137,9 @@ export async function runImport(options: ImportOptions = {}): Promise<{
             separator,
             defaultSource: csvSource,
           });
-          allRecords.push(...records);
           importedCounts[csvSource] = records.length;
+          totalParsed += records.length;
+          totalUploaded += await uploadFiltered(records);
         } else {
           console.error(`CSV file not found at path: ${absoluteCsvPath}`);
         }
@@ -94,22 +148,18 @@ export async function runImport(options: ImportOptions = {}): Promise<{
       }
     }
 
-    // 5. Upload everything to Firestore (custom records are never part of an
-    // automated import batch — see filterAutomatedBatch, issue #10)
-    const uploadableRecords = filterAutomatedBatch(allRecords);
-    if (uploadableRecords.length > 0) {
-      await uploadRecords(uploadableRecords);
+    // 5. Report
+    if (totalUploaded > 0) {
       invalidateSearchIndex(); // next search rebuilds the in-memory index with the new data
-      console.log(`Successfully processed and uploaded total of ${uploadableRecords.length} records.`);
+      console.log(`Successfully processed and uploaded total of ${totalUploaded} records.`);
       return { success: true, importedCounts };
-    } else if (allRecords.length > 0) {
+    } else if (totalParsed > 0) {
       console.warn('All parsed records were CUSTOM-sourced and were dropped from this automated import — see filterAutomatedBatch.');
       return { success: false, importedCounts, error: 'No uploadable records after filtering CUSTOM-sourced records' };
     } else {
       console.warn('No records were parsed or imported.');
       return { success: false, importedCounts, error: 'No records parsed' };
     }
-
   } catch (error: any) {
     console.error(`Import pipeline failed: ${error.message}`);
     return { success: false, importedCounts, error: error.message };

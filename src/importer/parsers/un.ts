@@ -129,7 +129,6 @@ export async function parseUNList(filePath: string): Promise<SanctionRecord[]> {
       passports: passports.length > 0 ? passports : undefined,
       addresses: addresses.length > 0 ? addresses : undefined,
       sanctionReason: sanctionReason || undefined,
-      rawSourceData: ind,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
@@ -184,7 +183,6 @@ export async function parseUNList(filePath: string): Promise<SanctionRecord[]> {
       searchNames: [],
       addresses: addresses.length > 0 ? addresses : undefined,
       sanctionReason: sanctionReason || undefined,
-      rawSourceData: ent,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });

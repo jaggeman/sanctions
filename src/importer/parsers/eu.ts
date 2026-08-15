@@ -1,4 +1,4 @@
-import { XMLParser } from 'fast-xml-parser';
+import * as sax from 'sax';
 import * as fs from 'fs-extra';
 import { SanctionRecord, Address } from '../../shared/types';
 
@@ -11,6 +11,16 @@ import { SanctionRecord, Address } from '../../shared/types';
  * `wholeName="..."` as an attribute; there is no `<wholeName>` child. Reading it
  * as an element silently yields `undefined` rather than throwing, which is how
  * this parser previously produced 6 234 nameless records from a valid file.
+ *
+ * Parsing is SAX-based (issue #5): the real export is ~25 MB of XML which,
+ * built as a single DOM tree (the previous approach, via fast-xml-parser's
+ * `XMLParser`), multiplied out to well over 100 MB of live objects — more than
+ * the deployed Cloud Function's memory budget. `parseEUListStreaming` below
+ * builds one `<sanctionEntity>` subtree at a time, maps it to a `SanctionRecord`,
+ * hands it to the caller, and discards it before moving to the next one. The
+ * rest of this file (`SAFE_LOGICAL_ID`, `collectAliases`, `selectPrimary`, etc.)
+ * is unchanged field-mapping logic, now running per-entity instead of over a
+ * fully-materialised document.
  *
  * Reference sample: tests/fixtures/eu_sample.xml (carved from the real export).
  */
@@ -205,94 +215,248 @@ function parseIdentifications(entry: any): string[] {
   return out;
 }
 
-export async function parseEUList(filePath: string): Promise<SanctionRecord[]> {
-  console.log(`Parsing EU sanctions list from ${filePath}...`);
-  const xmlContent = await fs.readFile(filePath, 'utf-8');
-
-  const parser = new XMLParser({
-    ignoreAttributes: false,
-    // Deliberately off: attribute coercion turns a passport number such as
-    // "007123" into 7123 and "1965" into a number, corrupting identifiers.
-    // Everything is read as text and converted explicitly instead.
-    parseAttributeValue: false,
-    trimValues: true,
-    // The real export declares a default namespace (xmlns=...), but other
-    // renderings use a prefix. Stripping prefixes handles both.
-    removeNSPrefix: true,
-  });
-
-  const parsed = parser.parse(xmlContent);
-  const sanctionEntities = parsed.export?.sanctionEntity;
-
-  if (!sanctionEntities) {
-    console.warn('No sanctionEntity found in EU XML file.');
-    return [];
+/**
+ * Map one already-built `<sanctionEntity>` subtree (attribute-prefixed, in the
+ * same shape fast-xml-parser used to produce for the whole document) to a
+ * `SanctionRecord`. Returns null for an entity that should be skipped
+ * (missing or unsafe `logicalId`).
+ *
+ * Deliberately does not keep a `rawSourceData` reference to `entry` — every
+ * record used to carry the entire parsed source node inline, which was the
+ * second-largest contributor (after the DOM tree itself) to peak import
+ * memory for no read-path benefit today.
+ */
+function mapEntityToRecord(entry: any): SanctionRecord | null {
+  const logicalId = attr(entry, 'logicalId');
+  if (!logicalId) return null;
+  if (!SAFE_LOGICAL_ID.test(logicalId)) {
+    console.warn(`Skipping EU entity with unsafe logicalId: ${JSON.stringify(logicalId)}`);
+    return null;
   }
 
-  const records: SanctionRecord[] = [];
+  // subjectType is code="person" | "enterprise" (classificationCode P | E).
+  const subjectCode = attr(entry.subjectType, 'code').toLowerCase();
+  const classification = attr(entry.subjectType, 'classificationCode').toUpperCase();
+  const isPerson = subjectCode === 'person' || (!subjectCode && classification === 'P');
+  const type: SanctionRecord['type'] = isPerson ? 'individual' : 'entity';
 
-  for (const entry of toArray(sanctionEntities)) {
-    const logicalId = attr(entry, 'logicalId');
-    if (!logicalId) continue;
-    if (!SAFE_LOGICAL_ID.test(logicalId)) {
-      console.warn(`Skipping EU entity with unsafe logicalId: ${JSON.stringify(logicalId)}`);
-      continue;
-    }
+  const candidates = collectAliases(entry);
+  let primaryName = 'Unknown Name';
+  let aliases: string[] = [];
 
-    // subjectType is code="person" | "enterprise" (classificationCode P | E).
-    const subjectCode = attr(entry.subjectType, 'code').toLowerCase();
-    const classification = attr(entry.subjectType, 'classificationCode').toUpperCase();
-    const isPerson = subjectCode === 'person' || (!subjectCode && classification === 'P');
-    const type: SanctionRecord['type'] = isPerson ? 'individual' : 'entity';
+  if (candidates.length > 0) {
+    const primaryIndex = selectPrimary(candidates);
+    primaryName = candidates[primaryIndex].wholeName;
+    aliases = candidates.filter((_, i) => i !== primaryIndex).map((c) => c.wholeName);
+  }
 
-    const candidates = collectAliases(entry);
-    let primaryName = 'Unknown Name';
-    let aliases: string[] = [];
+  const addresses = parseAddresses(entry);
+  const { dates: datesOfBirth, places: placesOfBirth } = parseBirthdates(entry);
+  const passports = parseIdentifications(entry);
 
-    if (candidates.length > 0) {
-      const primaryIndex = selectPrimary(candidates);
-      primaryName = candidates[primaryIndex].wholeName;
-      aliases = candidates.filter((_, i) => i !== primaryIndex).map((c) => c.wholeName);
-    }
+  const citizenships: string[] = [];
+  for (const node of toArray(entry.citizenship)) {
+    const country =
+      meaningfulCountry(attr(node, 'countryDescription')) || meaningfulCountry(attr(node, 'countryIso2Code'));
+    if (country && !citizenships.includes(country)) citizenships.push(country);
+  }
 
-    const addresses = parseAddresses(entry);
-    const { dates: datesOfBirth, places: placesOfBirth } = parseBirthdates(entry);
-    const passports = parseIdentifications(entry);
+  const sanctionReason =
+    attr(entry.regulation, 'numberTitle') || attr(entry.regulationSummary, 'numberTitle');
+  const legalBasis =
+    attr(entry.regulation, 'publicationUrl') || attr(entry.regulationSummary, 'publicationUrl');
 
-    const citizenships: string[] = [];
-    for (const node of toArray(entry.citizenship)) {
-      const country =
-        meaningfulCountry(attr(node, 'countryDescription')) || meaningfulCountry(attr(node, 'countryIso2Code'));
-      if (country && !citizenships.includes(country)) citizenships.push(country);
-    }
+  const now = new Date().toISOString();
 
-    const sanctionReason =
-      attr(entry.regulation, 'numberTitle') || attr(entry.regulationSummary, 'numberTitle');
-    const legalBasis =
-      attr(entry.regulation, 'publicationUrl') || attr(entry.regulationSummary, 'publicationUrl');
+  return {
+    id: `EU-${logicalId}`,
+    source: 'EU',
+    type,
+    primaryName,
+    aliases,
+    searchNames: [], // Generated by uploader
+    datesOfBirth: datesOfBirth.length > 0 ? datesOfBirth : undefined,
+    placesOfBirth: placesOfBirth.length > 0 ? placesOfBirth : undefined,
+    citizenships: citizenships.length > 0 ? citizenships : undefined,
+    passports: passports.length > 0 ? passports : undefined,
+    addresses: addresses.length > 0 ? addresses : undefined,
+    sanctionReason: sanctionReason || undefined,
+    legalBasis: legalBasis || undefined,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
 
-    const now = new Date().toISOString();
+function stripPrefix(name: string): string {
+  const idx = name.indexOf(':');
+  return idx === -1 ? name : name.slice(idx + 1);
+}
 
-    records.push({
-      id: `EU-${logicalId}`,
-      source: 'EU',
-      type,
-      primaryName,
-      aliases,
-      searchNames: [], // Generated by uploader
-      datesOfBirth: datesOfBirth.length > 0 ? datesOfBirth : undefined,
-      placesOfBirth: placesOfBirth.length > 0 ? placesOfBirth : undefined,
-      citizenships: citizenships.length > 0 ? citizenships : undefined,
-      passports: passports.length > 0 ? passports : undefined,
-      addresses: addresses.length > 0 ? addresses : undefined,
-      sanctionReason: sanctionReason || undefined,
-      legalBasis: legalBasis || undefined,
-      rawSourceData: entry,
-      createdAt: now,
-      updatedAt: now,
+function pushChild(parent: Record<string, any>, tagName: string, child: any) {
+  const existing = parent[tagName];
+  if (existing === undefined) {
+    parent[tagName] = child;
+  } else if (Array.isArray(existing)) {
+    existing.push(child);
+  } else {
+    parent[tagName] = [existing, child];
+  }
+}
+
+interface Frame {
+  tagName: string;
+  node: Record<string, any>;
+  text: string;
+  childCount: number;
+}
+
+/**
+ * Stream-parse the EU FSD export, invoking `onRecord` once per
+ * `<sanctionEntity>` as soon as its closing tag is seen. Only one entity's
+ * subtree — a few dozen small objects — is ever held in memory at a time; the
+ * rest of the (multi-megabyte) document is never materialised as a tree.
+ *
+ * `onRecord` may return a Promise; when it does, parsing pauses on the
+ * underlying file stream until it resolves. This lets a caller batch records
+ * and await a Firestore write without the parser racing arbitrarily far ahead
+ * of what has actually been persisted.
+ *
+ * Resolves to the number of `sanctionEntity` nodes for which `onRecord` was
+ * actually invoked (entities skipped for a missing/unsafe `logicalId` are not
+ * counted).
+ */
+export async function parseEUListStreaming(
+  filePath: string,
+  onRecord: (record: SanctionRecord) => void | Promise<void>,
+): Promise<number> {
+  console.log(`Streaming EU sanctions list from ${filePath}...`);
+
+  return new Promise((resolve, reject) => {
+    const parserStream = sax.createStream(true, { trim: false, lowercase: false });
+    const readStream = fs.createReadStream(filePath, { encoding: 'utf-8' });
+
+    const stack: Frame[] = [];
+    let depth = 0;
+    let entityDepth = -1;
+    let emitted = 0;
+    let settled = false;
+    const pending: Promise<void>[] = [];
+
+    const fail = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      readStream.destroy();
+      reject(err);
+    };
+
+    parserStream.on('opentag', (node: sax.Tag) => {
+      depth++;
+      const tagName = stripPrefix(node.name);
+      const obj: Record<string, any> = {};
+      for (const [rawAttrName, rawVal] of Object.entries(node.attributes)) {
+        obj[`@_${stripPrefix(rawAttrName)}`] = String(rawVal).trim();
+      }
+      stack.push({ tagName, node: obj, text: '', childCount: 0 });
+
+      if (tagName === 'sanctionEntity' && entityDepth === -1) {
+        entityDepth = depth;
+      }
     });
-  }
 
+    parserStream.on('text', (t: string) => {
+      if (stack.length > 0) stack[stack.length - 1].text += t;
+    });
+
+    parserStream.on('closetag', (rawName: string) => {
+      const tagName = stripPrefix(rawName);
+      const frame = stack.pop();
+      depth--;
+      if (!frame) return;
+
+      const hasAttrs = Object.keys(frame.node).length > 0;
+      const value: any = !hasAttrs && frame.childCount === 0 ? frame.text.trim() : frame.node;
+
+      if (stack.length === 0) return; // closed the document root itself
+
+      if (tagName === 'sanctionEntity' && depth + 1 === entityDepth) {
+        entityDepth = -1;
+
+        let record: SanctionRecord | null;
+        try {
+          record = mapEntityToRecord(value);
+        } catch (err) {
+          fail(err as Error);
+          return;
+        }
+
+        if (record) {
+          emitted++;
+          let result: void | Promise<void>;
+          try {
+            result = onRecord(record);
+          } catch (err) {
+            fail(err as Error);
+            return;
+          }
+          if (result && typeof (result as Promise<void>).then === 'function') {
+            readStream.pause();
+            const awaited = (result as Promise<void>).then(
+              () => {
+                readStream.resume();
+              },
+              (err) => {
+                fail(err);
+                throw err;
+              },
+            );
+            pending.push(awaited);
+          }
+        }
+        return; // never attached to the parent — nothing to hold onto
+      }
+
+      const parent = stack[stack.length - 1];
+      parent.childCount++;
+      pushChild(parent.node, tagName, value);
+    });
+
+    parserStream.on('error', (err: Error) => {
+      // sax keeps running after emitting 'error' unless the stream is torn down.
+      fail(err);
+    });
+
+    readStream.on('error', (err) => fail(err));
+
+    parserStream.on('end', () => {
+      // All onRecord invocations already happened synchronously by this point;
+      // this only waits for any async ones (chunk flushes, uploads, ...) to
+      // actually finish before reporting the parse as done.
+      Promise.all(pending).then(() => {
+        if (settled) return;
+        settled = true;
+        if (emitted === 0) {
+          console.warn('No sanctionEntity found in EU XML file.');
+        }
+        console.log(`Streamed ${emitted} EU entities.`);
+        resolve(emitted);
+      }, fail);
+    });
+
+    readStream.pipe(parserStream as unknown as NodeJS.WritableStream);
+  });
+}
+
+/**
+ * Array-returning form kept for existing callers and tests. Thin wrapper over
+ * `parseEUListStreaming` — still avoids the full-DOM-tree memory cost, it just
+ * also holds every mapped (small, `rawSourceData`-free) record in an array
+ * for the duration of the call, same as before.
+ */
+export async function parseEUList(filePath: string): Promise<SanctionRecord[]> {
+  const records: SanctionRecord[] = [];
+  await parseEUListStreaming(filePath, (record) => {
+    records.push(record);
+  });
   console.log(`Parsed ${records.length} EU records.`);
   return records;
 }
