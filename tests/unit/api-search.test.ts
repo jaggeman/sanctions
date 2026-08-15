@@ -200,6 +200,38 @@ describe('POST /api/import', () => {
     expect(res.status).toBe(202);
     expect(res.body.status).toBe('import_started');
   });
+
+  it('rejects a mode that is not "sync" or "append"', async () => {
+    const res = await agent.post('/api/import').send({ sources: ['EU'], mode: 'wipe-everything' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/mode/i);
+  });
+
+  it('rejects an importId containing a path separator', async () => {
+    const res = await agent.post('/api/import').send({ sources: ['EU'], importId: '../../etc' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/importId/i);
+  });
+
+  it('accepts a well-formed importId', async () => {
+    const res = await agent.post('/api/import').send({ sources: ['EU'], importId: 'import_123_abc' });
+    expect(res.status).toBe(202);
+  });
+
+  it('dryRun:true awaits the import and returns its result synchronously instead of 202', async () => {
+    const { runImport } = await import('../../src/importer');
+    (runImport as any).mockResolvedValueOnce({
+      success: true,
+      importedCounts: { EU: 2 },
+      diffs: [{ source: 'EU', counts: { parsed: 2, added: 2, updated: 0, unchanged: 0, delisted: 0, skipped: 0 } }],
+    });
+
+    const res = await agent.post('/api/import').send({ sources: ['EU'], mode: 'sync', dryRun: true });
+
+    expect(res.status).toBe(200);
+    expect(res.body.diffs[0].counts.added).toBe(2);
+    expect(runImport).toHaveBeenCalledWith(expect.objectContaining({ mode: 'sync', dryRun: true }));
+  });
 });
 
 // POST /api/upload's tests live in tests/unit/api-upload.test.ts — the
@@ -208,6 +240,15 @@ describe('POST /api/import', () => {
 // 202 response this block used to assert. The two multer-level validation
 // tests (disallowed extension, oversized file) that were added here on main
 // moved there too, alongside this rewrite's own source/dedup/format tests.
+//
+// Issue #8's diff engine is wired into POST /api/import (mode/dryRun/force/
+// importId, tested above) but deliberately NOT into POST /api/upload in this
+// PR — that endpoint is now issue #7's synchronous hash/dedup/Storage
+// pipeline (processUpload), which has no dry-run concept and doesn't call
+// runImport with sources/mode at all. Bolting mode/dryRun/force onto that
+// pipeline is real design work neither PR settled (would a dry-run still
+// hash/dedup/write to Storage? claim a pending import doc?) — tracked as a
+// follow-up rather than improvised here.
 
 // Issue #36: requireScope was fully built and tested in isolation but never
 // actually reachable — a bearer-token-only request (no session cookie) was

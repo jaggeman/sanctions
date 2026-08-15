@@ -63,6 +63,12 @@ function uploadSingleFile(fieldName: string) {
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// importId (issue #8) becomes a Firestore document ID under
+// sanctions/{id}/versions/{importId} — validate it before it ever reaches
+// there, same as any other client-supplied value used as a storage key
+// (CLAUDE.md §6). Matches the shape runImport auto-generates
+// (import_<timestamp>_<hex>) plus reasonable room for a caller-chosen id.
+const IMPORT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const SESSION_COOKIE_OPTIONS = {
   httpOnly: true,
   sameSite: 'lax' as const,
@@ -283,26 +289,59 @@ app.get('/api/sanctions/:id', requireAuthOrScope('read'), async (req, res): Prom
  * Accepts either a logged-in session or a `write`-scoped API token (issue #36).
  */
 app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<any> => {
-  const { sources, csvPath } = req.body;
+  const { sources, csvPath, mode, dryRun, force, importId } = req.body;
 
   // Validate sources if provided
   if (sources && !Array.isArray(sources)) {
     return res.status(400).json({ error: '"sources" must be an array.' });
   }
+  if (mode !== undefined && mode !== 'sync' && mode !== 'append') {
+    return res.status(400).json({ error: '"mode" must be "sync" or "append".' });
+  }
+  if (importId !== undefined && !IMPORT_ID_PATTERN.test(importId)) {
+    return res.status(400).json({ error: '"importId" must match ^[A-Za-z0-9_-]{1,128}$.' });
+  }
+
+  const importOptions = {
+    sources,
+    csvPath,
+    csvSource: 'PEP' as const,
+    csvSeparator: ';',
+    mode,
+    dryRun: !!dryRun,
+    force: !!force,
+    importId,
+  };
+
+  // Dry-run is a preview (issue #8): the caller needs the counts back to
+  // decide whether to apply for real, so this one path responds
+  // synchronously instead of the fire-and-forget 202 every other
+  // import/upload call uses.
+  if (dryRun) {
+    try {
+      const result = await runImport(importOptions);
+      return res.status(200).json(result);
+    } catch (error: any) {
+      console.error('Dry-run import failed:', error);
+      return res.status(500).json({ error: 'Internal server error', details: error.message });
+    }
+  }
 
   // Trigger import in the background
   console.log('Import triggered via REST API. Starting background run...');
-  
-  runImport({
-    sources: sources,
-    csvPath: csvPath,
-    csvSource: 'PEP',
-    csvSeparator: ';',
-  })
+
+  runImport(importOptions)
     .then((result) => {
       console.log('API Background Import finished:', result);
     })
     .catch((err) => {
+      // A refused delist guard (issue #8's DelistGuardError) surfaces only
+      // here today, same as any other background-import failure — the 202
+      // already went out by the time this rejects. Known gap, not solved by
+      // this change: making the sync-mode apply path synchronous (or adding
+      // a status-polling endpoint) is bigger than this diff engine's own
+      // scope and touches the same fire-and-forget pattern every endpoint
+      // in this file uses.
       console.error('API Background Import failed:', err);
     });
 
