@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import type { SanctionRecord } from '../../src/shared/types';
+import { createSession } from '../../src/auth/session';
+import { SESSION_COOKIE_NAME } from '../../src/auth/middleware';
 
 // GET /api/sanctions/:id still talks to Firestore directly, so it keeps a
 // fake db. GET /api/search now goes through the shared src/search runSearch
@@ -247,6 +249,63 @@ describe('POST /api/import', () => {
     expect(res.status).toBe(200);
     expect(res.body.diffs[0].counts.added).toBe(2);
     expect(runImport).toHaveBeenCalledWith(expect.objectContaining({ mode: 'sync', dryRun: true }));
+  });
+});
+
+// Issue #105: force:true bypasses the diff engine's >20% delist safety guard
+// (issue #8) — restricted to admin sessions specifically, since
+// requireAuthOrScope('write') alone only proves "logged in or holds a
+// write-scoped token," not "trusted to override a safety mechanism."
+describe('POST /api/import — force:true restricted to admins (issue #105)', () => {
+  it('allows force:true for an admin session (admin@sanctions.com is admin by default when ADMIN_EMAILS is unset outside production)', async () => {
+    const res = await agent.post('/api/import').send({ sources: ['EU'], force: true });
+    expect(res.status).toBe(202);
+
+    const { runImport } = await import('../../src/importer');
+    expect(runImport).toHaveBeenCalledWith(expect.objectContaining({ force: true }));
+  });
+
+  it('rejects force:true for a logged-in non-admin session with 403, without ever calling runImport', async () => {
+    vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'example.com');
+    const sid = createSession('analyst@example.com');
+
+    const { runImport } = await import('../../src/importer');
+    (runImport as any).mockClear();
+
+    const res = await request(api)
+      .post('/api/import')
+      .set('Cookie', `${SESSION_COOKIE_NAME}=${sid}`)
+      .send({ sources: ['EU'], force: true });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/admin/i);
+    expect(runImport).not.toHaveBeenCalled();
+    vi.unstubAllEnvs();
+  });
+
+  it('rejects force:true from a write-scoped API token with 403 — a token has no identity to check admin status against', async () => {
+    verifyApiToken.mockResolvedValue({ valid: true, tokenId: 'tok-1', scopes: ['write'] });
+    const { runImport } = await import('../../src/importer');
+    (runImport as any).mockClear();
+
+    const res = await request(api)
+      .post('/api/import')
+      .set('Authorization', 'Bearer sanc_writer')
+      .send({ sources: ['EU'], force: true });
+
+    expect(res.status).toBe(403);
+    expect(runImport).not.toHaveBeenCalled();
+  });
+
+  it('a write-scoped token can still import without force', async () => {
+    verifyApiToken.mockResolvedValue({ valid: true, tokenId: 'tok-1', scopes: ['write'] });
+
+    const res = await request(api)
+      .post('/api/import')
+      .set('Authorization', 'Bearer sanc_writer')
+      .send({ sources: ['EU'] });
+
+    expect(res.status).toBe(202);
   });
 });
 
