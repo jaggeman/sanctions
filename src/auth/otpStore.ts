@@ -1,9 +1,10 @@
-import { generateOtpCode, hashOtpCode, OTP_TTL_MS, OTP_MAX_ATTEMPTS } from './otp';
+import { generateOtpCode, hashOtpCode, OTP_TTL_MS, OTP_MAX_ATTEMPTS, OTP_REQUEST_COOLDOWN_MS } from './otp';
 
 interface OtpEntry {
   codeHash: string;
   expiresAt: number;
   attempts: number;
+  issuedAt: number;
 }
 
 let store = new Map<string, OtpEntry>();
@@ -12,13 +13,24 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
-/** Creates (or replaces) a pending OTP for an email and returns the plaintext code to send. */
-export function createOtp(email: string): string {
+/**
+ * Creates (or replaces) a pending OTP for an email and returns the plaintext
+ * code to send, or `null` if one was already issued for this email within
+ * the cooldown window (issue #16 rate limiting).
+ */
+export function createOtp(email: string): string | null {
+  const key = normalizeEmail(email);
+  const existing = store.get(key);
+  if (existing && Date.now() - existing.issuedAt < OTP_REQUEST_COOLDOWN_MS) {
+    return null;
+  }
+
   const code = generateOtpCode();
-  store.set(normalizeEmail(email), {
+  store.set(key, {
     codeHash: hashOtpCode(code),
     expiresAt: Date.now() + OTP_TTL_MS,
     attempts: 0,
+    issuedAt: Date.now(),
   });
   return code;
 }

@@ -30,6 +30,10 @@ const fakeDb = {
     if (name !== 'sanctions') throw new Error(`unexpected collection ${name}`);
     return {
       ...makeQuery(),
+      // src/search/getRecords() reads the whole collection in one go.
+      get: vi.fn(async () => ({
+        docs: snapshotDocs.map((record) => ({ data: () => record })),
+      })),
       doc: vi.fn((id: string) => ({
         get: vi.fn(async () => ({ ...docGetResult, id })),
       })),
@@ -57,7 +61,10 @@ function record(overrides: Partial<SanctionRecord> = {}): SanctionRecord {
 }
 
 // api under test — imported after the mocks above so it picks up the fakes.
+// Same for the search module: a static import would be hoisted above the
+// vi.mock factory and read fakeDb before it exists.
 const { api } = await import('../../src/api');
+const { invalidateSearchIndex } = await import('../../src/search');
 
 // All routes below require an authenticated session (see src/auth/middleware.ts);
 // log in once via the hardcoded dev test account and reuse the session cookie,
@@ -68,28 +75,61 @@ beforeEach(async () => {
   snapshotDocs = [];
   docGetResult = { exists: false };
   whereCalls.length = 0;
+  // runSearch caches the whole collection in memory; drop it so each test's
+  // snapshotDocs are actually read.
+  invalidateSearchIndex();
   vi.clearAllMocks();
   await agent.post('/api/auth/verify-otp').send({ email: 'admin@sanctions.com', code: '123456' });
 });
 
+// Rewritten when this branch merged with main: #23 replaced the hand-rolled
+// Firestore query these tests asserted on (`whereCalls`) with the in-memory
+// matcher in src/search. The status filter now lives in runSearch's candidate
+// filter, so a delisted record never enters the matcher at all — these test
+// that behaviour end-to-end through the real search module rather than
+// asserting on a `.where()` call that no longer exists.
 describe('GET /api/search — status filtering (issue #9)', () => {
-  it('filters to status=="active" by default', async () => {
-    snapshotDocs = [record()];
-    await agent.get('/api/search').query({ q: 'Vladimir' });
-    expect(whereCalls).toContainEqual(['status', '==', 'active']);
+  it('excludes a delisted record by default', async () => {
+    snapshotDocs = [record({ id: 'PEP-DEL', status: 'delisted' } as any)];
+    const res = await agent.get('/api/search').query({ q: 'Vladimir' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.results).toHaveLength(0);
   });
 
-  it('does not add the status filter when includeDelisted=true', async () => {
-    snapshotDocs = [record({ status: 'delisted' } as any)];
+  it('returns a delisted record when includeDelisted=true', async () => {
+    snapshotDocs = [record({ id: 'PEP-DEL', status: 'delisted' } as any)];
     const res = await agent.get('/api/search').query({ q: 'Vladimir', includeDelisted: 'true' });
-    expect(whereCalls).not.toContainEqual(['status', '==', 'active']);
-    expect(res.body).toHaveLength(1);
+
+    expect(res.status).toBe(200);
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0].status).toBe('delisted');
   });
 
-  it('still applies the status filter for any other includeDelisted value', async () => {
-    snapshotDocs = [record()];
-    await agent.get('/api/search').query({ q: 'Vladimir', includeDelisted: 'nope' });
-    expect(whereCalls).toContainEqual(['status', '==', 'active']);
+  it('still hides delisted records for any other includeDelisted value', async () => {
+    snapshotDocs = [record({ id: 'PEP-DEL', status: 'delisted' } as any)];
+    const res = await agent.get('/api/search').query({ q: 'Vladimir', includeDelisted: 'nope' });
+
+    expect(res.body.results).toHaveLength(0);
+  });
+
+  it('still returns active records, so the filter is not simply hiding everything', async () => {
+    snapshotDocs = [record({ id: 'PEP-ACTIVE', status: 'active' } as any)];
+    const res = await agent.get('/api/search').query({ q: 'Vladimir' });
+
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0].id).toBe('PEP-ACTIVE');
+  });
+
+  it('treats a record with no status field as active, not as delisted', async () => {
+    // Records written before the status field existed must not silently vanish
+    // from search the moment this ships.
+    const legacy = record({ id: 'PEP-LEGACY' });
+    delete (legacy as any).status;
+    snapshotDocs = [legacy];
+
+    const res = await agent.get('/api/search').query({ q: 'Vladimir' });
+    expect(res.body.results).toHaveLength(1);
   });
 });
 

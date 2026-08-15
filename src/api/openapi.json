@@ -121,7 +121,8 @@
     "/api/import": {
       "post": {
         "summary": "Trigga en uppdatering/import av data",
-        "description": "Startar en bakgrundsimport för att ladda ner och uppdatera sanktionslistorna.",
+        "description": "Startar en bakgrundsimport för att ladda ner och uppdatera sanktionslistorna. Kräver inloggad session.",
+        "security": [{ "cookieAuth": [] }],
         "requestBody": {
           "content": {
             "application/json": {
@@ -162,13 +163,211 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "\"sources\" är inte en array"
+          },
+          "401": {
+            "description": "Ingen giltig session"
+          }
+        }
+      }
+    },
+    "/api/upload": {
+      "post": {
+        "summary": "Ladda upp en CSV- eller XML-fil för import",
+        "description": "Laddar upp en fil för en angiven källa och startar en bakgrundsimport. Kräver inloggad session.",
+        "security": [{ "cookieAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Max 64 MB. Endast .csv och .xml accepteras."
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": ["EU", "UN", "US", "PEP", "CUSTOM"]
+                  }
+                },
+                "required": ["file", "source"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Fil mottagen, import startad i bakgrunden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string" },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Ingen fil bifogad, ogiltig filtyp, eller okänt \"source\"-värde"
+          },
+          "401": {
+            "description": "Ingen giltig session"
+          },
+          "413": {
+            "description": "Filen överskrider 64 MB-gränsen"
+          }
+        }
+      }
+    },
+    "/api/admin/tokens": {
+      "post": {
+        "summary": "Skapa en ny API-token",
+        "description": "Skapar en API-token med angivna scopes (read/write). Den fullständiga token-strängen returneras endast i detta svar och sparas aldrig i klartext. Kräver en inloggad admin-session — admin-status kontrolleras på nytt vid varje anrop mot ADMIN_EMAILS (issue #17), inte cachad i sessionen.",
+        "security": [{ "cookieAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "scopes"],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "example": "CI pipeline"
+                  },
+                  "scopes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": ["read", "write"]
+                    },
+                    "example": ["read"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Token skapad",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "type": "object", "properties": { "token": { "type": "string", "example": "sanc_5f2c...a91b" } } },
+                    { "$ref": "#/components/schemas/ApiToken" }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Ogiltigt namn eller ogiltiga scopes"
+          },
+          "401": {
+            "description": "Ingen giltig session (ej inloggad)"
+          },
+          "403": {
+            "description": "Inloggad men inte admin (se ADMIN_EMAILS, issue #17)"
+          }
+        }
+      },
+      "get": {
+        "summary": "Lista alla API-tokens",
+        "description": "Returnerar alla tokens (utan hemliga värden) inklusive scope, senast använd och status. Kräver en inloggad admin-session.",
+        "security": [{ "cookieAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Lista över tokens",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/ApiToken" }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Ingen giltig session (ej inloggad)"
+          },
+          "403": {
+            "description": "Inloggad men inte admin (se ADMIN_EMAILS, issue #17)"
+          }
+        }
+      }
+    },
+    "/api/admin/tokens/{id}/revoke": {
+      "post": {
+        "summary": "Återkalla en API-token",
+        "description": "Markerar en token som återkallad. Token raderas inte, för att bevara historik. Kräver en inloggad admin-session.",
+        "security": [{ "cookieAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Token återkallad",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ApiToken" }
+              }
+            }
+          },
+          "401": {
+            "description": "Ingen giltig session (ej inloggad)"
+          },
+          "403": {
+            "description": "Inloggad men inte admin (se ADMIN_EMAILS, issue #17)"
+          },
+          "404": {
+            "description": "Ingen token med detta ID hittades"
           }
         }
       }
     }
   },
   "components": {
+    "securitySchemes": {
+      "cookieAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "sid",
+        "description": "Session-cookie satt av POST /api/auth/verify-otp efter lyckad e-post-OTP-inloggning. Krävs numera av i princip alla /api/*-rutter (se app.use('/api', requireAuth) i src/api/index.ts)."
+      }
+    },
     "schemas": {
+      "ApiToken": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "example": "aB3dE9fGhI" },
+          "name": { "type": "string", "example": "CI pipeline" },
+          "tokenPreview": { "type": "string", "example": "sanc_...a91b" },
+          "scopes": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["read", "write"] }
+          },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "lastUsedAt": { "type": "string", "format": "date-time", "nullable": true },
+          "revoked": { "type": "boolean" },
+          "revokedAt": { "type": "string", "format": "date-time", "nullable": true }
+        }
+      },
       "SanctionRecord": {
         "type": "object",
         "required": ["id", "source", "type", "primaryName", "aliases", "createdAt", "updatedAt"],

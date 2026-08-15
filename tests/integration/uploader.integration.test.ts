@@ -166,3 +166,28 @@ describe('delistRecords — real Firestore write path (issue #9)', () => {
     expect(versions.size).toBe(2); // created + delisted, not a second delisted entry
   });
 });
+
+describe('uploadRecords — custom records survive an unrelated import (issue #10)', () => {
+  it('leaves an existing CUSTOM record byte-identical after uploading unrelated EU-sourced records', async () => {
+    const customRecord = record({
+      id: 'CUSTOM-1',
+      source: 'CUSTOM',
+      primaryName: 'Local Watchlist Entry',
+      aliases: [],
+      searchNames: ['local', 'watchlist', 'entry'],
+    });
+    await uploadRecords([customRecord]);
+    const before = (await db.collection('sanctions').doc('CUSTOM-1').get()).data();
+
+    // Simulates an EU import run — different ids entirely, no reference to
+    // the custom record. uploadRecords never queries or deletes anything
+    // outside the batch it's given, so the custom doc should be untouched.
+    await uploadRecords([
+      record({ id: 'EU-1', source: 'EU', primaryName: 'Official EU Person', searchNames: [] }),
+      record({ id: 'EU-2', source: 'EU', primaryName: 'Another EU Person', searchNames: [] }),
+    ]);
+
+    const after = (await db.collection('sanctions').doc('CUSTOM-1').get()).data();
+    expect(after).toEqual(before);
+  });
+});

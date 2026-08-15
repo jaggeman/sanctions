@@ -1,145 +1,197 @@
-import { XMLParser } from 'fast-xml-parser';
-import * as fs from 'fs-extra';
-import { SanctionRecord, Address } from '../../shared/types';
+import { SanctionRecord, Address, NameAlias, BirthDate } from '../../shared/types';
+import { streamXmlRecords } from './xmlSubtreeStream';
 
-export async function parseUSList(filePath: string): Promise<SanctionRecord[]> {
-  console.log(`Parsing US OFAC SDN list from ${filePath}...`);
-  const xmlContent = await fs.readFile(filePath, 'utf-8');
-  
-  const parser = new XMLParser({
-    ignoreAttributes: false,
-    parseAttributeValue: true,
-    trimValues: true,
+/**
+ * Issue #6: OFAC SDN has no strong/language markers on aliases and no
+ * date-precision beyond whatever string `dateOfBirth` already is — derived
+ * from the already-computed primary name/aliases/dates rather than invented.
+ */
+function deriveNames(primaryName: string, aliases: string[]): NameAlias[] {
+  const names: NameAlias[] = [{ wholeName: primaryName, strong: true }];
+  for (const alias of aliases) names.push({ wholeName: alias, strong: false });
+  return names;
+}
+
+function deriveBirthDates(datesOfBirth: string[]): BirthDate[] {
+  return datesOfBirth.map((raw) => {
+    const year = /^\d{4}$/.test(raw) ? parseInt(raw, 10) : undefined;
+    return { raw, year };
   });
+}
 
-  const parsed = parser.parse(xmlContent);
-  const sdnList = parsed?.sdnList?.sdnEntry;
+/**
+ * Parser for the US Treasury OFAC Specially Designated Nationals (SDN) list.
+ *
+ * Streaming since issue #31: the real SDN export (~29 MB, ~19 200 entries) was
+ * measured against the deployed Cloud Function's actual memory ceiling
+ * (256 MiB, no `runWith` override) using the previous full-DOM
+ * (`fast-xml-parser`) parse — peak RSS came in at ~317 MB, over budget, and
+ * one run of that measurement crashed outright with a JS heap OOM. The UN
+ * consolidated list was measured the same way and found to be no risk (a
+ * ~2 MB file, comfortably under budget even at a 64 MB ceiling) — see issue
+ * #31 and this PR's description for the numbers. `un.ts` is therefore left
+ * as-is; only this file changes.
+ *
+ * `parseUSListStreaming` builds one `<sdnEntry>` subtree at a time (via the
+ * shared engine in `xmlSubtreeStream.ts`, the same one issue #5 built for the
+ * EU parser) and discards it before the next one, rather than holding a DOM
+ * tree over the whole document.
+ */
 
-  if (!sdnList) {
-    console.warn('No sdnEntry found in US XML file.');
-    return [];
+function toArray(val: any): any[] {
+  if (val === undefined || val === null) return [];
+  return Array.isArray(val) ? val : [val];
+}
+
+/**
+ * `uid` becomes part of a Firestore document ID (`US-SDN-<uid>`). It arrives
+ * from a downloaded file, so it's validated rather than trusted — the same
+ * gap the EU parser closed in issue #5 for `logicalId`.
+ */
+const SAFE_UID = /^[A-Za-z0-9._-]{1,200}$/;
+
+function mapEntryToRecord(entry: any): SanctionRecord | null {
+  const uid = String(entry.uid ?? '').trim();
+  if (!uid) return null;
+  if (!SAFE_UID.test(uid)) {
+    console.warn(`Skipping US SDN entry with unsafe uid: ${JSON.stringify(uid)}`);
+    return null;
   }
 
-  // Ensure sdnList is an array (fast-xml-parser might parse a single object if there's only 1 entry)
-  const entries = Array.isArray(sdnList) ? sdnList : [sdnList];
-  const records: SanctionRecord[] = [];
+  const sdnTypeStr = String(entry.sdnType || '').toLowerCase();
 
-  for (const entry of entries) {
-    const uid = entry.uid;
-    const sdnTypeStr = (entry.sdnType || '').toLowerCase();
-    
-    let type: 'individual' | 'entity' | 'vessel' | 'aircraft' = 'entity';
-    if (sdnTypeStr === 'individual') type = 'individual';
-    else if (sdnTypeStr === 'vessel') type = 'vessel';
-    else if (sdnTypeStr === 'aircraft') type = 'aircraft';
+  let type: 'individual' | 'entity' | 'vessel' | 'aircraft' = 'entity';
+  if (sdnTypeStr === 'individual') type = 'individual';
+  else if (sdnTypeStr === 'vessel') type = 'vessel';
+  else if (sdnTypeStr === 'aircraft') type = 'aircraft';
 
-    const first = entry.firstName ? String(entry.firstName) : '';
-    const last = entry.lastName ? String(entry.lastName) : '';
-    const primaryName = first ? `${first} ${last}`.trim() : last.trim();
+  const first = entry.firstName ? String(entry.firstName) : '';
+  const last = entry.lastName ? String(entry.lastName) : '';
+  const primaryName = first ? `${first} ${last}`.trim() : last.trim();
 
-    // Map aliases (AKA)
-    const aliases: string[] = [];
-    if (entry.akaList?.aka) {
-      const akas = Array.isArray(entry.akaList.aka) ? entry.akaList.aka : [entry.akaList.aka];
-      for (const aka of akas) {
-        const akaFirst = aka.firstName ? String(aka.firstName) : '';
-        const akaLast = aka.lastName ? String(aka.lastName) : '';
-        const akaName = akaFirst ? `${akaFirst} ${akaLast}`.trim() : akaLast.trim();
-        if (akaName && !aliases.includes(akaName)) {
-          aliases.push(akaName);
-        }
-      }
+  // Map aliases (AKA)
+  const aliases: string[] = [];
+  for (const aka of toArray(entry.akaList?.aka)) {
+    const akaFirst = aka.firstName ? String(aka.firstName) : '';
+    const akaLast = aka.lastName ? String(aka.lastName) : '';
+    const akaName = akaFirst ? `${akaFirst} ${akaLast}`.trim() : akaLast.trim();
+    if (akaName && !aliases.includes(akaName)) {
+      aliases.push(akaName);
     }
+  }
 
-    // Map addresses
-    const addresses: Address[] = [];
-    if (entry.addressList?.address) {
-      const addrs = Array.isArray(entry.addressList.address) ? entry.addressList.address : [entry.addressList.address];
-      for (const addr of addrs) {
-        const a1 = addr.address1 ? String(addr.address1) : '';
-        const a2 = addr.address2 ? String(addr.address2) : '';
-        const a3 = addr.address3 ? String(addr.address3) : '';
-        const city = addr.city ? String(addr.city) : '';
-        const state = addr.stateOrProvince ? String(addr.stateOrProvince) : '';
-        const zip = addr.postalCode ? String(addr.postalCode) : '';
-        const country = addr.country ? String(addr.country) : '';
+  // Map addresses
+  const addresses: Address[] = [];
+  for (const addr of toArray(entry.addressList?.address)) {
+    const a1 = addr.address1 ? String(addr.address1) : '';
+    const a2 = addr.address2 ? String(addr.address2) : '';
+    const a3 = addr.address3 ? String(addr.address3) : '';
+    const city = addr.city ? String(addr.city) : '';
+    const state = addr.stateOrProvince ? String(addr.stateOrProvince) : '';
+    const zip = addr.postalCode ? String(addr.postalCode) : '';
+    const country = addr.country ? String(addr.country) : '';
 
-        const fullParts = [a1, a2, a3, city, state, zip, country].filter(Boolean);
-        addresses.push({
-          street: [a1, a2, a3].filter(Boolean).join(', ') || undefined,
-          city: city || undefined,
-          country: country || undefined,
-          fullAddress: fullParts.join(', ') || undefined,
-        });
-      }
-    }
-
-    // Map birth details
-    const datesOfBirth: string[] = [];
-    if (entry.dateOfBirthList?.dateOfBirthItem) {
-      const dobs = Array.isArray(entry.dateOfBirthList.dateOfBirthItem)
-        ? entry.dateOfBirthList.dateOfBirthItem
-        : [entry.dateOfBirthList.dateOfBirthItem];
-      for (const dobItem of dobs) {
-        if (dobItem.dateOfBirth) {
-          datesOfBirth.push(String(dobItem.dateOfBirth));
-        }
-      }
-    }
-
-    const placesOfBirth: string[] = [];
-    if (entry.placeOfBirthList?.placeOfBirthItem) {
-      const pobs = Array.isArray(entry.placeOfBirthList.placeOfBirthItem)
-        ? entry.placeOfBirthList.placeOfBirthItem
-        : [entry.placeOfBirthList.placeOfBirthItem];
-      for (const pobItem of pobs) {
-        if (pobItem.placeOfBirth) {
-          placesOfBirth.push(String(pobItem.placeOfBirth));
-        }
-      }
-    }
-
-    // Map IDs (passports, national ID, etc.)
-    const passports: string[] = [];
-    if (entry.idList?.id) {
-      const ids = Array.isArray(entry.idList.id) ? entry.idList.id : [entry.idList.id];
-      for (const idItem of ids) {
-        const num = idItem.idNumber ? String(idItem.idNumber) : '';
-        const idType = idItem.idType ? String(idItem.idType) : '';
-        const country = idItem.idCountry ? String(idItem.idCountry) : '';
-        if (num) {
-          const detail = idType ? `${idType} ${num}${country ? ` (${country})` : ''}` : num;
-          passports.push(detail);
-        }
-      }
-    }
-
-    // Map program details as sanction reason
-    const programs: string[] = [];
-    if (entry.programList?.program) {
-      const progs = Array.isArray(entry.programList.program) ? entry.programList.program : [entry.programList.program];
-      programs.push(...progs);
-    }
-    const sanctionReason = programs.join(', ');
-
-    records.push({
-      id: `US-SDN-${uid}`,
-      source: 'US',
-      type,
-      primaryName,
-      aliases,
-      searchNames: [], // Generated by uploader
-      datesOfBirth: datesOfBirth.length > 0 ? datesOfBirth : undefined,
-      placesOfBirth: placesOfBirth.length > 0 ? placesOfBirth : undefined,
-      passports: passports.length > 0 ? passports : undefined,
-      addresses: addresses.length > 0 ? addresses : undefined,
-      sanctionReason: sanctionReason || undefined,
-      rawSourceData: entry,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+    const fullParts = [a1, a2, a3, city, state, zip, country].filter(Boolean);
+    addresses.push({
+      street: [a1, a2, a3].filter(Boolean).join(', ') || undefined,
+      city: city || undefined,
+      country: country || undefined,
+      fullAddress: fullParts.join(', ') || undefined,
     });
   }
 
-  console.log(`Parsed ${records.length} US OFAC records.`);
+  // Map birth details
+  const datesOfBirth: string[] = [];
+  for (const dobItem of toArray(entry.dateOfBirthList?.dateOfBirthItem)) {
+    if (dobItem.dateOfBirth) {
+      datesOfBirth.push(String(dobItem.dateOfBirth));
+    }
+  }
+
+  const placesOfBirth: string[] = [];
+  for (const pobItem of toArray(entry.placeOfBirthList?.placeOfBirthItem)) {
+    if (pobItem.placeOfBirth) {
+      placesOfBirth.push(String(pobItem.placeOfBirth));
+    }
+  }
+
+  // Map IDs (passports, national ID, etc.)
+  const passports: string[] = [];
+  for (const idItem of toArray(entry.idList?.id)) {
+    const num = idItem.idNumber ? String(idItem.idNumber) : '';
+    const idType = idItem.idType ? String(idItem.idType) : '';
+    const country = idItem.idCountry ? String(idItem.idCountry) : '';
+    if (num) {
+      const detail = idType ? `${idType} ${num}${country ? ` (${country})` : ''}` : num;
+      passports.push(detail);
+    }
+  }
+
+  // Map program details as sanction reason
+  const programs = toArray(entry.programList?.program).map((p) => String(p));
+  const sanctionReason = programs.join(', ');
+
+  // Structured fields from #44. Derived from the flat ones rather than
+  // invented: OFAC SDN carries no strong/language markers on aliases and no
+  // date precision beyond the raw string.
+  const birthDates = deriveBirthDates(datesOfBirth);
+
+  const now = new Date().toISOString();
+
+  return {
+    id: `US-SDN-${uid}`,
+    source: 'US',
+    type,
+    primaryName,
+    aliases,
+    searchNames: [], // Generated by uploader
+    names: deriveNames(primaryName, aliases),
+    datesOfBirth: datesOfBirth.length > 0 ? datesOfBirth : undefined,
+    birthDates: birthDates.length > 0 ? birthDates : undefined,
+    placesOfBirth: placesOfBirth.length > 0 ? placesOfBirth : undefined,
+    passports: passports.length > 0 ? passports : undefined,
+    addresses: addresses.length > 0 ? addresses : undefined,
+    sanctionReason: sanctionReason || undefined,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+/**
+ * Resolves to the number of `sdnEntry` subtrees for which `onRecord` was
+ * actually invoked (entries skipped for a missing/unsafe `uid` are not
+ * counted) — same contract as `parseEUListStreaming`.
+ */
+export async function parseUSListStreaming(
+  filePath: string,
+  onRecord: (record: SanctionRecord) => void | Promise<void>,
+): Promise<number> {
+  console.log(`Streaming US OFAC SDN list from ${filePath}...`);
+  let emitted = 0;
+
+  await streamXmlRecords(filePath, 'sdnEntry', async (subtree) => {
+    const record = mapEntryToRecord(subtree);
+    if (!record) return;
+    emitted++;
+    await onRecord(record);
+  });
+
+  if (emitted === 0) {
+    console.warn('No sdnEntry found in US XML file.');
+  }
+  console.log(`Streamed ${emitted} US OFAC records.`);
+  return emitted;
+}
+
+/**
+ * Array-returning form kept for existing callers and tests. Thin wrapper
+ * over `parseUSListStreaming`, same relationship as `parseEUList` has to
+ * `parseEUListStreaming`.
+ */
+export async function parseUSList(filePath: string): Promise<SanctionRecord[]> {
+  const records: SanctionRecord[] = [];
+  await parseUSListStreaming(filePath, (record) => {
+    records.push(record);
+  });
   return records;
 }

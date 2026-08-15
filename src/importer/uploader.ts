@@ -53,6 +53,26 @@ const CONTENT_HASH_EXCLUDED_FIELDS = new Set([
 ]);
 
 /**
+ * Strips any `source: 'CUSTOM'` record out of a batch headed for the
+ * automated import pipeline (see runImport in ../importer/index.ts). Custom
+ * records may only be created/edited through the dedicated customRecords
+ * CRUD path (issue #10) — this is a defensive backstop for a mislabeled
+ * source column slipping through a parser, since the diff engine (issue #8)
+ * that will eventually own this enforcement doesn't exist yet.
+ */
+export function filterAutomatedBatch(records: SanctionRecord[]): SanctionRecord[] {
+  const dropped = records.filter((r) => r.source === 'CUSTOM');
+  if (dropped.length > 0) {
+    console.warn(
+      `Dropping ${dropped.length} CUSTOM-sourced record(s) from an automated import batch ` +
+      `(ids: ${dropped.map((r) => r.id).join(', ')}) — custom records may only be created ` +
+      `via the dedicated custom-records path.`,
+    );
+  }
+  return records.filter((r) => r.source !== 'CUSTOM');
+}
+
+/**
  * Deterministic sha256 over a record's content fields only. Two records that
  * differ solely in status/timestamps hash identically, so relisting an
  * unchanged record is never mistaken for a content update.

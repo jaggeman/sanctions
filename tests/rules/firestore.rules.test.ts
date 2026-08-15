@@ -31,6 +31,21 @@ const PROJECT_ID = 'sanctions-rules-test';
 
 let testEnv: RulesTestEnvironment;
 
+/**
+ * `firebase emulators:exec` exports FIRESTORE_EMULATOR_HOST with whatever port
+ * firebase.json actually resolved to. Reading it here rather than hardcoding
+ * 8080 is what lets this suite run when another session on the same machine
+ * already holds the default port (CLAUDE.md §1 — one emulator per session).
+ */
+function emulatorAddress(): { host: string; port: number } {
+  const raw = process.env.FIRESTORE_EMULATOR_HOST;
+  if (!raw) return { host: '127.0.0.1', port: 8080 };
+  const separator = raw.lastIndexOf(':');
+  const host = raw.slice(0, separator) || '127.0.0.1';
+  const port = Number(raw.slice(separator + 1));
+  return { host: host === 'localhost' ? '127.0.0.1' : host, port };
+}
+
 const SAMPLE_RECORD = {
   id: 'PEP-1',
   source: 'PEP',
@@ -47,8 +62,7 @@ beforeAll(async () => {
     projectId: PROJECT_ID,
     firestore: {
       rules: fs.readFileSync(RULES_PATH, 'utf-8'),
-      host: '127.0.0.1',
-      port: 8080,
+      ...emulatorAddress(),
     },
   });
 });
@@ -166,6 +180,93 @@ describe('firestore.rules — the "versions" subcollection (issue #9)', () => {
       const ref = ctx.firestore().collection('sanctions').doc('PEP-1').collection('versions').doc('import-1');
       await assertSucceeds(ref.set(SAMPLE_VERSION));
       await assertSucceeds(ref.get());
+    });
+  });
+});
+
+// Issue #10 acceptance criterion: "Rules tests: overrides are authenticated-write
+// only, never client-writable anonymously" — already covered by the blanket
+// deny-all backstop above, but the criterion names the collection explicitly,
+// so it gets its own explicit proof rather than relying solely on the generic
+// "anything_else" case.
+describe('firestore.rules — overrides/{entityId} collection (issue #10)', () => {
+  const SAMPLE_OVERRIDE = {
+    entityId: 'EU-1',
+    fields: { sanctionReason: 'Corrected reason' },
+    overriddenBy: 'analyst@example.com',
+    overriddenAt: '2026-08-15T00:00:00.000Z',
+    reason: 'Corrected transliteration',
+  };
+
+  it('denies an unauthenticated client writing an override', async () => {
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('overrides').doc('EU-1').set(SAMPLE_OVERRIDE));
+  });
+
+  it('denies an unauthenticated client reading an override', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().collection('overrides').doc('EU-1').set(SAMPLE_OVERRIDE);
+    });
+
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('overrides').doc('EU-1').get());
+  });
+
+  it('denies even an authenticated client — no token is privileged without a real auth system', async () => {
+    const authedDb = testEnv.authenticatedContext('some-user-id').firestore();
+    await assertFails(authedDb.collection('overrides').doc('EU-1').set(SAMPLE_OVERRIDE));
+  });
+
+  it('still allows the trusted server path (Admin SDK) to read and write overrides freely', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await assertSucceeds(ctx.firestore().collection('overrides').doc('EU-1').set(SAMPLE_OVERRIDE));
+      await assertSucceeds(ctx.firestore().collection('overrides').doc('EU-1').get());
+    });
+  });
+});
+
+// Issue #7 acceptance criterion: "Rules tests: a client cannot write to
+// `imports` directly" — already covered by the blanket deny-all backstop
+// above, but named explicitly in the acceptance criteria, so it gets its own
+// proof rather than relying solely on the generic "anything_else" case.
+describe('firestore.rules — imports/{importId} collection (issue #7)', () => {
+  const SAMPLE_IMPORT = {
+    importId: 'abc123',
+    filename: 'test.csv',
+    sha256: 'abc123',
+    sizeBytes: 1024,
+    storagePath: 'imports/abc123/test.csv',
+    source: 'PEP',
+    format: 'csv',
+    fileGenerationDate: null,
+    uploadedBy: 'user@example.com',
+    uploadedAt: '2026-08-15T00:00:00.000Z',
+    status: 'applied',
+  };
+
+  it('denies an unauthenticated client writing an import record', async () => {
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('imports').doc('abc123').set(SAMPLE_IMPORT));
+  });
+
+  it('denies an unauthenticated client reading an import record', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().collection('imports').doc('abc123').set(SAMPLE_IMPORT);
+    });
+
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('imports').doc('abc123').get());
+  });
+
+  it('denies even an authenticated client — no token is privileged without a real auth system', async () => {
+    const authedDb = testEnv.authenticatedContext('some-user-id').firestore();
+    await assertFails(authedDb.collection('imports').doc('abc123').set(SAMPLE_IMPORT));
+  });
+
+  it('still allows the trusted server path (Admin SDK) to read and write imports freely', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await assertSucceeds(ctx.firestore().collection('imports').doc('abc123').set(SAMPLE_IMPORT));
+      await assertSucceeds(ctx.firestore().collection('imports').doc('abc123').get());
     });
   });
 });

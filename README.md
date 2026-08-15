@@ -121,6 +121,24 @@ npm run test:watch
 
 Test files live under `tests/unit`, `tests/rules`, and `tests/integration`, with shared XML/CSV fixtures in `tests/fixtures`. New code should follow the TDD policy in `CLAUDE.md` §1 — write the test first, watch it fail, then implement.
 
+If another process on your machine already holds the Firestore emulator port, change `emulators.firestore.port` in `firebase.json` locally and leave the change uncommitted — the suite picks the port up from `FIRESTORE_EMULATOR_HOST`.
+
+## Configuration
+
+### `ADMIN_EMAILS` — required in production
+
+A comma-separated allow-list of the email addresses permitted to reach the administrative endpoints (`/api/admin/*`, currently API token creation, listing and revocation).
+
+```
+ADMIN_EMAILS=alice@yourcompany.com,bob@yourcompany.com
+```
+
+The guard **fails closed**: if `ADMIN_EMAILS` is unset in production, nobody is an administrator and every admin endpoint returns 403. That is deliberate — the alternative failure mode is an open admin API — but it does mean **you must set this before deploying**, or token management will be unreachable.
+
+Outside production (`NODE_ENV !== 'production'`), an unset list falls back to the dev test account `admin@sanctions.com` so local work isn't blocked. Setting `ADMIN_EMAILS` supersedes that fallback entirely.
+
+Membership is re-read on every request, so removing someone from the list revokes their admin access immediately rather than when their session expires.
+
 ## 🚀 Hur man deployar (Laddar upp till produktion)
 
 För att ladda upp dina ändringar så att de syns live på webben följer du dessa exakta steg. 

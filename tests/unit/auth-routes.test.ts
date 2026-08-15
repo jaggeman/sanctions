@@ -3,6 +3,12 @@ import request from 'supertest';
 
 vi.mock('../../src/shared/firebase', () => ({ db: { collection: vi.fn() } }));
 vi.mock('../../src/importer', () => ({ runImport: vi.fn(async () => ({ success: true, importedCounts: {} })) }));
+// This file tests auth gating, not search behaviour (that's api-search.test.ts) —
+// stub runSearch directly rather than giving the bare `db` mock above a real
+// Firestore-shaped implementation it doesn't otherwise need.
+vi.mock('../../src/search', () => ({
+  runSearch: vi.fn(async () => ({ results: [], totalMatches: 0, truncated: false })),
+}));
 
 const sendOtpEmail = vi.fn(async () => {});
 vi.mock('../../src/auth/mailer', () => ({ sendOtpEmail: (...args: any[]) => sendOtpEmail(...args) }));
@@ -36,6 +42,15 @@ describe('POST /api/auth/request-otp', () => {
     const res = await request(api).post('/api/auth/request-otp').send({ email: 'admin@sanctions.com' });
     expect(res.status).toBe(200);
     expect(sendOtpEmail).not.toHaveBeenCalled();
+  });
+
+  it('rate limits a repeated request for the same email within the cooldown window (issue #16)', async () => {
+    const first = await request(api).post('/api/auth/request-otp').send({ email: 'user@example.com' });
+    expect(first.status).toBe(200);
+
+    const second = await request(api).post('/api/auth/request-otp').send({ email: 'user@example.com' });
+    expect(second.status).toBe(429);
+    expect(sendOtpEmail).toHaveBeenCalledTimes(1); // no second email sent
   });
 });
 
@@ -98,6 +113,35 @@ describe('GET /api/auth/session', () => {
     const res = await agent.get('/api/auth/session');
     expect(res.status).toBe(200);
     expect(res.body.email).toBe('admin@sanctions.com');
+  });
+
+  it('reports isAdmin: true for the dev test account (admins.ts falls back to it when ADMIN_EMAILS is unset)', async () => {
+    const agent = request.agent(api);
+    await agent.post('/api/auth/verify-otp').send({ email: 'admin@sanctions.com', code: '123456' });
+    const res = await agent.get('/api/auth/session');
+    expect(res.body.isAdmin).toBe(true);
+  });
+
+  it('reports isAdmin: false for a regular logged-in user not on the ADMIN_EMAILS allow-list', async () => {
+    vi.stubEnv('ADMIN_EMAILS', 'someone-else@example.com');
+    await request(api).post('/api/auth/request-otp').send({ email: 'user@example.com' });
+    const code = sendOtpEmail.mock.calls[0][1];
+
+    const agent = request.agent(api);
+    await agent.post('/api/auth/verify-otp').send({ email: 'user@example.com', code });
+    const res = await agent.get('/api/auth/session');
+    expect(res.body.isAdmin).toBe(false);
+  });
+
+  it('reports isAdmin: true once ADMIN_EMAILS is set to include the caller, checked fresh (not cached)', async () => {
+    vi.stubEnv('ADMIN_EMAILS', 'user@example.com');
+    await request(api).post('/api/auth/request-otp').send({ email: 'user@example.com' });
+    const code = sendOtpEmail.mock.calls[0][1];
+
+    const agent = request.agent(api);
+    await agent.post('/api/auth/verify-otp').send({ email: 'user@example.com', code });
+    const res = await agent.get('/api/auth/session');
+    expect(res.body.isAdmin).toBe(true);
   });
 });
 

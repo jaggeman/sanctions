@@ -13,6 +13,7 @@ export interface SearchOptions {
   limit?: number;
   threshold?: number; // 0..100
   dob?: string; // booster, not a hard filter — source data has year-only values
+  includeDelisted?: boolean; // default false — soft-deleted records are hidden (issue #9)
 }
 
 export interface SearchResponse {
@@ -81,6 +82,10 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
   const limit = Math.min(options.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
 
   const candidates = records.filter((r) => {
+    // A delisted person is no longer sanctioned; returning them as a confident
+    // match is the exact failure issue #9 exists to prevent. Records predating
+    // the status field have no `status` and are treated as active.
+    if (!options.includeDelisted && r.status === 'delisted') return false;
     if (sourcesFilter && !sourcesFilter.includes(r.source.toUpperCase())) return false;
     if (typeFilter && r.type !== typeFilter) return false;
     return true;
