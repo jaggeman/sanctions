@@ -3,7 +3,7 @@ import * as fs from 'fs-extra';
 import { downloadFile, SOURCE_URLS } from './fetcher';
 import { parseEUListStreaming } from './parsers/eu';
 import { parseUNList } from './parsers/un';
-import { parseUSList } from './parsers/us';
+import { parseUSListStreaming } from './parsers/us';
 import { parseCSVList } from './parsers/csv';
 import { uploadRecords, filterAutomatedBatch } from './uploader';
 import { invalidateSearchIndex } from '../search';
@@ -103,6 +103,9 @@ async function runUploadedFileImport(
  */
 export const EU_UPLOAD_CHUNK_SIZE = 500;
 
+/** Same rationale as `EU_UPLOAD_CHUNK_SIZE`, for the streamed US SDN parse (issue #31). */
+export const US_UPLOAD_CHUNK_SIZE = 500;
+
 /**
  * Main import function that coordinates fetching, parsing, and uploading.
  *
@@ -187,18 +190,39 @@ export async function runImport(options: ImportOptions = {}): Promise<{
       }
     }
 
-    // 3. Process US (OFAC SDN). Same pattern as UN.
+    // 3. Process US (OFAC SDN). Streamed and chunk-uploaded like EU (issue #31)
+    // — the real SDN export was measured to exceed the deployed function's
+    // memory budget under the old full-DOM parse (see parsers/us.ts).
     if (sources.includes('US')) {
+      let buffer: SanctionRecord[] = [];
+      let parsed = 0;
+      let uploaded = 0;
+
+      const flush = async () => {
+        if (buffer.length === 0) return;
+        const chunk = buffer;
+        buffer = [];
+        uploaded += await uploadFiltered(chunk);
+      };
+
       try {
         const filePath = await downloadFile(SOURCE_URLS.US, 'us_sdn.xml');
-        const records = await parseUSList(filePath);
-        importedCounts.US = records.length;
-        totalParsed += records.length;
-        totalUploaded += await uploadFiltered(records);
+        await parseUSListStreaming(filePath, async (record) => {
+          parsed++;
+          buffer.push(record);
+          if (buffer.length >= US_UPLOAD_CHUNK_SIZE) {
+            await flush();
+          }
+        });
+        await flush();
       } catch (error: any) {
+        await flush().catch(() => {});
         console.error(`Error importing US sanctions list: ${error.message}`);
-        importedCounts.US = 0;
       }
+
+      importedCounts.US = parsed;
+      totalParsed += parsed;
+      totalUploaded += uploaded;
     }
 
     // 4. Process CSV (PEP / Custom)
