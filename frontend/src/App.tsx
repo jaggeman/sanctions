@@ -284,9 +284,9 @@ function App() {
                           {r.aliases.length > 3 ? '...' : ''}
                         </Typography>
                       )}
-                      {r.birthDates && r.birthDates.length > 0 && (
+                      {r.datesOfBirth && r.datesOfBirth.length > 0 && (
                         <Typography variant="body2" color="text.secondary">
-                          <strong>DOB:</strong> {r.birthDates.join(', ')}
+                          <strong>DOB:</strong> {r.datesOfBirth.join(', ')}
                         </Typography>
                       )}
                     </CardContent>

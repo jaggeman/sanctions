@@ -1,6 +1,6 @@
 import * as sax from 'sax';
 import * as fs from 'fs-extra';
-import { SanctionRecord, Address } from '../../shared/types';
+import { SanctionRecord, Address, Identification, Regulation, NameAlias, BirthDate, ContactInfo } from '../../shared/types';
 
 /**
  * Parser for the EU Financial Sanctions Database (FSD) consolidated export,
@@ -43,6 +43,14 @@ function bool(node: any, name: string): boolean {
   return raw === 'true' || raw === '1';
 }
 
+/** Read an integer attribute, or undefined if absent/not a valid number. */
+function int(node: any, name: string): number | undefined {
+  const raw = attr(node, name);
+  if (!raw) return undefined;
+  const n = parseInt(raw, 10);
+  return Number.isNaN(n) ? undefined : n;
+}
+
 /**
  * The source uses '-' and 'UNKNOWN' as placeholders for "not stated".
  * Treat them as absent rather than rendering them to users.
@@ -70,6 +78,12 @@ const SAFE_LOGICAL_ID = /^[A-Za-z0-9._-]{1,200}$/;
 
 interface AliasCandidate {
   wholeName: string;
+  firstName?: string;
+  middleName?: string;
+  lastName?: string;
+  language?: string;
+  title?: string;
+  function?: string;
   hasNameParts: boolean;
   isStrong: boolean;
   isPreferredLanguage: boolean;
@@ -92,8 +106,16 @@ function collectAliases(entry: any): AliasCandidate[] {
     if (!wholeName || seen.has(wholeName)) continue;
     seen.add(wholeName);
 
+    const language = meaningful(attr(node, 'nameLanguage')) || undefined;
+
     candidates.push({
       wholeName,
+      firstName: meaningful(first) || undefined,
+      middleName: meaningful(middle) || undefined,
+      lastName: meaningful(last) || undefined,
+      language,
+      title: meaningful(attr(node, 'title')) || undefined,
+      function: meaningful(attr(node, 'function')) || undefined,
       // A structured first/last pair marks the canonical designation rather than
       // a transliteration, which is the most reliable primary-name signal here.
       hasNameParts: Boolean(first && last),
@@ -139,8 +161,8 @@ function parseAddresses(entry: any): Address[] {
     const poBox = meaningful(attr(node, 'poBox'));
     const region = meaningful(attr(node, 'region'));
     const place = meaningful(attr(node, 'place'));
-    const country =
-      meaningfulCountry(attr(node, 'countryDescription')) || meaningfulCountry(attr(node, 'countryIso2Code'));
+    const countryIso2 = meaningfulCountry(attr(node, 'countryIso2Code'));
+    const country = meaningfulCountry(attr(node, 'countryDescription')) || countryIso2;
 
     const fullAddress = [street, poBox, place, city, region, zip, country]
       .filter(Boolean)
@@ -155,22 +177,58 @@ function parseAddresses(entry: any): Address[] {
       city: city || undefined,
       country: country || undefined,
       fullAddress,
+      poBox: poBox || undefined,
+      region: region || undefined,
+      place: place || undefined,
+      countryIso2: countryIso2 || undefined,
     });
   }
 
   return addresses;
 }
 
-function parseBirthdates(entry: any): { dates: string[]; places: string[] } {
+/**
+ * Structured, precision-aware birth dates (issue #6) — the source
+ * distinguishes an exact date from a year-only value, a year range, and
+ * `circa`, none of which survive the flat `datesOfBirth: string[]` below.
+ */
+function parseBirthDateObjects(entry: any): BirthDate[] {
+  const out: BirthDate[] = [];
+
+  for (const node of toArray(entry.birthdate)) {
+    const raw = meaningful(attr(node, 'birthdate')) || undefined;
+    const year = int(node, 'year');
+    const month = int(node, 'monthOfYear');
+    const day = int(node, 'dayOfMonth');
+    const yearRangeFrom = int(node, 'yearRangeFrom');
+    const yearRangeTo = int(node, 'yearRangeTo');
+    const circa = bool(node, 'circa');
+    const city = meaningful(attr(node, 'city')) || undefined;
+    const place = meaningful(attr(node, 'place')) || undefined;
+    const countryIso2 = meaningfulCountry(attr(node, 'countryIso2Code')) || undefined;
+
+    if (!raw && year === undefined && yearRangeFrom === undefined && !city && !place) continue;
+
+    out.push({ raw, year, month, day, yearRangeFrom, yearRangeTo, circa, city, place, countryIso2 });
+  }
+
+  return out;
+}
+
+/** Legacy flat form derived from the structured birth dates above. */
+function deriveDatesOfBirth(birthDates: BirthDate[]): string[] {
   const dates: string[] = [];
+  for (const b of birthDates) {
+    const date = b.raw || (b.year !== undefined ? String(b.year) : undefined);
+    if (date && !dates.includes(date)) dates.push(date);
+  }
+  return dates;
+}
+
+function parsePlacesOfBirth(entry: any): string[] {
   const places: string[] = [];
 
   for (const node of toArray(entry.birthdate)) {
-    // Prefer the full date; fall back to the year, which the source often gives
-    // on its own. Year ranges and `circa` need the richer model in issue #6.
-    const date = meaningful(attr(node, 'birthdate')) || meaningful(attr(node, 'year'));
-    if (date && !dates.includes(date)) dates.push(date);
-
     const city = meaningful(attr(node, 'city'));
     const place = meaningful(attr(node, 'place'));
     const region = meaningful(attr(node, 'region'));
@@ -181,31 +239,50 @@ function parseBirthdates(entry: any): { dates: string[]; places: string[] } {
     if (pob && !places.includes(pob)) places.push(pob);
   }
 
-  return { dates, places };
+  return places;
 }
 
-function parseIdentifications(entry: any): string[] {
-  const out: string[] = [];
+/** Structured identifications (issue #6) — type, country and reliability flags, not a formatted string. */
+function parseIdentificationObjects(entry: any): Identification[] {
+  const out: Identification[] = [];
 
   for (const node of toArray(entry.identification)) {
     const number = meaningful(attr(node, 'number')) || meaningful(attr(node, 'latinNumber'));
     if (!number) continue;
 
-    const description =
-      meaningful(attr(node, 'identificationTypeDescription')) ||
-      meaningful(attr(node, 'identificationTypeCode'));
-    const country = meaningfulCountry(attr(node, 'countryDescription'));
+    out.push({
+      number,
+      typeCode: meaningful(attr(node, 'identificationTypeCode')) || undefined,
+      typeDescription: meaningful(attr(node, 'identificationTypeDescription')) || undefined,
+      countryIso2: meaningfulCountry(attr(node, 'countryIso2Code')) || undefined,
+      issuedBy: meaningful(attr(node, 'issuedBy')) || undefined,
+      knownFalse: bool(node, 'knownFalse'),
+      knownExpired: bool(node, 'knownExpired'),
+      reportedLost: bool(node, 'reportedLost'),
+      revokedByIssuer: bool(node, 'revokedByIssuer'),
+      diplomatic: bool(node, 'diplomatic'),
+    });
+  }
 
-    // Flag documents the source itself marks as unreliable, so a match against
-    // one is not mistaken for a match against a valid document.
+  return out;
+}
+
+/** Legacy flat form derived from the structured identifications above. */
+function derivePassports(identifications: Identification[]): string[] {
+  const out: string[] = [];
+
+  for (const id of identifications) {
+    const description = id.typeDescription || id.typeCode;
+    const country = meaningfulCountry(id.countryIso2 || '');
+
     const caveats = [
-      bool(node, 'knownFalse') && 'known false',
-      bool(node, 'knownExpired') && 'expired',
-      bool(node, 'reportedLost') && 'reported lost',
-      bool(node, 'revokedByIssuer') && 'revoked',
+      id.knownFalse && 'known false',
+      id.knownExpired && 'expired',
+      id.reportedLost && 'reported lost',
+      id.revokedByIssuer && 'revoked',
     ].filter(Boolean) as string[];
 
-    let entryText = description ? `${description} ${number}` : String(number);
+    let entryText = description ? `${description} ${id.number}` : id.number;
     if (country) entryText += ` (${country})`;
     if (caveats.length > 0) entryText += ` [${caveats.join(', ')}]`;
 
@@ -213,6 +290,54 @@ function parseIdentifications(entry: any): string[] {
   }
 
   return out;
+}
+
+/** The legal basis for a listing (issue #6) — `<regulation>`, falling back to `<regulationSummary>`. */
+function parseRegulation(entry: any): Regulation | undefined {
+  const node = entry.regulation || entry.regulationSummary;
+  if (!node) return undefined;
+
+  const numberTitle = meaningful(attr(node, 'numberTitle')) || undefined;
+  const programme = meaningful(attr(node, 'programme')) || undefined;
+  const publicationDate = meaningful(attr(node, 'publicationDate')) || undefined;
+  const entryIntoForceDate = meaningful(attr(node, 'entryIntoForceDate')) || undefined;
+  const url = meaningful(attr(node, 'publicationUrl')) || undefined;
+
+  if (!numberTitle && !programme && !publicationDate && !entryIntoForceDate && !url) return undefined;
+  return { numberTitle, programme, publicationDate, entryIntoForceDate, url };
+}
+
+/**
+ * `<contactInfo>` (issue #6) appears nested under `<address>` in the real
+ * export, never directly under the entity — aggregated here across every
+ * address the entity has, deduplicated per key.
+ */
+function parseContactInfo(entry: any): ContactInfo | undefined {
+  const phoneNumbers: string[] = [];
+  const faxNumbers: string[] = [];
+  const emails: string[] = [];
+  const websites: string[] = [];
+
+  for (const addressNode of toArray(entry.address)) {
+    for (const node of toArray(addressNode.contactInfo)) {
+      const key = attr(node, 'key').toUpperCase();
+      const value = meaningful(attr(node, 'value'));
+      if (!value) continue;
+
+      const bucket =
+        key === 'PHONE' ? phoneNumbers : key === 'FAX' ? faxNumbers : key === 'EMAIL' ? emails : key === 'WEB' ? websites : null;
+      if (bucket && !bucket.includes(value)) bucket.push(value);
+    }
+  }
+
+  if (!phoneNumbers.length && !faxNumbers.length && !emails.length && !websites.length) return undefined;
+
+  return {
+    phoneNumbers: phoneNumbers.length > 0 ? phoneNumbers : undefined,
+    faxNumbers: faxNumbers.length > 0 ? faxNumbers : undefined,
+    emails: emails.length > 0 ? emails : undefined,
+    websites: websites.length > 0 ? websites : undefined,
+  };
 }
 
 /**
@@ -249,10 +374,25 @@ function mapEntityToRecord(entry: any): SanctionRecord | null {
     primaryName = candidates[primaryIndex].wholeName;
     aliases = candidates.filter((_, i) => i !== primaryIndex).map((c) => c.wholeName);
   }
+  const names: NameAlias[] = candidates.map((c) => ({
+    wholeName: c.wholeName,
+    firstName: c.firstName,
+    middleName: c.middleName,
+    lastName: c.lastName,
+    strong: c.isStrong,
+    language: c.language,
+    title: c.title,
+    function: c.function,
+  }));
 
   const addresses = parseAddresses(entry);
-  const { dates: datesOfBirth, places: placesOfBirth } = parseBirthdates(entry);
-  const passports = parseIdentifications(entry);
+  const birthDates = parseBirthDateObjects(entry);
+  const datesOfBirth = deriveDatesOfBirth(birthDates);
+  const placesOfBirth = parsePlacesOfBirth(entry);
+  const identifications = parseIdentificationObjects(entry);
+  const passports = derivePassports(identifications);
+  const regulation = parseRegulation(entry);
+  const contactInfo = parseContactInfo(entry);
 
   const citizenships: string[] = [];
   for (const node of toArray(entry.citizenship)) {
@@ -260,11 +400,6 @@ function mapEntityToRecord(entry: any): SanctionRecord | null {
       meaningfulCountry(attr(node, 'countryDescription')) || meaningfulCountry(attr(node, 'countryIso2Code'));
     if (country && !citizenships.includes(country)) citizenships.push(country);
   }
-
-  const sanctionReason =
-    attr(entry.regulation, 'numberTitle') || attr(entry.regulationSummary, 'numberTitle');
-  const legalBasis =
-    attr(entry.regulation, 'publicationUrl') || attr(entry.regulationSummary, 'publicationUrl');
 
   const now = new Date().toISOString();
 
@@ -280,8 +415,16 @@ function mapEntityToRecord(entry: any): SanctionRecord | null {
     citizenships: citizenships.length > 0 ? citizenships : undefined,
     passports: passports.length > 0 ? passports : undefined,
     addresses: addresses.length > 0 ? addresses : undefined,
-    sanctionReason: sanctionReason || undefined,
-    legalBasis: legalBasis || undefined,
+    sanctionReason: regulation?.numberTitle,
+    legalBasis: regulation?.url,
+    euReferenceNumber: meaningful(attr(entry, 'euReferenceNumber')) || undefined,
+    unitedNationId: meaningful(attr(entry, 'unitedNationId')) || undefined,
+    sourceRef: logicalId,
+    identifications: identifications.length > 0 ? identifications : undefined,
+    regulation,
+    names: names.length > 0 ? names : undefined,
+    birthDates: birthDates.length > 0 ? birthDates : undefined,
+    contactInfo,
     createdAt: now,
     updatedAt: now,
   };
