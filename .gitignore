@@ -5,6 +5,10 @@ firebase-debug.log
 firebase-debug.*.log
 *.local
 
+# Data files (Sanctions lists)
+data/
+downloads/
+
 # Frontend
 frontend/node_modules/
 frontend/dist/

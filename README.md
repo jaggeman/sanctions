@@ -2,6 +2,10 @@
 
 This is a full-stack application for managing, searching, and importing global sanctions lists (UN, EU, US OFAC, PEP). It consists of a Firebase Cloud Functions backend, a Firestore database, and a Vite + React frontend.
 
+## 🚀 Live Application
+The production web app is deployed and accessible at:
+**[https://sanctions-app-dev-01.web.app](https://sanctions-app-dev-01.web.app)**
+
 ## Prerequisites
 
 - Node.js (v18 or newer recommended)
@@ -72,14 +76,17 @@ This project also includes command-line tools and scripts to fetch and parse lar
 npm run build
 ```
 
+### Bulk Importing (Large files)
+For very large files (like the US OFAC or EU lists), it is recommended to place them in the local `data/` folder (which is ignored by Git).
+
+Then, run the importer script locally to push the records to your database:
+```bash
+npm run import
+```
+
 ### Run the CLI Tool
 ```bash
 npm run cli -- --help
-```
-
-### Run a manual background import
-```bash
-npm run import
 ```
 
 ## Deployment

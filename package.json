@@ -3,8 +3,11 @@
   "version": "1.0.0",
   "description": "Unified Sanctions List database with importers, REST API, MCP and CLI",
   "main": "dist/api/index.js",
+  "engines": {
+    "node": "22"
+  },
   "scripts": {
-    "build": "rimraf dist && tsc",
+    "build": "rimraf dist && tsc && node -e \"require('fs').cpSync('src/api/openapi.json', 'dist/api/openapi.json')\"",
     "start": "node dist/api/index.js",
     "dev:api": "nodemon --watch src -e ts --exec ts-node src/api/index.ts",
     "dev:mcp": "ts-node src/mcp/index.ts",
