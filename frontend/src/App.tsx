@@ -33,6 +33,7 @@ import InfoIcon from '@mui/icons-material/Info';
 import ApiTokensTab from './ApiTokensTab';
 import LogoutIcon from '@mui/icons-material/Logout';
 import Login from './components/Login';
+import { apiFetch, setOnSessionExpired } from './apiFetch';
 
 // Function to generate theme based on mode
 const getTheme = (mode: PaletteMode) => createTheme({
@@ -116,6 +117,13 @@ function App() {
       .finally(() => setAuthChecked(true));
   }, []);
 
+  // issue #59: any apiFetch call that gets a 401 (session expired or
+  // invalidated server-side) routes the user back to Login, app-wide.
+  useEffect(() => {
+    setOnSessionExpired(() => setUserEmail(null));
+    return () => setOnSessionExpired(null);
+  }, []);
+
   const handleLogout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' });
     setUserEmail(null);
@@ -138,7 +146,14 @@ function App() {
     if (!searchQuery) return;
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(searchQuery)}`);
+      const res = await apiFetch(`/api/search?q=${encodeURIComponent(searchQuery)}`);
+      if (res.status === 401) {
+        // Session expired — apiFetch's onSessionExpired callback (registered
+        // above) already flips userEmail back to null and returns to Login.
+        // Don't also render "No results found" for what is actually an
+        // expired session, not an empty result (issue #59).
+        return;
+      }
       const data = await res.json();
       setResults(Array.isArray(data.results) ? data.results : []);
       setTotalMatches(typeof data.totalMatches === 'number' ? data.totalMatches : 0);
@@ -146,8 +161,9 @@ function App() {
     } catch (err) {
       console.error(err);
       alert('Search failed');
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   };
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -160,10 +176,16 @@ function App() {
 
     setIsLoading(true);
     try {
-      const res = await fetch('/api/upload', {
+      const res = await apiFetch('/api/upload', {
         method: 'POST',
         body: formData
       });
+      if (res.status === 401) {
+        // Session expired — apiFetch's callback already returns to Login;
+        // don't also show the generic "Upload failed." for this case
+        // (issue #59).
+        return;
+      }
       if (res.ok) {
         alert('File uploaded successfully! Import process has started.');
       } else {
@@ -173,8 +195,9 @@ function App() {
     } catch (err) {
       console.error(err);
       alert('Upload failed.');
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   };
 
   if (!authChecked) {

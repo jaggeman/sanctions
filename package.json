@@ -15,6 +15,7 @@
     "import": "ts-node src/importer/index.ts",
     "test": "firebase emulators:exec --only firestore \"vitest run\"",
     "test:unit": "vitest run tests/unit",
+    "test:coverage": "vitest run tests/unit --coverage --exclude '**/regression-real-data.test.ts'",
     "test:rules": "firebase emulators:exec --only firestore \"vitest run tests/rules\"",
     "test:integration": "firebase emulators:exec --only firestore \"vitest run tests/integration\"",
     "test:watch": "vitest watch tests/unit"
@@ -32,6 +33,7 @@
     "firebase-admin": "^12.3.0",
     "firebase-functions": "^7.3.2",
     "fs-extra": "^11.2.0",
+    "helmet": "^8.3.0",
     "multer": "^2.2.0",
     "nodemailer": "^9.0.5",
     "sax": "^1.6.1",
@@ -48,6 +50,7 @@
     "@types/nodemailer": "^8.0.1",
     "@types/supertest": "^6.0.3",
     "@types/swagger-ui-express": "^4.1.6",
+    "@vitest/coverage-v8": "^3.2.7",
     "nodemon": "^3.1.4",
     "rimraf": "^6.0.1",
     "supertest": "^7.2.2",

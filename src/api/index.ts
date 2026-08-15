@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import * as functions from 'firebase-functions';
 import * as path from 'path';
@@ -76,6 +77,18 @@ const SESSION_COOKIE_OPTIONS = {
   secure: process.env.NODE_ENV === 'production',
   maxAge: 7 * 24 * 60 * 60 * 1000,
 };
+
+// Security response headers (issue #95, found via a live pen test): nosniff,
+// frame-ancestors/X-Frame-Options, HSTS, and hiding X-Powered-By. CSP is
+// skipped specifically on /api-docs — swagger-ui-express's bundled page
+// relies on inline <script>/<style>, which helmet's default policy blocks;
+// every other route keeps the full default policy.
+app.use((req, res, next) => {
+  const applyHeaders = req.path.startsWith('/api-docs')
+    ? helmet({ contentSecurityPolicy: false })
+    : helmet();
+  applyHeaders(req, res, next);
+});
 
 // Enable CORS and JSON parsing.
 // Cookie-based sessions mean credentialed CORS must not reflect an arbitrary origin —

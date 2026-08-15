@@ -134,6 +134,18 @@ describe('POST /api/admin/tokens', () => {
     expect(res.body.id).toBe('tok-1');
     expect(mockCreateApiToken).toHaveBeenCalledWith('CI pipeline', ['read']);
   });
+
+  it('returns 500 with details when createApiToken throws', async () => {
+    mockCreateApiToken.mockRejectedValueOnce(new Error('boom'));
+
+    const res = await request(buildApp())
+      .post('/api/admin/tokens')
+      .set('Cookie', adminCookie())
+      .send({ name: 'CI pipeline', scopes: ['read'] });
+
+    expect(res.status).toBe(500);
+    expect(res.body.details).toBe('boom');
+  });
 });
 
 describe('GET /api/admin/tokens', () => {
@@ -147,6 +159,15 @@ describe('GET /api/admin/tokens', () => {
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(1);
     expect(res.body[0].id).toBe('tok-1');
+  });
+
+  it('returns 500 with details when listApiTokens throws', async () => {
+    mockListApiTokens.mockRejectedValueOnce(new Error('boom'));
+
+    const res = await request(buildApp()).get('/api/admin/tokens').set('Cookie', adminCookie());
+
+    expect(res.status).toBe(500);
+    expect(res.body.details).toBe('boom');
   });
 });
 
@@ -176,5 +197,14 @@ describe('POST /api/admin/tokens/:id/revoke', () => {
 
     expect(res.status).toBe(400);
     expect(mockRevokeApiToken).not.toHaveBeenCalled();
+  });
+
+  it('returns 500 with details when revokeApiToken throws', async () => {
+    mockRevokeApiToken.mockRejectedValueOnce(new Error('boom'));
+
+    const res = await request(buildApp()).post('/api/admin/tokens/tok-1/revoke').set('Cookie', adminCookie());
+
+    expect(res.status).toBe(500);
+    expect(res.body.details).toBe('boom');
   });
 });
