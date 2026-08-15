@@ -32,7 +32,7 @@ authRouter.post('/request-otp', async (req, res): Promise<any> => {
     return res.json({ ok: true });
   }
 
-  const code = createOtp(email);
+  const code = await createOtp(email);
   if (!code) {
     return res.status(429).json({ error: 'A code was already sent recently. Please wait before requesting another.' });
   }
@@ -50,7 +50,7 @@ authRouter.post('/request-otp', async (req, res): Promise<any> => {
  * POST /api/auth/verify-otp
  * Verifies a one-time code and starts a session.
  */
-authRouter.post('/verify-otp', (req, res): any => {
+authRouter.post('/verify-otp', async (req, res): Promise<any> => {
   const { email, code } = req.body;
 
   if (!email || typeof email !== 'string' || !code || typeof code !== 'string') {
@@ -59,11 +59,11 @@ authRouter.post('/verify-otp', (req, res): any => {
 
   const isTestLogin = isTestLoginEnabled() && isTestLoginEmail(email) && code === TEST_LOGIN_CODE;
 
-  if (!isTestLogin && !verifyOtp(email, code)) {
+  if (!isTestLogin && !(await verifyOtp(email, code))) {
     return res.status(401).json({ error: 'Invalid or expired code.' });
   }
 
-  const sessionId = createSession(email.trim().toLowerCase());
+  const sessionId = await createSession(email.trim().toLowerCase());
   res.cookie(SESSION_COOKIE_NAME, sessionId, SESSION_COOKIE_OPTIONS);
   res.json({ ok: true });
 });
@@ -82,9 +82,9 @@ authRouter.get('/session', requireAuth, (req, res) => {
 /**
  * POST /api/auth/logout
  */
-authRouter.post('/logout', (req, res) => {
+authRouter.post('/logout', async (req, res) => {
   const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
-  if (sessionId) destroySession(sessionId);
+  if (sessionId) await destroySession(sessionId);
   res.clearCookie(SESSION_COOKIE_NAME);
   res.json({ ok: true });
 });

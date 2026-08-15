@@ -149,7 +149,7 @@ describe('POST /api/admin/tokens', () => {
 
     const res = await request(buildApp())
       .post('/api/admin/tokens')
-      .set('Cookie', adminCookie())
+      .set('Cookie', await adminCookie())
       .send({ name: 'CI pipeline', scopes: ['read'] });
 
     expect(res.status).toBe(500);
@@ -173,7 +173,7 @@ describe('GET /api/admin/tokens', () => {
   it('returns 500 with details when listApiTokens throws', async () => {
     mockListApiTokens.mockRejectedValueOnce(new Error('boom'));
 
-    const res = await request(buildApp()).get('/api/admin/tokens').set('Cookie', adminCookie());
+    const res = await request(buildApp()).get('/api/admin/tokens').set('Cookie', await adminCookie());
 
     expect(res.status).toBe(500);
     expect(res.body.details).toBe('boom');
@@ -202,7 +202,7 @@ describe('POST /api/admin/tokens/:id/revoke', () => {
   it('rejects an id containing a URL-encoded slash before calling revokeApiToken', async () => {
     const res = await request(buildApp())
       .post('/api/admin/tokens/tok-1%2F..%2Fadmins%2Fattacker/revoke')
-      .set('Cookie', adminCookie());
+      .set('Cookie', await adminCookie());
 
     expect(res.status).toBe(400);
     expect(mockRevokeApiToken).not.toHaveBeenCalled();
@@ -211,7 +211,7 @@ describe('POST /api/admin/tokens/:id/revoke', () => {
   it('returns 500 with details when revokeApiToken throws', async () => {
     mockRevokeApiToken.mockRejectedValueOnce(new Error('boom'));
 
-    const res = await request(buildApp()).post('/api/admin/tokens/tok-1/revoke').set('Cookie', adminCookie());
+    const res = await request(buildApp()).post('/api/admin/tokens/tok-1/revoke').set('Cookie', await adminCookie());
 
     expect(res.status).toBe(500);
     expect(res.body.details).toBe('boom');

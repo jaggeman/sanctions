@@ -207,13 +207,17 @@ describe('GET /api/sanctions/:id', () => {
     const res = await agent.get('/api/sanctions/EU-1%2F..%2Fadmins%2Fattacker');
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/invalid/i);
-    expect(fakeDb.collection).not.toHaveBeenCalled();
+    // Not "never called at all": an authenticated agent's session lookup
+    // (issue #63, Firestore-backed) legitimately touches `sessions` on every
+    // request. The actual guarantee here is that the invalid id itself never
+    // reaches a `sanctions` lookup.
+    expect(fakeDb.collection).not.toHaveBeenCalledWith('sanctions');
   });
 
   it('rejects an id with other structural characters (400, not a 500 from Firestore)', async () => {
     const res = await agent.get('/api/sanctions/EU@evil.com');
     expect(res.status).toBe(400);
-    expect(fakeDb.collection).not.toHaveBeenCalled();
+    expect(fakeDb.collection).not.toHaveBeenCalledWith('sanctions');
   });
 });
 
