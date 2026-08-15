@@ -30,7 +30,22 @@ function makeDoc(id: string) {
 const fakeDb = {
   collection: vi.fn((name: string) => {
     if (name !== 'imports') throw new Error(`unexpected collection ${name}`);
-    return { doc: vi.fn((id: string) => makeDoc(id)) };
+    return {
+      doc: vi.fn((id: string) => makeDoc(id)),
+      orderBy: vi.fn((field: string, dir: 'asc' | 'desc' = 'asc') => ({
+        limit: vi.fn((n: number) => ({
+          get: vi.fn(async () => {
+            const entries = Array.from(store.values());
+            entries.sort((a: any, b: any) => {
+              if (a[field] === b[field]) return 0;
+              const cmp = a[field] > b[field] ? 1 : -1;
+              return dir === 'desc' ? -cmp : cmp;
+            });
+            return { docs: entries.slice(0, n).map((v) => ({ data: () => ({ ...v }) })) };
+          }),
+        })),
+      })),
+    };
   }),
 };
 
@@ -43,6 +58,7 @@ const {
   markImportRejected,
   findImportBySha256,
   findAppliedImportBySha256,
+  listImports,
   ImportAlreadyInFlightError,
 } = await import('../../src/importer/importRecord');
 
@@ -140,5 +156,27 @@ describe('findAppliedImportBySha256', () => {
     const found = await findAppliedImportBySha256('abc123');
     expect(found?.sha256).toBe('abc123');
     expect(found?.status).toBe('applied');
+  });
+});
+
+describe('listImports (issue #12)', () => {
+  it('returns an empty array when there are no imports', async () => {
+    expect(await listImports(20)).toEqual([]);
+  });
+
+  it('lists imports newest first by uploadedAt', async () => {
+    await createPendingImport(baseRecord({ sha256: 'older', importId: 'older', uploadedAt: '2026-01-01T00:00:00.000Z' }));
+    await createPendingImport(baseRecord({ sha256: 'newer', importId: 'newer', uploadedAt: '2026-06-01T00:00:00.000Z' }));
+
+    const imports = await listImports(20);
+    expect(imports.map((i) => i.importId)).toEqual(['newer', 'older']);
+  });
+
+  it('caps results at the requested limit', async () => {
+    await createPendingImport(baseRecord({ sha256: 'a', importId: 'a', uploadedAt: '2026-01-01T00:00:00.000Z' }));
+    await createPendingImport(baseRecord({ sha256: 'b', importId: 'b', uploadedAt: '2026-01-02T00:00:00.000Z' }));
+    await createPendingImport(baseRecord({ sha256: 'c', importId: 'c', uploadedAt: '2026-01-03T00:00:00.000Z' }));
+
+    expect(await listImports(2)).toHaveLength(2);
   });
 });

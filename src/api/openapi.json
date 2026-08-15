@@ -132,6 +132,92 @@
         }
       }
     },
+    "/api/sanctions/{id}/versions": {
+      "get": {
+        "summary": "Hämta versionshistorik för en sanktionspost",
+        "description": "Listar hela ändringshistoriken (skapad/uppdaterad/avlistad/relistad) för en post, nyaste först. Kräver antingen en inloggad session eller en API-token med read-scope (issue #36).",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Unikt ID för sanktionsposten",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versionshistorik, nyaste först",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/RecordVersion" }
+                }
+              }
+            }
+          },
+          "404": { "description": "Hittade inte posten" }
+        }
+      }
+    },
+    "/api/imports": {
+      "get": {
+        "summary": "Lista importhistorik",
+        "description": "Listar tidigare uppladdningar/importer, nyaste först (issue #12). Kräver antingen en inloggad session eller en API-token med read-scope (issue #36).",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max antal (standard 20, max 100)",
+            "required": false,
+            "schema": { "type": "integer", "default": 20 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Importhistorik",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/ImportRecord" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/imports/{id}": {
+      "get": {
+        "summary": "Hämta detaljer för en import",
+        "description": "Hämtar en enskild imports status, källa, format och räknare (issue #12). Kräver antingen en inloggad session eller en API-token med read-scope (issue #36).",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Import-ID (== filens SHA-256)",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Importdetaljer",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ImportRecord" }
+              }
+            }
+          },
+          "404": { "description": "Hittade inte importen" }
+        }
+      }
+    },
     "/api/import": {
       "post": {
         "summary": "Trigga en uppdatering/import av data",
@@ -748,6 +834,50 @@
           },
           "overriddenAt": { "type": "string", "format": "date-time" },
           "reason": { "type": "string", "example": "Source transliteration was inaccurate" }
+        }
+      },
+      "RecordVersion": {
+        "type": "object",
+        "required": ["importId", "changedAt", "changeType", "record"],
+        "properties": {
+          "importId": { "type": "string" },
+          "changedAt": { "type": "string", "format": "date-time" },
+          "changeType": {
+            "type": "string",
+            "enum": ["created", "updated", "delisted", "relisted"]
+          },
+          "record": { "$ref": "#/components/schemas/SanctionRecord" }
+        }
+      },
+      "ImportRecord": {
+        "type": "object",
+        "required": ["importId", "filename", "sha256", "source", "format", "uploadedAt", "status"],
+        "properties": {
+          "importId": { "type": "string", "description": "== the file's SHA-256" },
+          "filename": { "type": "string" },
+          "sha256": { "type": "string" },
+          "sizeBytes": { "type": "integer" },
+          "source": { "type": "string", "enum": ["EU", "UN", "US", "PEP", "CUSTOM"] },
+          "format": {
+            "type": "string",
+            "enum": ["eu-xml-1.1", "eu-csv-1.1", "eu-csv-1.0", "un-xml", "us-xml", "csv"]
+          },
+          "fileGenerationDate": { "type": "string", "nullable": true },
+          "uploadedBy": { "type": "string", "nullable": true },
+          "uploadedAt": { "type": "string", "format": "date-time" },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "parsing", "applied", "failed", "rejected"]
+          },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "parsed": { "type": "integer" },
+              "uploaded": { "type": "integer" }
+            }
+          },
+          "duplicateOfImportId": { "type": "string" },
+          "error": { "type": "string" }
         }
       }
     }

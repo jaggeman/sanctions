@@ -12,6 +12,8 @@ import { db } from '../shared/firebase';
 import { enqueueImportTask } from '../importer/taskQueue';
 import { runImport } from '../importer';
 import { processUpload } from '../importer/uploadPipeline';
+import { listImports, findImportBySha256 } from '../importer/importRecord';
+import { listRecordVersions } from '../importer/uploader';
 import { tokensRouter } from './routes/tokens';
 import { decisionsRouter } from './routes/decisions';
 import { runSearch } from '../search';
@@ -67,6 +69,10 @@ function uploadSingleFile(fieldName: string) {
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Allow-list for Firestore document IDs taken from a URL path param (CLAUDE.md
+// §6) — rejects '/' and other structural characters so a client can't smuggle
+// a multi-segment path (e.g. "../otherCollection/doc") into .doc(id).
+const DOC_ID_PATTERN = /^[A-Za-z0-9_.-]{1,200}$/;
 // importId (issue #8) becomes a Firestore document ID under
 // sanctions/{id}/versions/{importId} — validate it before it ever reaches
 // there, same as any other client-supplied value used as a storage key
@@ -325,6 +331,68 @@ app.get('/api/sanctions/:id', requireAuthOrScope('read'), async (req, res): Prom
     res.json({ ...record, overriddenFields });
   } catch (error: any) {
     console.error('Get details error:', error);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
+
+/**
+ * GET /api/sanctions/:id/versions
+ * Version trail for a record, newest first (issue #12), backed by the
+ * sanctions/{id}/versions subcollection issue #9 writes to.
+ */
+app.get('/api/sanctions/:id/versions', requireAuthOrScope('read'), async (req, res): Promise<any> => {
+  const { id } = req.params;
+  if (!DOC_ID_PATTERN.test(id)) {
+    return res.status(400).json({ error: 'Invalid record ID.' });
+  }
+
+  try {
+    const doc = await db.collection('sanctions').doc(id).get();
+    if (!doc.exists) {
+      return res.status(404).json({ error: `Sanction record with ID ${id} not found.` });
+    }
+    const versions = await listRecordVersions(id);
+    res.json(versions);
+  } catch (error: any) {
+    console.error('List record versions error:', error);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
+
+/**
+ * GET /api/imports
+ * List import audit records, newest first (issue #12 — import history view).
+ */
+app.get('/api/imports', requireAuthOrScope('read'), async (req, res): Promise<any> => {
+  const requestedLimit = Math.min(parseInt(req.query.limit as string) || 20, 100);
+
+  try {
+    const imports = await listImports(requestedLimit);
+    res.json(imports);
+  } catch (error: any) {
+    console.error('List imports error:', error);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
+
+/**
+ * GET /api/imports/:id
+ * Retrieve a single import's detail (issue #12).
+ */
+app.get('/api/imports/:id', requireAuthOrScope('read'), async (req, res): Promise<any> => {
+  const { id } = req.params;
+  if (!DOC_ID_PATTERN.test(id)) {
+    return res.status(400).json({ error: 'Invalid import ID.' });
+  }
+
+  try {
+    const record = await findImportBySha256(id);
+    if (!record) {
+      return res.status(404).json({ error: `Import with ID ${id} not found.` });
+    }
+    res.json(record);
+  } catch (error: any) {
+    console.error('Get import detail error:', error);
     res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
