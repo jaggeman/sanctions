@@ -5,7 +5,8 @@ import { parseEUList } from './parsers/eu';
 import { parseUNList } from './parsers/un';
 import { parseUSList } from './parsers/us';
 import { parseCSVList } from './parsers/csv';
-import { uploadRecords } from './uploader';
+import { uploadRecords, filterAutomatedBatch } from './uploader';
+import { invalidateSearchIndex } from '../search';
 import { SanctionRecord } from '../shared/types';
 
 interface ImportOptions {
@@ -93,11 +94,17 @@ export async function runImport(options: ImportOptions = {}): Promise<{
       }
     }
 
-    // 5. Upload everything to Firestore
-    if (allRecords.length > 0) {
-      await uploadRecords(allRecords);
-      console.log(`Successfully processed and uploaded total of ${allRecords.length} records.`);
+    // 5. Upload everything to Firestore (custom records are never part of an
+    // automated import batch — see filterAutomatedBatch, issue #10)
+    const uploadableRecords = filterAutomatedBatch(allRecords);
+    if (uploadableRecords.length > 0) {
+      await uploadRecords(uploadableRecords);
+      invalidateSearchIndex(); // next search rebuilds the in-memory index with the new data
+      console.log(`Successfully processed and uploaded total of ${uploadableRecords.length} records.`);
       return { success: true, importedCounts };
+    } else if (allRecords.length > 0) {
+      console.warn('All parsed records were CUSTOM-sourced and were dropped from this automated import — see filterAutomatedBatch.');
+      return { success: false, importedCounts, error: 'No uploadable records after filtering CUSTOM-sourced records' };
     } else {
       console.warn('No records were parsed or imported.');
       return { success: false, importedCounts, error: 'No records parsed' };

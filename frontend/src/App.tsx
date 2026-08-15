@@ -120,6 +120,8 @@ function App() {
   const [tabValue, setTabValue] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [results, setResults] = useState<any[]>([]);
+  const [totalMatches, setTotalMatches] = useState(0);
+  const [truncated, setTruncated] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
   const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
@@ -132,7 +134,9 @@ function App() {
     try {
       const res = await fetch(`/api/search?q=${encodeURIComponent(searchQuery)}`);
       const data = await res.json();
-      setResults(Array.isArray(data) ? data : []);
+      setResults(Array.isArray(data.results) ? data.results : []);
+      setTotalMatches(typeof data.totalMatches === 'number' ? data.totalMatches : 0);
+      setTruncated(Boolean(data.truncated));
     } catch (err) {
       console.error(err);
       alert('Search failed');
@@ -246,6 +250,14 @@ function App() {
               </CardContent>
             </Card>
 
+            {results.length > 0 && (
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                {truncated
+                  ? `Showing ${results.length} of ${totalMatches} matches — narrow your search or raise the limit to see more.`
+                  : `${totalMatches} match${totalMatches === 1 ? '' : 'es'}`}
+              </Typography>
+            )}
+
             <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: '1fr 1fr 1fr' }, gap: 3 }}>
               {results.map((r, i) => (
                 <Box key={i}>
@@ -258,6 +270,14 @@ function App() {
                       <Typography variant="h6" component="h2" gutterBottom>
                         {r.primaryName}
                       </Typography>
+                      {typeof r.score === 'number' && (
+                        <Chip
+                          label={`${r.score}% match${r.matchedAlias ? ` — "${r.matchedAlias}"` : ''}`}
+                          size="small"
+                          color={r.score >= 90 ? 'success' : r.score >= 75 ? 'warning' : 'default'}
+                          sx={{ mb: 2 }}
+                        />
+                      )}
                       {r.aliases && r.aliases.length > 0 && (
                         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                           <strong>Aliases:</strong> {r.aliases.slice(0, 3).join(', ')}

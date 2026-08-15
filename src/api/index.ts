@@ -7,12 +7,10 @@ import * as fs from 'fs-extra';
 import * as os from 'os';
 import multer from 'multer';
 import * as swaggerUi from 'swagger-ui-express';
-import * as admin from 'firebase-admin';
 import { db } from '../shared/firebase';
-import { normalizeText } from '../importer/uploader';
 import { runImport } from '../importer';
-import { SanctionRecord } from '../shared/types';
 import { tokensRouter } from './routes/tokens';
+import { runSearch } from '../search';
 import { createOtp, verifyOtp } from '../auth/otpStore';
 import { sendOtpEmail } from '../auth/mailer';
 import { createSession, destroySession } from '../auth/session';
@@ -132,66 +130,28 @@ app.use('/api/admin/tokens', tokensRouter);
 
 /**
  * GET /api/search
- * Search sanctions by name/alias token matching, source, or type
+ * Fuzzy name search (phonetic + edit-distance + token-set matching), plus an
+ * exact passport/ID fast path. See src/search/matcher.ts — the same matcher
+ * backs this endpoint, the MCP server, and the CLI (issue #11).
  */
 app.get('/api/search', async (req, res): Promise<any> => {
-  const { q, source, type, limit } = req.query;
+  const { q, source, type, limit, threshold } = req.query;
 
   if (!q || typeof q !== 'string') {
     return res.status(400).json({ error: 'Query parameter "q" is required.' });
   }
 
-  const normalizedQuery = normalizeText(q);
-  const queryTokens = normalizedQuery.split(' ').filter(token => token.length >= 2);
-
-  if (queryTokens.length === 0) {
-    return res.json([]); // Return empty list if query is too short
-  }
-
   const requestedLimit = Math.min(parseInt(limit as string) || 20, 100);
-  const sourcesFilter = source ? (source as string).split(',').map(s => s.trim().toUpperCase()) : null;
-  const typeFilter = type ? (type as string).trim().toLowerCase() : null;
 
   try {
-    const sanctionsCollection = db.collection('sanctions');
-    
-    // Firestore only supports one array-contains per query.
-    // We query on the FIRST token, then filter remaining tokens in-memory.
-    const firstToken = queryTokens[0];
-    let query: admin.firestore.Query = sanctionsCollection.where('searchNames', 'array-contains', firstToken);
-
-    // Apply type filter directly in DB query if provided
-    if (typeFilter) {
-      query = query.where('type', '==', typeFilter);
-    }
-
-    // Since we need to perform in-memory filtering for additional name tokens,
-    // we fetch a slightly larger chunk (up to 500 documents) to ensure we don't miss matches.
-    const snapshot = await query.limit(500).get();
-    
-    let results: SanctionRecord[] = [];
-    
-    snapshot.forEach((doc: any) => {
-      const record = doc.data() as SanctionRecord;
-      
-      // 1. Verify in-memory filters for other tokens (e.g. searching "vladimir putin" matches both tokens)
-      const matchesAllTokens = queryTokens.every(token => 
-        record.searchNames.includes(token) || 
-        normalizeText(record.primaryName).includes(token)
-      );
-
-      if (!matchesAllTokens) return;
-
-      // 2. Filter by source (if specified)
-      if (sourcesFilter && !sourcesFilter.includes(record.source.toUpperCase())) {
-        return;
-      }
-
-      results.push(record);
+    const { results, totalMatches, truncated } = await runSearch(q, {
+      source: typeof source === 'string' ? source : undefined,
+      type: typeof type === 'string' ? type : undefined,
+      limit: requestedLimit,
+      threshold: threshold !== undefined ? parseInt(threshold as string) : undefined,
     });
 
-    // Slice results to the requested limit
-    res.json(results.slice(0, requestedLimit));
+    res.json({ results, totalMatches, truncated });
 
   } catch (error: any) {
     console.error('Search error:', error);

@@ -6,11 +6,9 @@ import {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import * as admin from 'firebase-admin';
 import { db } from '../shared/firebase';
-import { normalizeText } from '../importer/uploader';
 import { runImport } from '../importer';
-import { SanctionRecord } from '../shared/types';
+import { runSearch } from '../search';
 
 // Create the MCP server instance
 const server = new Server(
@@ -100,6 +98,47 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 });
 
 /**
+ * Handles the search_sanctions tool. Exported so it can be unit tested
+ * directly, and so it shares src/search's fuzzy matcher with the REST API
+ * and CLI rather than keeping its own copy of the query logic (issue #11).
+ */
+export async function handleSearchSanctions(args: any) {
+  const queryStr = String(args?.query || '').trim();
+  if (!queryStr) {
+    return {
+      content: [{ type: 'text', text: 'Sökordet måste anges och vara minst 2 tecken långt.' }],
+    };
+  }
+
+  const { results, totalMatches, truncated } = await runSearch(queryStr, {
+    source: args?.source ? String(args.source) : undefined,
+    type: args?.type ? String(args.type) : undefined,
+    limit: args?.limit ? Number(args.limit) : undefined,
+  });
+
+  if (results.length === 0) {
+    return {
+      content: [{ type: 'text', text: `Inga sanktioner matchade din sökning: "${queryStr}"` }],
+    };
+  }
+
+  const formatted = results.map(r => {
+    const aliasStr = r.aliases.length > 0 ? ` (Alias: ${r.aliases.join(', ')})` : '';
+    const dobStr = r.datesOfBirth ? ` | DOB: ${r.datesOfBirth.join(', ')}` : '';
+    const reasonStr = r.sanctionReason ? ` | Orsak: ${r.sanctionReason.substring(0, 100)}${r.sanctionReason.length > 100 ? '...' : ''}` : '';
+    return `[${r.id}] ${r.primaryName}${aliasStr} - Källa: ${r.source} (${r.type}) - Träffsäkerhet: ${r.score}% (matchade "${r.matchedAlias}")${dobStr}${reasonStr}`;
+  }).join('\n');
+
+  const truncationNote = truncated
+    ? `\n\n(Visar ${results.length} av ${totalMatches} totala träffar — sök med en snävare fråga eller höj limit för fler.)`
+    : '';
+
+  return {
+    content: [{ type: 'text', text: `Hittade ${totalMatches} träffar (visar de första ${results.length}):\n\n${formatted}${truncationNote}` }],
+  };
+}
+
+/**
  * Handle tool execution calls.
  */
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -107,63 +146,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   try {
     if (name === 'search_sanctions') {
-      const queryStr = String(args?.query || '');
-      const sourceStr = String(args?.source || '');
-      const typeStr = String(args?.type || '');
-      const limitVal = Number(args?.limit || 10);
-
-      const normalized = normalizeText(queryStr);
-      const tokens = normalized.split(' ').filter(t => t.length >= 2);
-
-      if (tokens.length === 0) {
-        return {
-          content: [{ type: 'text', text: 'Sökordet måste vara minst 2 tecken långt.' }],
-        };
-      }
-
-      const sanctionsCollection = db.collection('sanctions');
-      const firstToken = tokens[0];
-      let query: admin.firestore.Query = sanctionsCollection.where('searchNames', 'array-contains', firstToken);
-
-      if (typeStr) {
-        query = query.where('type', '==', typeStr);
-      }
-
-      const snapshot = await query.limit(300).get();
-      const results: SanctionRecord[] = [];
-      const sourcesFilter = sourceStr ? sourceStr.split(',').map(s => s.trim().toUpperCase()) : null;
-
-      snapshot.forEach((doc: any) => {
-        const record = doc.data() as SanctionRecord;
-        const matchesAll = tokens.every(token => 
-          record.searchNames.includes(token) || 
-          normalizeText(record.primaryName).includes(token)
-        );
-
-        if (!matchesAll) return;
-        if (sourcesFilter && !sourcesFilter.includes(record.source.toUpperCase())) return;
-
-        results.push(record);
-      });
-
-      const sliced = results.slice(0, limitVal);
-      if (sliced.length === 0) {
-        return {
-          content: [{ type: 'text', text: `Inga sanktioner matchade din sökning: "${queryStr}"` }],
-        };
-      }
-
-      // Format results cleanly for the LLM
-      const formatted = sliced.map(r => {
-        const aliasStr = r.aliases.length > 0 ? ` (Alias: ${r.aliases.join(', ')})` : '';
-        const dobStr = r.datesOfBirth ? ` | DOB: ${r.datesOfBirth.join(', ')}` : '';
-        const reasonStr = r.sanctionReason ? ` | Orsak: ${r.sanctionReason.substring(0, 100)}${r.sanctionReason.length > 100 ? '...' : ''}` : '';
-        return `[${r.id}] ${r.primaryName}${aliasStr} - Källa: ${r.source} (${r.type})${dobStr}${reasonStr}`;
-      }).join('\n');
-
-      return {
-        content: [{ type: 'text', text: `Hittade ${results.length} träffar (visar de första ${sliced.length}):\n\n${formatted}` }],
-      };
+      return await handleSearchSanctions(args);
     }
 
     if (name === 'get_sanction_details') {
