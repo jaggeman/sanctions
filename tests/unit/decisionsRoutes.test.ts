@@ -36,6 +36,10 @@ const authedCookie = () => `${SESSION_COOKIE_NAME}=${createSession(ANALYST_EMAIL
 beforeEach(() => {
   vi.clearAllMocks();
   _resetSessionStoreForTests();
+  // requireAuth re-checks the email allow-list (issue #33) on every request,
+  // not just at login — analyst@example.com needs its domain allow-listed
+  // for the "authenticated" test cases below to actually authenticate.
+  vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'example.com');
 });
 
 describe('requires authentication', () => {
