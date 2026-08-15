@@ -95,6 +95,18 @@ describe('GET /api/search', () => {
     });
   });
 
+  it('passes dob through to runSearch so the date-of-birth booster is actually reachable via the API', async () => {
+    await agent.get('/api/search').query({ q: 'Vladimir Putin', dob: '1952-10-07' });
+
+    expect(runSearch).toHaveBeenCalledWith('Vladimir Putin', expect.objectContaining({ dob: '1952-10-07' }));
+  });
+
+  it('omits dob when not provided, rather than passing an empty string through as a real filter', async () => {
+    await agent.get('/api/search').query({ q: 'Vladimir Putin' });
+
+    expect(runSearch).toHaveBeenCalledWith('Vladimir Putin', expect.not.objectContaining({ dob: expect.anything() }));
+  });
+
   it('returns each hit with its score and matched alias', async () => {
     runSearch.mockResolvedValue({ results: [scoredRecord()], totalMatches: 1, truncated: false });
     const res = await agent.get('/api/search').query({ q: 'Vladmir Putin' });
