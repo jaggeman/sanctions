@@ -286,9 +286,12 @@ export async function uploadRecords(records: SanctionRecord[], importId?: string
         }
         batch.set(docRef, toWrite, { merge: true });
         writeVersion(batch, docRef, effectiveImportId, changeType, now, record);
-      } else {
-        batch.set(docRef, record, { merge: true });
       }
+      // changeType === null: truly unchanged (issue #108) — the docstring
+      // above says this case "writes nothing," so it must not, not even a
+      // same-data merge. record's in-memory contentHash/searchNames were
+      // already recomputed above for this batch's own bookkeeping, but
+      // nothing about the stored doc actually needs to change.
     });
 
     await batch.commit();

@@ -213,6 +213,13 @@ app.get('/api/auth/session', requireAuth, (req, res) => {
 
 /**
  * POST /api/auth/logout
+ * Deliberately not gated by requireAuth (issue #108, explicit decision):
+ * it only ever destroys the session matching whatever `sid` cookie the
+ * caller presents, so at most a caller logs out their own (possibly
+ * already-invalid) session — there is no cross-account effect to guard
+ * against, and requiring a still-valid session just to end that session
+ * would reject the exact "my session already looks broken" case logout
+ * exists to recover from.
  */
 app.post('/api/auth/logout', (req, res) => {
   const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
@@ -235,10 +242,15 @@ try {
   console.error('Failed to load openapi.json. Run npm run build or verify path.');
 }
 
-// Swagger UI Route
+// Swagger UI Route.
+// Deliberately public, no auth (issue #108, explicit decision): this is API
+// documentation, not API data — the route/schema shapes it exposes have no
+// data-confidentiality value on their own, and self-registering integrators
+// need to be able to read the docs before they have a session or token to
+// authenticate a real call with.
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openApiSpec));
 
-// Raw OpenAPI JSON endpoint
+// Raw OpenAPI JSON endpoint — same reasoning as /api-docs above.
 app.get('/openapi.json', (req, res) => {
   res.json(openApiSpec);
 });
