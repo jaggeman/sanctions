@@ -35,6 +35,10 @@ export async function downloadFile(url: string, filename: string): Promise<strin
   return new Promise((resolve, reject) => {
     writer.on('finish', () => resolve(outputPath));
     writer.on('error', (err) => reject(err));
+    // pipe() does not forward the source's errors to the destination — an
+    // interrupted download (dropped connection mid-stream) would otherwise
+    // leave this promise never settling instead of rejecting.
+    response.data.on('error', (err: Error) => reject(err));
   });
 }
 
