@@ -111,7 +111,8 @@
     "/api/import": {
       "post": {
         "summary": "Trigga en uppdatering/import av data",
-        "description": "Startar en bakgrundsimport för att ladda ner och uppdatera sanktionslistorna.",
+        "description": "Startar en bakgrundsimport för att ladda ner och uppdatera sanktionslistorna. Kräver inloggad session.",
+        "security": [{ "cookieAuth": [] }],
         "requestBody": {
           "content": {
             "application/json": {
@@ -152,6 +153,66 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "\"sources\" är inte en array"
+          },
+          "401": {
+            "description": "Ingen giltig session"
+          }
+        }
+      }
+    },
+    "/api/upload": {
+      "post": {
+        "summary": "Ladda upp en CSV- eller XML-fil för import",
+        "description": "Laddar upp en fil för en angiven källa och startar en bakgrundsimport. Kräver inloggad session.",
+        "security": [{ "cookieAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Max 64 MB. Endast .csv och .xml accepteras."
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": ["EU", "UN", "US", "PEP", "CUSTOM"]
+                  }
+                },
+                "required": ["file", "source"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Fil mottagen, import startad i bakgrunden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string" },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Ingen fil bifogad, ogiltig filtyp, eller okänt \"source\"-värde"
+          },
+          "401": {
+            "description": "Ingen giltig session"
+          },
+          "413": {
+            "description": "Filen överskrider 64 MB-gränsen"
           }
         }
       }
@@ -251,6 +312,14 @@
     }
   },
   "components": {
+    "securitySchemes": {
+      "cookieAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "sid",
+        "description": "Session-cookie satt av POST /api/auth/verify-otp efter lyckad e-post-OTP-inloggning. Krävs numera av i princip alla /api/*-rutter (se app.use('/api', requireAuth) i src/api/index.ts)."
+      }
+    },
     "schemas": {
       "ApiToken": {
         "type": "object",
