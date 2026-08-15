@@ -1,0 +1,251 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Sanktionssök API",
+    "description": "REST API för att söka mot konsoliderade sanktionslistor (EU, FN, US OFAC) samt PEP-listor.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000",
+      "description": "Lokal utvecklingsserver"
+    }
+  ],
+  "paths": {
+    "/api/search": {
+      "get": {
+        "summary": "Sök i sanktionslistor",
+        "description": "Sök efter personer eller organisationer baserat på namn, alias eller ID i EU:s, FN:s, USA:s och PEP-listor.",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Sökord (namn, alias, passnummer)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "description": "Filtrera på källa (t.ex. EU, UN, US, PEP). Separera med kommatecken.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "description": "Filtrera på typ",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["individual", "entity", "vessel", "aircraft"]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max antal träffar (standard 20, max 100)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sökresultat",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SanctionRecord"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Felaktig sökförfrågan (t.ex. saknat sökord)"
+          }
+        }
+      }
+    },
+    "/api/sanctions/{id}": {
+      "get": {
+        "summary": "Hämta en specifik sanktionspost",
+        "description": "Hämta detaljerad information om en sanktionerad person eller organisation baserat på dess unika ID.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Unikt ID för sanktionsposten (t.ex. EU-1234, US-SDN-999)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Hittad post",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SanctionRecord"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Hittade inte posten"
+          }
+        }
+      }
+    },
+    "/api/import": {
+      "post": {
+        "summary": "Trigga en uppdatering/import av data",
+        "description": "Startar en bakgrundsimport för att ladda ner och uppdatera sanktionslistorna.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sources": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": ["EU", "UN", "US"]
+                    }
+                  },
+                  "csvPath": {
+                    "type": "string",
+                    "description": "Lokal sökväg till en CSV-fil för PEP/CUSTOM import"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Import startad i bakgrunden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "SanctionRecord": {
+        "type": "object",
+        "required": ["id", "source", "type", "primaryName", "aliases", "createdAt", "updatedAt"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "EU-1234"
+          },
+          "source": {
+            "type": "string",
+            "enum": ["EU", "UN", "US", "PEP", "CUSTOM"],
+            "example": "EU"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["individual", "entity", "vessel", "aircraft"],
+            "example": "individual"
+          },
+          "primaryName": {
+            "type": "string",
+            "example": "Vladimir Vladimirovich Putin"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": ["Valodia Putin", "Vladimir Putin"]
+          },
+          "datesOfBirth": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": ["1952-10-07"]
+          },
+          "placesOfBirth": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": ["Leningrad, USSR"]
+          },
+          "citizenships": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": ["Russia"]
+          },
+          "passports": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": ["Diplomatic Passport 123456"]
+          },
+          "addresses": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "street": { "type": "string" },
+                "city": { "type": "string" },
+                "country": { "type": "string" },
+                "fullAddress": { "type": "string" }
+              }
+            }
+          },
+          "sanctionReason": {
+            "type": "string",
+            "example": "Involvement in destabilizing Ukraine"
+          },
+          "legalBasis": {
+            "type": "string",
+            "example": "Regulation (EU) No 269/2014"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  }
+}

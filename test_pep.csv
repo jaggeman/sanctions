@@ -1,0 +1,3 @@
+id;name;aliases;type;source;datesOfBirth;citizenships;passports;fullAddress;reason
+1;Lars Gunnar Karlsson;Gunnar Karlsson;individual;PEP;1965-04-12;Sweden;Passport 998877;Storgatan 12, Stockholm, Sweden;Riksdagsledamot
+2;AB Skurk & Co;Skurkar AB;entity;CUSTOM;;;;Fuskargatan 5, Göteborg, Sweden;Företag under utredning
