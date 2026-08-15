@@ -3,6 +3,12 @@ import request from 'supertest';
 
 vi.mock('../../src/shared/firebase', () => ({ db: { collection: vi.fn() } }));
 vi.mock('../../src/importer', () => ({ runImport: vi.fn(async () => ({ success: true, importedCounts: {} })) }));
+// This file tests auth gating, not search behaviour (that's api-search.test.ts) —
+// stub runSearch directly rather than giving the bare `db` mock above a real
+// Firestore-shaped implementation it doesn't otherwise need.
+vi.mock('../../src/search', () => ({
+  runSearch: vi.fn(async () => ({ results: [], totalMatches: 0, truncated: false })),
+}));
 
 const sendOtpEmail = vi.fn(async () => {});
 vi.mock('../../src/auth/mailer', () => ({ sendOtpEmail: (...args: any[]) => sendOtpEmail(...args) }));
