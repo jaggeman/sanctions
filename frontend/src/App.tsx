@@ -29,6 +29,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Brightness7Icon from '@mui/icons-material/Brightness7';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import InfoIcon from '@mui/icons-material/Info';
 import ApiTokensTab from './ApiTokensTab';
 import LogoutIcon from '@mui/icons-material/Logout';
 import Login from './components/Login';
@@ -223,6 +224,7 @@ function App() {
             <Tab label="Upload Lists" />
             <Tab label="Official EU Lists" />
             <Tab label="API Tokens" />
+            <Tab label="Help & Manual" />
           </Tabs>
         </Box>
 
@@ -450,6 +452,62 @@ function App() {
         )}
 
         {tabValue === 3 && <ApiTokensTab />}
+
+        {tabValue === 4 && (
+          <Box>
+            <Typography variant="h5" gutterBottom sx={{ mb: 3 }}>
+              User Manual & Help
+            </Typography>
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 3 }}>
+              
+              <Card sx={{ height: '100%' }}>
+                <CardContent>
+                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                    <SearchIcon color="primary" sx={{ mr: 1.5, fontSize: 32 }} />
+                    <Typography variant="h6">How to Search</Typography>
+                  </Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    The <strong>Search</strong> tab allows you to query the entire unified sanctions database. You can search by entering an individual's name, an entity name, a passport number, or an ID number.
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    The results will display the primary name along with any known aliases. If available, dates of birth are also shown. Each card uses colored chips to indicate which official list the entity was sourced from (e.g., EU, UN, US OFAC) and their classification (e.g., PERSON or ENTITY).
+                  </Typography>
+                </CardContent>
+              </Card>
+
+              <Card sx={{ height: '100%' }}>
+                <CardContent>
+                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                    <CloudUploadIcon color="primary" sx={{ mr: 1.5, fontSize: 32 }} />
+                    <Typography variant="h6">Uploading Lists</Typography>
+                  </Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    The <strong>Upload Lists</strong> tab enables you to manually synchronize new sanctions files into the system database. 
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Currently supported formats include structured <strong>CSV</strong> files and <strong>XML</strong> format lists (specifically parsing the EU, UN, and US standard schema). The processing of the files occurs automatically in the background. Note that large files may take a minute or two to fully parse and index.
+                  </Typography>
+                </CardContent>
+              </Card>
+
+              <Card sx={{ height: '100%' }}>
+                <CardContent>
+                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                    <InfoIcon color="primary" sx={{ mr: 1.5, fontSize: 32 }} />
+                    <Typography variant="h6">Official Sources</Typography>
+                  </Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    While this tool centralizes information, you should always consult the original sources when making critical decisions.
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    The <strong>Official EU Lists</strong> tab provides direct links to the EU Sanctions Map and the EU's Open Data Portal where you can download the consolidated financial sanctions datasets directly.
+                  </Typography>
+                </CardContent>
+              </Card>
+
+            </Box>
+          </Box>
+        )}
       </Container>
     </ThemeProvider>
   );
