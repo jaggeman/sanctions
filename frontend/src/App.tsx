@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   ThemeProvider,
   createTheme,
@@ -16,31 +16,36 @@ import {
   Button,
   Chip,
   Paper,
-  CircularProgress
+  CircularProgress,
+  IconButton
 } from '@mui/material';
+import type { PaletteMode } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import SearchIcon from '@mui/icons-material/Search';
+import Brightness4Icon from '@mui/icons-material/Brightness4';
+import Brightness7Icon from '@mui/icons-material/Brightness7';
 
-// Create a modern Dark Mode Material Design theme
-const darkTheme = createTheme({
+// Function to generate theme based on mode
+const getTheme = (mode: PaletteMode) => createTheme({
   palette: {
-    mode: 'dark',
-    primary: {
-      main: '#90caf9', // Modern blue accent
-    },
-    secondary: {
-      main: '#f48fb1',
-    },
-    background: {
-      default: '#0a1929', // Deep dark blue background
-      paper: '#001e3c',   // Slightly lighter blue for cards
-    },
+    mode,
+    ...(mode === 'dark'
+      ? {
+          // Dark Mode Palette
+          primary: { main: '#90caf9' },
+          secondary: { main: '#f48fb1' },
+          background: { default: '#0a1929', paper: '#001e3c' },
+        }
+      : {
+          // Light Mode Palette
+          primary: { main: '#1976d2' },
+          secondary: { main: '#9c27b0' },
+          background: { default: '#f5f7fa', paper: '#ffffff' },
+        }),
   },
   typography: {
     fontFamily: '"Inter", "Roboto", "Helvetica", "Arial", sans-serif',
-    h5: {
-      fontWeight: 600,
-    },
+    h5: { fontWeight: 600 },
   },
   shape: {
     borderRadius: 12,
@@ -58,7 +63,9 @@ const darkTheme = createTheme({
       styleOverrides: {
         root: {
           backgroundImage: 'none',
-          boxShadow: '0 4px 20px 0 rgba(0,0,0,0.4)',
+          boxShadow: mode === 'dark' 
+            ? '0 4px 20px 0 rgba(0,0,0,0.4)' 
+            : '0 4px 20px 0 rgba(0,0,0,0.05)',
         },
       },
     },
@@ -66,6 +73,29 @@ const darkTheme = createTheme({
 });
 
 function App() {
+  // Theme State
+  const [mode, setMode] = useState<PaletteMode>('dark');
+  
+  // Load saved theme preference on mount
+  useEffect(() => {
+    const savedMode = localStorage.getItem('themeMode') as PaletteMode;
+    if (savedMode) {
+      setMode(savedMode);
+    }
+  }, []);
+
+  const toggleColorMode = () => {
+    setMode((prevMode) => {
+      const newMode = prevMode === 'light' ? 'dark' : 'light';
+      localStorage.setItem('themeMode', newMode);
+      return newMode;
+    });
+  };
+
+  // Generate theme dynamically
+  const theme = useMemo(() => getTheme(mode), [mode]);
+
+  // App State
   const [tabValue, setTabValue] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [results, setResults] = useState<any[]>([]);
@@ -116,13 +146,16 @@ function App() {
   };
 
   return (
-    <ThemeProvider theme={darkTheme}>
+    <ThemeProvider theme={theme}>
       <CssBaseline />
       <AppBar position="static" elevation={0} sx={{ background: 'transparent', borderBottom: 1, borderColor: 'divider' }}>
         <Toolbar>
           <Typography variant="h6" component="div" sx={{ flexGrow: 1, fontWeight: 'bold', color: 'primary.main' }}>
             Sanctions Intelligence
           </Typography>
+          <IconButton sx={{ ml: 1 }} onClick={toggleColorMode} color="inherit">
+            {mode === 'dark' ? <Brightness7Icon /> : <Brightness4Icon />}
+          </IconButton>
         </Toolbar>
       </AppBar>
 
@@ -222,10 +255,10 @@ function App() {
                     cursor: 'pointer',
                     borderStyle: 'dashed',
                     borderColor: 'primary.main',
-                    backgroundColor: 'rgba(144, 202, 249, 0.04)',
+                    backgroundColor: mode === 'dark' ? 'rgba(144, 202, 249, 0.04)' : 'rgba(25, 118, 210, 0.04)',
                     transition: 'all 0.2s',
                     '&:hover': {
-                      backgroundColor: 'rgba(144, 202, 249, 0.08)'
+                      backgroundColor: mode === 'dark' ? 'rgba(144, 202, 249, 0.08)' : 'rgba(25, 118, 210, 0.08)'
                     }
                   }}
                   component="label"
