@@ -27,7 +27,7 @@ vi.mock('../../src/importer/uploader', async (importOriginal) => {
 });
 
 import { computeContentHash } from '../../src/importer/uploader';
-import { computeDiff, runDiffForSource, DelistGuardError } from '../../src/importer/diff';
+import { computeDiff, runDiffForSource, DelistGuardError, startDiffSession, SAMPLE_LIMIT } from '../../src/importer/diff';
 
 function makeRecord(overrides: Partial<SanctionRecord> = {}): SanctionRecord {
   return {
@@ -43,10 +43,13 @@ function makeRecord(overrides: Partial<SanctionRecord> = {}): SanctionRecord {
   };
 }
 
-function mockExistingSnapshot(docs: Array<{ id: string; status?: string; contentHash?: string }>) {
+function mockExistingSnapshot(docs: Array<{ id: string; status?: string; contentHash?: string; primaryName?: string }>) {
   mockGet.mockResolvedValueOnce({
     forEach: (cb: (doc: any) => void) => {
-      docs.forEach((d) => cb({ id: d.id, data: () => ({ status: d.status, contentHash: d.contentHash }) }));
+      docs.forEach((d) => cb({
+        id: d.id,
+        data: () => ({ status: d.status, contentHash: d.contentHash, primaryName: d.primaryName }),
+      }));
     },
   });
 }
@@ -250,5 +253,100 @@ describe('runDiffForSource', () => {
 
     expect(diff.guardTripped).toBe(true);
     expect(mockDelistRecords).toHaveBeenCalledWith(active.map((a) => a.id), undefined);
+  });
+});
+
+/**
+ * issue #12's own acceptance criterion: "Diff preview: counts for added /
+ * updated / unchanged / delisted, plus a sample of actual records in each
+ * bucket. Names, not just numbers." Counts already existed; samples did not.
+ * Bounded to SAMPLE_LIMIT per bucket so this can never reintroduce the
+ * whole-source-in-memory problem the streaming design (#5/#8) exists to
+ * avoid — a diff over tens of thousands of records must still only ever
+ * hold a handful of sample names, not every record.
+ */
+describe('computeDiff — sample records per bucket (issue #12)', () => {
+  it('samples an added record with its id and primaryName', async () => {
+    mockExistingSnapshot([]);
+    const record = makeRecord({ id: 'EU-new', primaryName: 'Newly Added Person' });
+
+    const diff = await computeDiff('EU', [record], { mode: 'append' });
+
+    expect(diff.samples.added).toEqual([{ id: 'EU-new', primaryName: 'Newly Added Person' }]);
+    expect(diff.samples.updated).toEqual([]);
+    expect(diff.samples.unchanged).toEqual([]);
+    expect(diff.samples.delisted).toEqual([]);
+  });
+
+  it('samples an updated record', async () => {
+    const record = makeRecord({ id: 'EU-1', primaryName: 'Jane Changed' });
+    mockExistingSnapshot([{ id: 'EU-1', status: 'active', contentHash: 'stale-hash', primaryName: 'Jane Old' }]);
+
+    const diff = await computeDiff('EU', [record], { mode: 'append' });
+
+    expect(diff.samples.updated).toEqual([{ id: 'EU-1', primaryName: 'Jane Changed' }]);
+  });
+
+  it('samples an unchanged record even though it is never written', async () => {
+    const record = makeRecord({ id: 'EU-1', primaryName: 'Same Person' });
+    mockExistingSnapshot([{ id: 'EU-1', status: 'active', contentHash: computeContentHash(record), primaryName: 'Same Person' }]);
+
+    const diff = await computeDiff('EU', [record], { mode: 'append' });
+
+    expect(diff.samples.unchanged).toEqual([{ id: 'EU-1', primaryName: 'Same Person' }]);
+  });
+
+  it('samples a to-be-delisted record using its existing (pre-fetched) primaryName', async () => {
+    mockExistingSnapshot([{ id: 'EU-2', status: 'active', contentHash: 'h2', primaryName: 'About To Be Delisted' }]);
+
+    const diff = await computeDiff('EU', [], { mode: 'sync' });
+
+    expect(diff.samples.delisted).toEqual([{ id: 'EU-2', primaryName: 'About To Be Delisted' }]);
+  });
+
+  it(`caps each bucket's sample at SAMPLE_LIMIT (${SAMPLE_LIMIT}) regardless of how many actually match`, async () => {
+    mockExistingSnapshot([]);
+    const records = Array.from({ length: SAMPLE_LIMIT + 10 }, (_, i) =>
+      makeRecord({ id: `EU-${i}`, primaryName: `Person ${i}` }));
+
+    const diff = await computeDiff('EU', records, { mode: 'append' });
+
+    expect(diff.counts.added).toBe(SAMPLE_LIMIT + 10); // the real count is uncapped
+    expect(diff.samples.added).toHaveLength(SAMPLE_LIMIT); // only the sample is capped
+  });
+});
+
+describe('startDiffSession — sample records per bucket, streaming path (issue #12)', () => {
+  it('samples added/updated/unchanged across multiple addChunk calls, and delisted in finish()', async () => {
+    const unchangedRecord = makeRecord({ id: 'EU-1', primaryName: 'Unchanged Person' });
+    // computeContentHash depends on record content — align the mocked hash with it.
+    mockExistingSnapshot([
+      { id: 'EU-1', status: 'active', contentHash: computeContentHash(unchangedRecord), primaryName: 'Unchanged Person' },
+      { id: 'EU-2', status: 'active', contentHash: 'stale-hash', primaryName: 'Old Name' },
+      { id: 'EU-3', status: 'active', contentHash: 'h3', primaryName: 'Will Be Delisted' },
+    ]);
+
+    const session = await startDiffSession('EU', { mode: 'sync', force: true });
+    await session.addChunk([unchangedRecord]);
+    await session.addChunk([
+      makeRecord({ id: 'EU-2', primaryName: 'New Name' }),
+      makeRecord({ id: 'EU-new', primaryName: 'Fresh Person' }),
+    ]);
+    const result = await session.finish();
+
+    expect(result.samples.unchanged).toEqual([{ id: 'EU-1', primaryName: 'Unchanged Person' }]);
+    expect(result.samples.updated).toEqual([{ id: 'EU-2', primaryName: 'New Name' }]);
+    expect(result.samples.added).toEqual([{ id: 'EU-new', primaryName: 'Fresh Person' }]);
+    expect(result.samples.delisted).toEqual([{ id: 'EU-3', primaryName: 'Will Be Delisted' }]);
+  });
+
+  it('abort() reports no samples at all — nothing should be presented as a preview of a failed run', async () => {
+    mockExistingSnapshot([]);
+    const session = await startDiffSession('EU', { mode: 'append' });
+    await session.addChunk([makeRecord({ id: 'EU-1', primaryName: 'Partial' })]);
+
+    const result = session.abort();
+
+    expect(result.samples).toEqual({ added: [], updated: [], unchanged: [], delisted: [] });
   });
 });

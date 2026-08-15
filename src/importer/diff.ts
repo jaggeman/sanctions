@@ -14,6 +14,32 @@ export const DEFAULT_IMPORT_MODE: ImportMode = 'append';
 // identical to the diff engine as "the source delisted everyone" (CLAUDE.md §5).
 const DELIST_GUARD_THRESHOLD = 0.2;
 
+// issue #12: the diff preview must show "a sample of actual records in each
+// bucket. Names, not just numbers" — capped so a diff over tens of thousands
+// of records still only ever holds a handful of names in memory, never every
+// record (the same reason the streaming design in this file exists at all).
+export const SAMPLE_LIMIT = 5;
+
+export interface SampleRecord {
+  id: string;
+  primaryName: string;
+}
+
+export interface DiffSamples {
+  added: SampleRecord[];
+  updated: SampleRecord[];
+  unchanged: SampleRecord[];
+  delisted: SampleRecord[];
+}
+
+function emptySamples(): DiffSamples {
+  return { added: [], updated: [], unchanged: [], delisted: [] };
+}
+
+function pushSample(bucket: SampleRecord[], record: { id: string; primaryName: string }): void {
+  if (bucket.length < SAMPLE_LIMIT) bucket.push({ id: record.id, primaryName: record.primaryName });
+}
+
 export interface DiffCounts {
   parsed: number;
   added: number;
@@ -26,6 +52,7 @@ export interface DiffCounts {
 export interface DiffResult {
   source: SanctionSource;
   counts: DiffCounts;
+  samples: DiffSamples;
   // Only the added/updated/relisted records — never the truly-unchanged
   // ones. uploadRecords() writes (and bumps updatedAt on) every record it's
   // given, so passing the full incoming set here would defeat the "zero
@@ -64,21 +91,27 @@ export class DelistGuardError extends Error {
 interface ExistingSummary {
   status?: string;
   contentHash?: string;
+  // Only for the delisted sample (issue #12) — a to-be-delisted record's
+  // primaryName isn't otherwise available, since it's identified purely by
+  // "id present in `existing` but absent from the incoming file."
+  primaryName?: string;
 }
 
 async function fetchExistingSummaries(source: SanctionSource): Promise<Map<string, ExistingSummary>> {
-  // Only id + status + contentHash — fetching whole documents for a ~6k-record
-  // source reintroduces the memory problem the streaming-import issue fixed.
+  // id + status + contentHash + primaryName only — fetching whole documents
+  // for a ~6k-record source reintroduces the memory problem the
+  // streaming-import issue fixed. primaryName is one extra scalar field per
+  // record, not a materially different memory cost.
   const snapshot = await db
     .collection('sanctions')
     .where('source', '==', source)
-    .select('status', 'contentHash')
+    .select('status', 'contentHash', 'primaryName')
     .get();
 
   const map = new Map<string, ExistingSummary>();
   snapshot.forEach((doc: any) => {
     const data = doc.data();
-    map.set(doc.id, { status: data.status, contentHash: data.contentHash });
+    map.set(doc.id, { status: data.status, contentHash: data.contentHash, primaryName: data.primaryName });
   });
   return map;
 }
@@ -101,6 +134,7 @@ export async function computeDiff(
   let unchanged = 0;
   const incomingIds = new Set<string>();
   const recordsToWrite: SanctionRecord[] = [];
+  const samples = emptySamples();
 
   for (const record of records) {
     incomingIds.add(record.id);
@@ -109,17 +143,21 @@ export async function computeDiff(
     if (!prior) {
       added++;
       recordsToWrite.push(record);
+      pushSample(samples.added, record);
     } else if (prior.status === 'delisted') {
       // A relist is always a real state transition worth surfacing, even if
       // the content itself is byte-identical to before it was delisted —
       // mirrors uploadRecords' own 'relisted' classification.
       updated++;
       recordsToWrite.push(record);
+      pushSample(samples.updated, record);
     } else if (prior.contentHash !== computeContentHash(record)) {
       updated++;
       recordsToWrite.push(record);
+      pushSample(samples.updated, record);
     } else {
       unchanged++;
+      pushSample(samples.unchanged, record);
     }
   }
 
@@ -131,6 +169,9 @@ export async function computeDiff(
     toDelistIds = [...existing.entries()]
       .filter(([id, e]) => e.status !== 'delisted' && !incomingIds.has(id))
       .map(([id]) => id);
+    for (const id of toDelistIds) {
+      pushSample(samples.delisted, { id, primaryName: existing.get(id)?.primaryName || '' });
+    }
   }
 
   const guardTripped = activeCount > 0 && toDelistIds.length / activeCount > DELIST_GUARD_THRESHOLD;
@@ -145,6 +186,7 @@ export async function computeDiff(
       delisted: toDelistIds.length,
       skipped: 0,
     },
+    samples,
     recordsToWrite,
     toDelistIds,
     activeCount,
@@ -232,12 +274,14 @@ export async function startDiffSession(
   let skipped = 0;
   let parsed = 0;
   const incomingIds = new Set<string>();
+  const samples = emptySamples();
 
   const activeCount = [...existing.values()].filter((e) => e.status !== 'delisted').length;
 
   const summarise = (toDelistIds: string[], guardTripped: boolean): StreamedDiffResult => ({
     source,
     counts: { parsed, added, updated, unchanged, delisted: toDelistIds.length, skipped },
+    samples,
     toDelistIds,
     activeCount,
     guardTripped,
@@ -266,16 +310,20 @@ export async function startDiffSession(
         if (!prior) {
           added++;
           toWrite.push(record);
+          pushSample(samples.added, record);
         } else if (prior.status === 'delisted') {
           // A relist is a real state transition even when the content is
           // byte-identical to what was delisted.
           updated++;
           toWrite.push(record);
+          pushSample(samples.updated, record);
         } else if (prior.contentHash !== computeContentHash(record)) {
           updated++;
           toWrite.push(record);
+          pushSample(samples.updated, record);
         } else {
           unchanged++;
+          pushSample(samples.unchanged, record);
         }
       }
 
@@ -290,6 +338,9 @@ export async function startDiffSession(
         toDelistIds = [...existing.entries()]
           .filter(([id, e]) => e.status !== 'delisted' && !incomingIds.has(id))
           .map(([id]) => id);
+        for (const id of toDelistIds) {
+          pushSample(samples.delisted, { id, primaryName: existing.get(id)?.primaryName || '' });
+        }
       }
 
       const guardTripped =
@@ -309,8 +360,11 @@ export async function startDiffSession(
 
     abort(): StreamedDiffResult {
       // The producer failed, so "absent from the file" cannot be distinguished
-      // from "never reached". Delisting nothing is the only safe answer.
-      return summarise([], false);
+      // from "never reached". Delisting nothing is the only safe answer —
+      // and for the same reason, no partial sample is trustworthy either:
+      // override the accumulated samples rather than reusing summarise()'s,
+      // so a failed run never renders as a preview of anything.
+      return { ...summarise([], false), samples: emptySamples() };
     },
   };
 }
