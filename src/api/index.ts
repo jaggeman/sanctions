@@ -87,8 +87,12 @@ app.post('/api/auth/request-otp', async (req, res): Promise<any> => {
     return res.json({ ok: true });
   }
 
+  const code = createOtp(email);
+  if (!code) {
+    return res.status(429).json({ error: 'A code was already sent recently. Please wait before requesting another.' });
+  }
+
   try {
-    const code = createOtp(email);
     await sendOtpEmail(email, code);
     res.json({ ok: true });
   } catch (error: any) {
@@ -303,5 +307,11 @@ if (require.main === module) {
   app.listen(PORT, () => console.log(`API listening on http://localhost:${PORT}`));
 }
 
-// Export Express App as a Firebase Cloud Function
-export const api = functions.https.onRequest(app);
+// Export Express App as a Firebase Cloud Function.
+// maxInstances is pinned to 1 (issue #16): OTP codes and sessions are kept
+// in an in-memory Map (src/auth/otpStore.ts, src/auth/session.ts), which
+// does not survive across multiple concurrent Cloud Functions instances —
+// a request-otp handled by instance A followed by verify-otp landing on
+// instance B would fail. This is the documented interim mitigation until
+// that storage moves to Firestore or another shared store.
+export const api = functions.https.onRequest({ maxInstances: 1 }, app);

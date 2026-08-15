@@ -1,10 +1,31 @@
 import { XMLParser } from 'fast-xml-parser';
 import * as fs from 'fs-extra';
-import { SanctionRecord, Address } from '../../shared/types';
+import { SanctionRecord, Address, NameAlias, BirthDate } from '../../shared/types';
 
 function toArray(val: any): any[] {
   if (val === undefined || val === null) return [];
   return Array.isArray(val) ? val : [val];
+}
+
+/**
+ * Issue #6: this source has no `strong`/language/precision markers the way
+ * the EU FSD export does — only a primary name and a flat alias list, and
+ * either a full date or a bare year. Structured `names`/`birthDates` are
+ * derived straight from what's already computed below rather than invented;
+ * the richer per-alias/per-date fields (language, circa, year ranges) simply
+ * don't exist in this format, so they're left undefined, not guessed at.
+ */
+function deriveNames(primaryName: string, aliases: string[]): NameAlias[] {
+  const names: NameAlias[] = [{ wholeName: primaryName, strong: true }];
+  for (const alias of aliases) names.push({ wholeName: alias, strong: false });
+  return names;
+}
+
+function deriveBirthDates(datesOfBirth: string[]): BirthDate[] {
+  return datesOfBirth.map((raw) => {
+    const year = /^\d{4}$/.test(raw) ? parseInt(raw, 10) : undefined;
+    return { raw, year };
+  });
 }
 
 export async function parseUNList(filePath: string): Promise<SanctionRecord[]> {
@@ -115,6 +136,7 @@ export async function parseUNList(filePath: string): Promise<SanctionRecord[]> {
     }
 
     const sanctionReason = String(ind.COMMENTS1 || '').trim();
+    const birthDates = deriveBirthDates(datesOfBirth);
 
     records.push({
       id: `UN-${dataId}`,
@@ -123,7 +145,9 @@ export async function parseUNList(filePath: string): Promise<SanctionRecord[]> {
       primaryName,
       aliases,
       searchNames: [],
+      names: deriveNames(primaryName, aliases),
       datesOfBirth: datesOfBirth.length > 0 ? datesOfBirth : undefined,
+      birthDates: birthDates.length > 0 ? birthDates : undefined,
       placesOfBirth: placesOfBirth.length > 0 ? placesOfBirth : undefined,
       citizenships: citizenships.length > 0 ? citizenships : undefined,
       passports: passports.length > 0 ? passports : undefined,
@@ -181,6 +205,7 @@ export async function parseUNList(filePath: string): Promise<SanctionRecord[]> {
       primaryName,
       aliases,
       searchNames: [],
+      names: deriveNames(primaryName, aliases),
       addresses: addresses.length > 0 ? addresses : undefined,
       sanctionReason: sanctionReason || undefined,
       createdAt: new Date().toISOString(),

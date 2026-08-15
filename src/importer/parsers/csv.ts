@@ -1,5 +1,19 @@
 import * as fs from 'fs-extra';
-import { SanctionRecord, SanctionType, SanctionSource, Address } from '../../shared/types';
+import { SanctionRecord, SanctionType, SanctionSource, Address, NameAlias, BirthDate } from '../../shared/types';
+
+/** Issue #6: CSV rows have no strong/language/precision markers — derived from the already-parsed row fields. */
+function deriveNames(primaryName: string, aliases: string[]): NameAlias[] {
+  const names: NameAlias[] = [{ wholeName: primaryName, strong: true }];
+  for (const alias of aliases) names.push({ wholeName: alias, strong: false });
+  return names;
+}
+
+function deriveBirthDates(datesOfBirth: string[]): BirthDate[] {
+  return datesOfBirth.map((raw) => {
+    const year = /^\d{4}$/.test(raw) ? parseInt(raw, 10) : undefined;
+    return { raw, year };
+  });
+}
 
 /**
  * A basic CSV line parser that handles double quotes and escapes.
@@ -106,6 +120,8 @@ export async function parseCSVList(
     const sanctionReason = row.reason || row.role || row.description || row.position || undefined;
     const legalBasis = row.legalbasis || row.law || undefined;
 
+    const birthDates = deriveBirthDates(datesOfBirth);
+
     records.push({
       id: `${source}-${rawId}`,
       source,
@@ -113,7 +129,9 @@ export async function parseCSVList(
       primaryName: name,
       aliases,
       searchNames: [],
+      names: deriveNames(name, aliases),
       datesOfBirth: datesOfBirth.length > 0 ? datesOfBirth : undefined,
+      birthDates: birthDates.length > 0 ? birthDates : undefined,
       citizenships: citizenships.length > 0 ? citizenships : undefined,
       passports: passports.length > 0 ? passports : undefined,
       addresses: addresses.length > 0 ? addresses : undefined,

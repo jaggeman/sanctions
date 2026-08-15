@@ -43,6 +43,15 @@ describe('POST /api/auth/request-otp', () => {
     expect(res.status).toBe(200);
     expect(sendOtpEmail).not.toHaveBeenCalled();
   });
+
+  it('rate limits a repeated request for the same email within the cooldown window (issue #16)', async () => {
+    const first = await request(api).post('/api/auth/request-otp').send({ email: 'user@example.com' });
+    expect(first.status).toBe(200);
+
+    const second = await request(api).post('/api/auth/request-otp').send({ email: 'user@example.com' });
+    expect(second.status).toBe(429);
+    expect(sendOtpEmail).toHaveBeenCalledTimes(1); // no second email sent
+  });
 });
 
 describe('POST /api/auth/verify-otp', () => {
