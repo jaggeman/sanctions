@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import type { SanctionRecord } from '../../src/shared/types';
-import { createSession } from '../../src/auth/session';
-import { SESSION_COOKIE_NAME } from '../../src/auth/middleware';
 import { createFakeDb } from './helpers/fakeFirestore';
 
 // GET /api/sanctions/:id still talks to Firestore directly, so it keeps a
@@ -65,6 +63,11 @@ function record(overrides: Partial<SanctionRecord> = {}): SanctionRecord {
 
 // api under test — imported after the mocks above so it picks up the fakes.
 const { api } = await import('../../src/api');
+// Dynamic, not static: session.ts transitively imports src/shared/firebase,
+// and a static import here would be hoisted above the `fakeDb`/`authFakeDb`
+// initialization above, throwing "Cannot access 'fakeDb' before initialization".
+const { createSession } = await import('../../src/auth/session');
+const { SESSION_COOKIE_NAME } = await import('../../src/auth/middleware');
 
 // All routes below require an authenticated session (see src/auth/middleware.ts);
 // log in once via the hardcoded dev test account and reuse the session cookie.

@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
-import { createSession } from '../../src/auth/session';
-import { SESSION_COOKIE_NAME } from '../../src/auth/middleware';
 import { createFakeDb } from './helpers/fakeFirestore';
 
 const processUpload = vi.fn();
@@ -27,6 +25,11 @@ vi.mock('fs-extra', async () => {
 });
 
 const { api } = await import('../../src/api');
+// Dynamic, not static: session.ts transitively imports src/shared/firebase,
+// and a static import here would be hoisted above the `authFakeDb`
+// initialization above, throwing "Cannot access 'fakeDb' before initialization".
+const { createSession } = await import('../../src/auth/session');
+const { SESSION_COOKIE_NAME } = await import('../../src/auth/middleware');
 const agent = request.agent(api);
 
 beforeEach(async () => {
