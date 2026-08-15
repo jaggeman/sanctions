@@ -177,3 +177,49 @@ describe('firestore.rules — overrides/{entityId} collection (issue #10)', () =
     });
   });
 });
+
+// Issue #7 acceptance criterion: "Rules tests: a client cannot write to
+// `imports` directly" — already covered by the blanket deny-all backstop
+// above, but named explicitly in the acceptance criteria, so it gets its own
+// proof rather than relying solely on the generic "anything_else" case.
+describe('firestore.rules — imports/{importId} collection (issue #7)', () => {
+  const SAMPLE_IMPORT = {
+    importId: 'abc123',
+    filename: 'test.csv',
+    sha256: 'abc123',
+    sizeBytes: 1024,
+    storagePath: 'imports/abc123/test.csv',
+    source: 'PEP',
+    format: 'csv',
+    fileGenerationDate: null,
+    uploadedBy: 'user@example.com',
+    uploadedAt: '2026-08-15T00:00:00.000Z',
+    status: 'applied',
+  };
+
+  it('denies an unauthenticated client writing an import record', async () => {
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('imports').doc('abc123').set(SAMPLE_IMPORT));
+  });
+
+  it('denies an unauthenticated client reading an import record', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().collection('imports').doc('abc123').set(SAMPLE_IMPORT);
+    });
+
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('imports').doc('abc123').get());
+  });
+
+  it('denies even an authenticated client — no token is privileged without a real auth system', async () => {
+    const authedDb = testEnv.authenticatedContext('some-user-id').firestore();
+    await assertFails(authedDb.collection('imports').doc('abc123').set(SAMPLE_IMPORT));
+  });
+
+  it('still allows the trusted server path (Admin SDK) to read and write imports freely', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await assertSucceeds(ctx.firestore().collection('imports').doc('abc123').set(SAMPLE_IMPORT));
+      await assertSucceeds(ctx.firestore().collection('imports').doc('abc123').get());
+    });
+  });
+});

@@ -9,8 +9,10 @@ import multer from 'multer';
 import * as swaggerUi from 'swagger-ui-express';
 import { db } from '../shared/firebase';
 import { runImport } from '../importer';
+import { processUpload } from '../importer/uploadPipeline';
 import { tokensRouter } from './routes/tokens';
 import { runSearch } from '../search';
+import { SanctionSource } from '../shared/types';
 import { createOtp, verifyOtp } from '../auth/otpStore';
 import { sendOtpEmail } from '../auth/mailer';
 import { createSession, destroySession } from '../auth/session';
@@ -18,7 +20,6 @@ import { requireAuth, SESSION_COOKIE_NAME } from '../auth/middleware';
 import { TEST_LOGIN_EMAIL, TEST_LOGIN_CODE, isTestLoginEnabled, isTestLoginEmail } from '../auth/testAccount';
 import { requestLogger } from './middleware/requestLogger';
 import { errorLogger } from './middleware/errorLogger';
-import { SanctionSource } from '../shared/types';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -254,46 +255,63 @@ app.post('/api/import', async (req, res): Promise<any> => {
 
 /**
  * POST /api/upload
- * Upload a CSV or XML file for processing
+ * Upload a sanctions list file. Hashes the content, sniffs its format,
+ * rejects an exact duplicate of an already-applied import, records the
+ * attempt as a durable `imports` doc, persists the raw bytes to Cloud
+ * Storage, then parses and uploads it (issue #7). Runs synchronously (not
+ * fire-and-forget like the old handler) so the caller gets a real outcome —
+ * files here are small enough, and the diff engine that will eventually make
+ * this properly async again is issue #8.
  */
 app.post('/api/upload', uploadSingleFile('file'), async (req, res): Promise<any> => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
 
-  const { source } = req.body; // e.g. "PEP", "EU", "UN"
-
+  // Client-supplied field, used to build the imports doc and (for
+  // generic-CSV uploads only) the fallback source tag — required and
+  // validated against the known enum rather than letting it flow
+  // unvalidated into Firestore, per CLAUDE.md §6.
+  const { source } = req.body;
   if (!ALLOWED_SOURCES.has(source)) {
-    await fs.remove(req.file.path).catch(e => console.error('Failed to cleanup temp file', e));
-    return res.status(400).json({
-      error: `"source" must be one of ${[...ALLOWED_SOURCES].join(', ')}.`,
-    });
+    await fs.remove(req.file.path).catch((e) => console.error('Failed to cleanup temp file', e));
+    return res.status(400).json({ error: `"source" must be one of ${[...ALLOWED_SOURCES].join(', ')}.` });
   }
 
   const uploadedPath = req.file.path;
+  const uploadedBy = (req as any).userEmail || null;
 
-  console.log(`Received uploaded file for source ${source}: ${uploadedPath}`);
-
-  runImport({
-    sources: [source],
-    csvPath: uploadedPath,
-    csvSource: source,
-    csvSeparator: ';',
-  })
-    .then((result) => {
-      console.log('Upload Background Import finished:', result);
-    })
-    .catch((err) => {
-      console.error('Upload Background Import failed:', err);
-    })
-    .finally(() => {
-      fs.remove(uploadedPath).catch(e => console.error('Failed to cleanup temp file', e));
+  try {
+    const result = await processUpload({
+      filePath: uploadedPath,
+      originalFilename: req.file.originalname,
+      sourceHint: source as SanctionSource,
+      uploadedBy,
     });
 
-  res.status(202).json({
-    status: 'upload_received',
-    message: 'File received and import process started.',
-  });
+    switch (result.outcome) {
+      case 'applied':
+        return res.status(200).json({ status: 'applied', importId: result.importId, counts: result.counts });
+      case 'rejected':
+        return res.status(409).json({
+          error: `Identical file already imported as import #${result.duplicateOfImportId}.`,
+          duplicateOfImportId: result.duplicateOfImportId,
+        });
+      case 'in_flight':
+        return res.status(409).json({ error: 'An identical file is already being processed. Try again shortly.' });
+      case 'unsupported_format':
+        return res.status(422).json({
+          error: `Format "${result.format}" was detected but is not yet supported for parsing.`,
+        });
+      case 'failed':
+        return res.status(500).json({ error: result.error });
+    }
+  } catch (error: any) {
+    console.error('Upload processing error:', error);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
+  } finally {
+    fs.remove(uploadedPath).catch((e) => console.error('Failed to cleanup temp file', e));
+  }
 });
 
 // Catch-all error logger — must be registered after every route/middleware

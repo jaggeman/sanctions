@@ -102,6 +102,34 @@ export interface Decision {
   notes?: string;
 }
 
+export type ImportStatus = 'pending' | 'parsing' | 'applied' | 'failed' | 'rejected';
+export type ImportFormat = 'eu-xml-1.1' | 'eu-csv-1.1' | 'eu-csv-1.0' | 'un-xml' | 'us-xml' | 'csv';
+
+// Audit trail for POST /api/upload (issue #7). Document ID == sha256, which
+// is the concurrency-safety mechanism: Firestore's doc.create() fails
+// atomically if the ID already exists, so two concurrent uploads of the
+// identical file can't both "win" the pending-creation race — see
+// src/importer/importRecord.ts. `status` stops at 'applied' rather than
+// including a 'diffing' state, since the reconciliation/diff engine (issue
+// #8) doesn't exist yet; this pipeline still runs the existing
+// parse-everything upload path under the hood.
+export interface ImportRecord {
+  importId: string; // == sha256
+  filename: string;
+  sha256: string;
+  sizeBytes: number;
+  storagePath: string;
+  source: SanctionSource;
+  format: ImportFormat;
+  fileGenerationDate: string | null; // parsed from the file's own content, not the upload time
+  uploadedBy: string | null; // null until issue #3's auth lands on this endpoint
+  uploadedAt: string; // ISO string
+  status: ImportStatus;
+  counts?: { parsed: number; uploaded: number };
+  duplicateOfImportId?: string; // set when status is 'rejected'
+  error?: string; // set when status is 'failed'
+}
+
 export interface SanctionRecord {
   id: string; // E.g., "EU-1234", "UN-5678", "US-SDN-9999", "PEP-SE-1234"
   source: SanctionSource;
