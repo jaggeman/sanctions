@@ -1,7 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
+import { createFakeDb } from './helpers/fakeFirestore';
 
-vi.mock('../../src/shared/firebase', () => ({ db: { collection: vi.fn() } }));
+// A real fake here (not a bare `{ collection: vi.fn() }`) because
+// src/auth/otpStore.ts and src/auth/session.ts now persist through `db`
+// (issue #63) — this suite's request-otp/verify-otp/session/logout
+// assertions depend on that round-tripping for real, not on mocked returns.
+const { db: fakeDb, reset: resetFakeDb } = createFakeDb();
+vi.mock('../../src/shared/firebase', () => ({ db: fakeDb }));
 vi.mock('../../src/importer', () => ({ runImport: vi.fn(async () => ({ success: true, importedCounts: {} })) }));
 // This file tests auth gating, not search behaviour (that's api-search.test.ts) —
 // stub runSearch directly rather than giving the bare `db` mock above a real
@@ -14,12 +20,9 @@ const sendOtpEmail = vi.fn(async () => {});
 vi.mock('../../src/auth/mailer', () => ({ sendOtpEmail: (...args: any[]) => sendOtpEmail(...args) }));
 
 const { api } = await import('../../src/api');
-const { _resetOtpStoreForTests } = await import('../../src/auth/otpStore');
-const { _resetSessionStoreForTests } = await import('../../src/auth/session');
 
 beforeEach(() => {
-  _resetOtpStoreForTests();
-  _resetSessionStoreForTests();
+  resetFakeDb();
   sendOtpEmail.mockClear();
   vi.stubEnv('NODE_ENV', 'test');
 });
@@ -136,7 +139,7 @@ describe('POST /api/auth/verify-otp', () => {
     // verify-otp does its own independent check rather than relying on
     // request-otp having refused to ever create the code.
     const { createOtp } = await import('../../src/auth/otpStore');
-    const code = createOtp('attacker@evil.com')!;
+    const code = (await createOtp('attacker@evil.com'))!;
 
     const res = await request(api).post('/api/auth/verify-otp').send({ email: 'attacker@evil.com', code });
     expect(res.status).toBe(401);

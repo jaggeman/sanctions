@@ -310,3 +310,77 @@ describe('firestore.rules — decisions/{entityId__subjectId} collection (issue 
     });
   });
 });
+
+// Issue #63: OTP codes and sessions moved from an in-memory Map to Firestore
+// so they survive a cold start/multi-instance deployment — CLAUDE.md §6
+// requires an access-rules test for every new collection in the same
+// change. Already covered by the blanket deny-all backstop above, but named
+// explicitly since these collections hold live login credentials/state, the
+// most sensitive data a client could otherwise read or forge.
+describe('firestore.rules — otpCodes/{emailHash} collection (issue #63)', () => {
+  const SAMPLE_OTP = {
+    codeHash: 'abc123',
+    expiresAt: '2026-08-15T00:10:00.000Z',
+    attempts: 0,
+    issuedAt: '2026-08-15T00:00:00.000Z',
+  };
+
+  it('denies an unauthenticated client writing an OTP entry', async () => {
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('otpCodes').doc('hash1').set(SAMPLE_OTP));
+  });
+
+  it('denies an unauthenticated client reading an OTP entry', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().collection('otpCodes').doc('hash1').set(SAMPLE_OTP);
+    });
+
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('otpCodes').doc('hash1').get());
+  });
+
+  it('denies even an authenticated client — no token is privileged without a real auth system', async () => {
+    const authedDb = testEnv.authenticatedContext('some-user-id').firestore();
+    await assertFails(authedDb.collection('otpCodes').doc('hash1').set(SAMPLE_OTP));
+  });
+
+  it('still allows the trusted server path (Admin SDK) to read and write OTP entries freely', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await assertSucceeds(ctx.firestore().collection('otpCodes').doc('hash1').set(SAMPLE_OTP));
+      await assertSucceeds(ctx.firestore().collection('otpCodes').doc('hash1').get());
+    });
+  });
+});
+
+describe('firestore.rules — sessions/{sessionId} collection (issue #63)', () => {
+  const SAMPLE_SESSION = {
+    email: 'user@example.com',
+    expiresAt: '2026-08-22T00:00:00.000Z',
+  };
+
+  it('denies an unauthenticated client writing a session', async () => {
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('sessions').doc('sid1').set(SAMPLE_SESSION));
+  });
+
+  it('denies an unauthenticated client reading a session (would otherwise let anyone forge a login)', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().collection('sessions').doc('sid1').set(SAMPLE_SESSION);
+    });
+
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('sessions').doc('sid1').get());
+  });
+
+  it('denies even an authenticated client — no token is privileged without a real auth system', async () => {
+    const authedDb = testEnv.authenticatedContext('some-user-id').firestore();
+    await assertFails(authedDb.collection('sessions').doc('sid1').set(SAMPLE_SESSION));
+  });
+
+  it('still allows the trusted server path (Admin SDK) to read and write sessions freely', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await assertSucceeds(ctx.firestore().collection('sessions').doc('sid1').set(SAMPLE_SESSION));
+      await assertSucceeds(ctx.firestore().collection('sessions').doc('sid1').get());
+    });
+  });
+});

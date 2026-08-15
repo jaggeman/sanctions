@@ -3,6 +3,7 @@ import request from 'supertest';
 import type { SanctionRecord } from '../../src/shared/types';
 import { createSession } from '../../src/auth/session';
 import { SESSION_COOKIE_NAME } from '../../src/auth/middleware';
+import { createFakeDb } from './helpers/fakeFirestore';
 
 // GET /api/sanctions/:id still talks to Firestore directly, so it keeps a
 // fake db. GET /api/search now goes through the shared src/search runSearch
@@ -12,8 +13,17 @@ let docGetResult: { exists: boolean; data?: () => any } = { exists: false };
 // Issue #35: GET /api/sanctions/:id now also fetches a matching override doc.
 let overrideDocResult: { exists: boolean; data?: () => any } = { exists: false };
 
+// Issue #63: this suite logs in through the real POST /api/auth/verify-otp
+// route (below), which now persists the session through `db` — delegate the
+// `sessions`/`otpCodes` collections to the shared fake Firestore rather than
+// hand-rolling that here too.
+const { db: authFakeDb } = createFakeDb();
+
 const fakeDb = {
   collection: vi.fn((name: string) => {
+    if (name === 'sessions' || name === 'otpCodes') {
+      return authFakeDb.collection(name);
+    }
     if (name === 'overrides') {
       return {
         doc: vi.fn((id: string) => ({
@@ -267,7 +277,7 @@ describe('POST /api/import — force:true restricted to admins (issue #105)', ()
 
   it('rejects force:true for a logged-in non-admin session with 403, without ever calling runImport', async () => {
     vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'example.com');
-    const sid = createSession('analyst@example.com');
+    const sid = await createSession('analyst@example.com');
 
     const { runImport } = await import('../../src/importer');
     (runImport as any).mockClear();

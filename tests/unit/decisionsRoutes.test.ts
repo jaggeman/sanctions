@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import cookieParser from 'cookie-parser';
+import { createFakeDb } from './helpers/fakeFirestore';
 
 const { mockSaveDecision, mockListDecisionsForEntity } = vi.hoisted(() => ({
   mockSaveDecision: vi.fn(),
@@ -13,9 +14,19 @@ vi.mock('../../src/decisions', () => ({
   listDecisionsForEntity: mockListDecisionsForEntity,
 }));
 
-import { decisionsRouter } from '../../src/api/routes/decisions';
-import { createSession, _resetSessionStoreForTests } from '../../src/auth/session';
-import { SESSION_COOKIE_NAME } from '../../src/auth/middleware';
+// src/auth/session.ts now persists sessions through `db` (issue #63), so
+// this suite's authedCookie() needs a working fake Firestore, not just a
+// bare stub.
+const { db: fakeDb, reset: resetFakeDb } = createFakeDb();
+vi.mock('../../src/shared/firebase', () => ({ db: fakeDb }));
+
+// Dynamic imports, not static ones: these modules transitively import
+// src/shared/firebase, and a static import would be hoisted above the
+// `fakeDb` initialization above (Vitest hoists vi.mock/import ordering),
+// throwing "Cannot access 'fakeDb' before initialization".
+const { decisionsRouter } = await import('../../src/api/routes/decisions');
+const { SESSION_COOKIE_NAME } = await import('../../src/auth/middleware');
+const { createSession } = await import('../../src/auth/session');
 
 const ANALYST_EMAIL = 'analyst@example.com';
 
@@ -32,11 +43,11 @@ function buildApp() {
   return app;
 }
 
-const authedCookie = () => `${SESSION_COOKIE_NAME}=${createSession(ANALYST_EMAIL)}`;
+const authedCookie = async () => `${SESSION_COOKIE_NAME}=${await createSession(ANALYST_EMAIL)}`;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  _resetSessionStoreForTests();
+  resetFakeDb();
   // requireAuth re-checks the email allow-list (issue #33) on every request,
   // not just at login — analyst@example.com needs its domain allow-listed
   // for the "authenticated" test cases below to actually authenticate.
@@ -64,7 +75,7 @@ describe('POST /api/decisions', () => {
     mockSaveDecision.mockRejectedValue(new Error('"entityId" must be a non-empty string of letters, numbers, "-", or "_".'));
     const res = await request(buildApp())
       .post('/api/decisions')
-      .set('Cookie', authedCookie())
+      .set('Cookie', await authedCookie())
       .send({ subjectId: 'cust-a', verdict: 'false_positive' });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/entityId/i);
@@ -74,7 +85,7 @@ describe('POST /api/decisions', () => {
     mockSaveDecision.mockRejectedValue(new Error('"subjectId" must be a non-empty string of letters, numbers, "-", or "_".'));
     const res = await request(buildApp())
       .post('/api/decisions')
-      .set('Cookie', authedCookie())
+      .set('Cookie', await authedCookie())
       .send({ entityId: 'EU-1', verdict: 'false_positive' });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/subjectId/i);
@@ -84,7 +95,7 @@ describe('POST /api/decisions', () => {
     mockSaveDecision.mockRejectedValue(new Error('"verdict" must be "false_positive" or "true_positive".'));
     const res = await request(buildApp())
       .post('/api/decisions')
-      .set('Cookie', authedCookie())
+      .set('Cookie', await authedCookie())
       .send({ entityId: 'EU-1', subjectId: 'cust-a', verdict: 'unsure' });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/verdict/i);
@@ -101,7 +112,7 @@ describe('POST /api/decisions', () => {
 
     await request(buildApp())
       .post('/api/decisions')
-      .set('Cookie', authedCookie())
+      .set('Cookie', await authedCookie())
       .send({ entityId: 'EU-1', subjectId: 'cust-a', verdict: 'false_positive', decidedBy: 'someone-else@evil.test' });
 
     expect(mockSaveDecision).toHaveBeenCalledWith(
@@ -121,7 +132,7 @@ describe('POST /api/decisions', () => {
 
     const res = await request(buildApp())
       .post('/api/decisions')
-      .set('Cookie', authedCookie())
+      .set('Cookie', await authedCookie())
       .send({ entityId: 'EU-1', subjectId: 'cust-a', verdict: 'false_positive' });
 
     expect(res.status).toBe(201);
@@ -133,7 +144,7 @@ describe('POST /api/decisions', () => {
 
     const res = await request(buildApp())
       .post('/api/decisions')
-      .set('Cookie', authedCookie())
+      .set('Cookie', await authedCookie())
       .send({ entityId: 'bad/id', subjectId: 'cust-a', verdict: 'false_positive' });
 
     expect(res.status).toBe(400);
@@ -148,7 +159,7 @@ describe('GET /api/decisions/:entityId', () => {
     ];
     mockListDecisionsForEntity.mockResolvedValue(decisions);
 
-    const res = await request(buildApp()).get('/api/decisions/EU-1').set('Cookie', authedCookie());
+    const res = await request(buildApp()).get('/api/decisions/EU-1').set('Cookie', await authedCookie());
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual(decisions);
@@ -157,7 +168,7 @@ describe('GET /api/decisions/:entityId', () => {
 
   it('returns an empty array when there are none', async () => {
     mockListDecisionsForEntity.mockResolvedValue([]);
-    const res = await request(buildApp()).get('/api/decisions/EU-404').set('Cookie', authedCookie());
+    const res = await request(buildApp()).get('/api/decisions/EU-404').set('Cookie', await authedCookie());
     expect(res.status).toBe(200);
     expect(res.body).toEqual([]);
   });

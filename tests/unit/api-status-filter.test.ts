@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import type { SanctionRecord } from '../../src/shared/types';
+import { createFakeDb } from './helpers/fakeFirestore';
 
 // Deliberately a separate fake/mock setup from tests/unit/api-search.test.ts
 // (kept as its own file rather than editing that one, which several other
@@ -25,8 +26,17 @@ function makeQuery() {
   };
 }
 
+// Issue #63: this suite logs in through the real POST /api/auth/verify-otp
+// route (below), which now persists the session through `db` — delegate the
+// `sessions`/`otpCodes` collections to the shared fake Firestore rather than
+// hand-rolling that here too.
+const { db: authFakeDb } = createFakeDb();
+
 const fakeDb = {
   collection: vi.fn((name: string) => {
+    if (name === 'sessions' || name === 'otpCodes') {
+      return authFakeDb.collection(name);
+    }
     // Issue #35: both src/search/getRecords() (whole-collection get()) and
     // GET /api/sanctions/:id (per-id doc().get()) now also touch `overrides`.
     // Empty/not-found here since this file isn't testing override merging.

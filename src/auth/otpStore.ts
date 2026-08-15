@@ -1,47 +1,59 @@
+import * as crypto from 'crypto';
+import { db } from '../shared/firebase';
 import { generateOtpCode, hashOtpCode, OTP_TTL_MS, OTP_MAX_ATTEMPTS, OTP_REQUEST_COOLDOWN_MS } from './otp';
 
-interface OtpEntry {
-  codeHash: string;
-  expiresAt: number;
-  attempts: number;
-  issuedAt: number;
-}
-
-let store = new Map<string, OtpEntry>();
+const COLLECTION = 'otpCodes';
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
 /**
+ * Firestore doc ids are a hash of the normalized email, never the raw
+ * address (CLAUDE.md §6 — a user-supplied value must not flow unvalidated
+ * into a storage key/path segment).
+ */
+function emailKey(email: string): string {
+  return crypto.createHash('sha256').update(normalizeEmail(email)).digest('hex');
+}
+
+/**
  * Creates (or replaces) a pending OTP for an email and returns the plaintext
  * code to send, or `null` if one was already issued for this email within
  * the cooldown window (issue #16 rate limiting).
+ *
+ * Persisted in Firestore (issue #63) rather than an in-process Map: the
+ * previous in-memory store didn't survive a Cloud Functions cold start or a
+ * second concurrent instance, silently invalidating an in-flight login.
  */
-export function createOtp(email: string): string | null {
-  const key = normalizeEmail(email);
-  const existing = store.get(key);
-  if (existing && Date.now() - existing.issuedAt < OTP_REQUEST_COOLDOWN_MS) {
+export async function createOtp(email: string): Promise<string | null> {
+  const ref = db.collection(COLLECTION).doc(emailKey(email));
+  const existingDoc = await ref.get();
+  const existing = existingDoc.exists ? existingDoc.data() : undefined;
+
+  if (existing && Date.now() - new Date(existing.issuedAt).getTime() < OTP_REQUEST_COOLDOWN_MS) {
     return null;
   }
 
   const code = generateOtpCode();
-  store.set(key, {
+  const now = new Date();
+  await ref.set({
     codeHash: hashOtpCode(code),
-    expiresAt: Date.now() + OTP_TTL_MS,
+    expiresAt: new Date(now.getTime() + OTP_TTL_MS).toISOString(),
     attempts: 0,
-    issuedAt: Date.now(),
+    issuedAt: now.toISOString(),
   });
   return code;
 }
 
-export function verifyOtp(email: string, code: string): boolean {
-  const key = normalizeEmail(email);
-  const entry = store.get(key);
-  if (!entry) return false;
+export async function verifyOtp(email: string, code: string): Promise<boolean> {
+  const ref = db.collection(COLLECTION).doc(emailKey(email));
+  const doc = await ref.get();
+  if (!doc.exists) return false;
+  const entry = doc.data()!;
 
-  if (Date.now() > entry.expiresAt) {
-    store.delete(key);
+  if (Date.now() > new Date(entry.expiresAt).getTime()) {
+    await ref.delete();
     return false;
   }
 
@@ -50,14 +62,10 @@ export function verifyOtp(email: string, code: string): boolean {
   }
 
   if (entry.codeHash !== hashOtpCode(code)) {
-    entry.attempts += 1;
+    await ref.update({ attempts: entry.attempts + 1 });
     return false;
   }
 
-  store.delete(key);
+  await ref.delete();
   return true;
-}
-
-export function _resetOtpStoreForTests(): void {
-  store = new Map();
 }

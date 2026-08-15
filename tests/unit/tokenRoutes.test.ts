@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import cookieParser from 'cookie-parser';
+import { createFakeDb } from './helpers/fakeFirestore';
 
 const {
   mockCreateApiToken,
@@ -22,9 +23,17 @@ vi.mock('../../src/shared/apiTokens', () => ({
   validateScopes: mockValidateScopes,
 }));
 
-import { tokensRouter } from '../../src/api/routes/tokens';
-import { createSession, _resetSessionStoreForTests } from '../../src/auth/session';
-import { SESSION_COOKIE_NAME } from '../../src/auth/middleware';
+// src/auth/session.ts now persists sessions through `db` (issue #63).
+const { db: fakeDb, reset: resetFakeDb } = createFakeDb();
+vi.mock('../../src/shared/firebase', () => ({ db: fakeDb }));
+
+// Dynamic imports, not static ones: these modules transitively import
+// src/shared/firebase, and a static import would be hoisted above the
+// `fakeDb` initialization above (Vitest hoists vi.mock/import ordering),
+// throwing "Cannot access 'fakeDb' before initialization".
+const { tokensRouter } = await import('../../src/api/routes/tokens');
+const { createSession } = await import('../../src/auth/session');
+const { SESSION_COOKIE_NAME } = await import('../../src/auth/middleware');
 
 const ADMIN_EMAIL = 'admin@corp.test';
 const NON_ADMIN_EMAIL = 'regular.user@corp.test';
@@ -38,13 +47,13 @@ function buildApp() {
 }
 
 /** Every route on this router is behind requireAdmin, so requests need a real admin session. */
-const adminCookie = () => `${SESSION_COOKIE_NAME}=${createSession(ADMIN_EMAIL)}`;
+const adminCookie = async () => `${SESSION_COOKIE_NAME}=${await createSession(ADMIN_EMAIL)}`;
 
 const ORIGINAL_ENV = { ...process.env };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  _resetSessionStoreForTests();
+  resetFakeDb();
   process.env.ADMIN_EMAILS = ADMIN_EMAIL;
   mockValidateScopes.mockImplementation(
     (scopes: unknown) => Array.isArray(scopes) && scopes.length > 0
@@ -70,7 +79,7 @@ describe('admin gate on /api/admin/tokens', () => {
     it(`${label} rejects an authenticated non-admin`, async () => {
       const res = await call().set(
         'Cookie',
-        `${SESSION_COOKIE_NAME}=${createSession(NON_ADMIN_EMAIL)}`,
+        `${SESSION_COOKIE_NAME}=${await createSession(NON_ADMIN_EMAIL)}`,
       );
       expect(res.status).toBe(403);
     });
@@ -79,7 +88,7 @@ describe('admin gate on /api/admin/tokens', () => {
   it('does not create a token for a non-admin caller', async () => {
     await request(buildApp())
       .post('/api/admin/tokens')
-      .set('Cookie', `${SESSION_COOKIE_NAME}=${createSession(NON_ADMIN_EMAIL)}`)
+      .set('Cookie', `${SESSION_COOKIE_NAME}=${await createSession(NON_ADMIN_EMAIL)}`)
       .send({ name: 'escalation', scopes: ['write'] });
 
     expect(mockCreateApiToken).not.toHaveBeenCalled();
@@ -90,7 +99,7 @@ describe('POST /api/admin/tokens', () => {
   it('requires a non-empty name', async () => {
     const res = await request(buildApp())
       .post('/api/admin/tokens')
-      .set('Cookie', adminCookie())
+      .set('Cookie', await adminCookie())
       .send({ scopes: ['read'] });
 
     expect(res.status).toBe(400);
@@ -102,7 +111,7 @@ describe('POST /api/admin/tokens', () => {
 
     const res = await request(buildApp())
       .post('/api/admin/tokens')
-      .set('Cookie', adminCookie())
+      .set('Cookie', await adminCookie())
       .send({ name: 'CI pipeline', scopes: ['admin'] });
 
     expect(res.status).toBe(400);
@@ -126,7 +135,7 @@ describe('POST /api/admin/tokens', () => {
 
     const res = await request(buildApp())
       .post('/api/admin/tokens')
-      .set('Cookie', adminCookie())
+      .set('Cookie', await adminCookie())
       .send({ name: 'CI pipeline', scopes: ['read'] });
 
     expect(res.status).toBe(201);
@@ -154,7 +163,7 @@ describe('GET /api/admin/tokens', () => {
       { id: 'tok-1', name: 'CI pipeline', scopes: ['read'] },
     ]);
 
-    const res = await request(buildApp()).get('/api/admin/tokens').set('Cookie', adminCookie());
+    const res = await request(buildApp()).get('/api/admin/tokens').set('Cookie', await adminCookie());
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(1);
@@ -175,7 +184,7 @@ describe('POST /api/admin/tokens/:id/revoke', () => {
   it('returns 404 when the token does not exist', async () => {
     mockRevokeApiToken.mockResolvedValueOnce(null);
 
-    const res = await request(buildApp()).post('/api/admin/tokens/missing/revoke').set('Cookie', adminCookie());
+    const res = await request(buildApp()).post('/api/admin/tokens/missing/revoke').set('Cookie', await adminCookie());
 
     expect(res.status).toBe(404);
   });
@@ -183,7 +192,7 @@ describe('POST /api/admin/tokens/:id/revoke', () => {
   it('revokes an existing token', async () => {
     mockRevokeApiToken.mockResolvedValueOnce({ id: 'tok-1', revoked: true });
 
-    const res = await request(buildApp()).post('/api/admin/tokens/tok-1/revoke').set('Cookie', adminCookie());
+    const res = await request(buildApp()).post('/api/admin/tokens/tok-1/revoke').set('Cookie', await adminCookie());
 
     expect(res.status).toBe(200);
     expect(res.body.revoked).toBe(true);

@@ -2,14 +2,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
+import { createFakeDb } from '../helpers/fakeFirestore';
 
-import { requireAuth, SESSION_COOKIE_NAME } from '../../../src/auth/middleware';
-import {
-  createSession,
-  destroySession,
-  _resetSessionStoreForTests,
-} from '../../../src/auth/session';
-import { TEST_LOGIN_EMAIL } from '../../../src/auth/testAccount';
+const { db: fakeDb, reset: resetFakeDb } = createFakeDb();
+vi.mock('../../../src/shared/firebase', () => ({ db: fakeDb }));
+
+const { requireAuth, SESSION_COOKIE_NAME } = await import('../../../src/auth/middleware');
+const { createSession, destroySession } = await import('../../../src/auth/session');
+const { TEST_LOGIN_EMAIL } = await import('../../../src/auth/testAccount');
 
 function buildApp() {
   const app = express();
@@ -20,13 +20,13 @@ function buildApp() {
   return app;
 }
 
-const asUser = (email: string) =>
-  request(buildApp()).get('/protected').set('Cookie', `${SESSION_COOKIE_NAME}=${createSession(email)}`);
+const asUser = async (email: string) =>
+  request(buildApp()).get('/protected').set('Cookie', `${SESSION_COOKIE_NAME}=${await createSession(email)}`);
 
 const ORIGINAL_ENV = { ...process.env };
 
 beforeEach(() => {
-  _resetSessionStoreForTests();
+  resetFakeDb();
   process.env.NODE_ENV = 'test';
   delete process.env.ALLOWED_EMAIL_DOMAINS;
 });
@@ -50,8 +50,8 @@ describe('requireAuth middleware', () => {
   });
 
   it('rejects a destroyed session', async () => {
-    const sessionId = createSession(TEST_LOGIN_EMAIL);
-    destroySession(sessionId);
+    const sessionId = await createSession(TEST_LOGIN_EMAIL);
+    await destroySession(sessionId);
     const res = await request(buildApp())
       .get('/protected')
       .set('Cookie', `${SESSION_COOKIE_NAME}=${sessionId}`);
@@ -100,7 +100,7 @@ describe('requireAuth middleware', () => {
     // (#32) but applied to the whole-API gate rather than just admin routes.
     process.env.ALLOWED_EMAIL_DOMAINS = 'corp.com';
     const app = buildApp();
-    const cookie = `${SESSION_COOKIE_NAME}=${createSession('someone@corp.com')}`;
+    const cookie = `${SESSION_COOKIE_NAME}=${await createSession('someone@corp.com')}`;
 
     expect((await request(app).get('/protected').set('Cookie', cookie)).status).toBe(200);
 
