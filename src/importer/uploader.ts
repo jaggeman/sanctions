@@ -5,34 +5,105 @@ import { SanctionRecord, RecordVersion, ChangeType } from '../shared/types';
 
 /**
  * Normalizes text to lowercase and removes accents/diacritics for uniform search.
+ *
+ * issue #40: this used to strip anything outside [a-z0-9\s], which erased
+ * Cyrillic/Greek/Arabic/CJK entirely rather than transliterating it — a
+ * non-Latin name normalized to '', so even an exact self-match scored 0.
+ * `\p{L}`/`\p{N}` (Unicode letter/number categories) keep any script's own
+ * letters instead of only ASCII Latin, which alone fixes that: two identical
+ * non-Latin strings now normalize identically instead of both collapsing to
+ * the empty string. Cross-script matching (e.g. a Latin query finding a
+ * Cyrillic-stored name) is handled separately by `transliterate()` below —
+ * normalizeText's job is to preserve script, not translate it.
  */
 export function normalizeText(text: string): string {
   if (!text) return '';
   return text
     .toLowerCase()
     .normalize('NFD')
-    .replace(/\p{Diacritic}/gu, '') // remove accents
-    .replace(/[^a-z0-9\s]/g, ' ')    // replace punctuation with spaces
+    .replace(/\p{Diacritic}/gu, '')  // remove accents
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ') // replace punctuation with spaces, keep any script's letters
     .replace(/\s+/g, ' ')            // collapse multiple spaces
     .trim();
+}
+
+// issue #40, decision (c): transliterate Cyrillic/Greek into the Latin token
+// set IN ADDITION TO keeping the original-script token (not instead of it) —
+// so a query in either script finds a record stored in the other, without
+// forcing same-script lookups through Latin unnecessarily. Arabic is
+// explicitly out of scope for this pass: it's a genuinely harder transliteration
+// problem (short vowels are usually unwritten, and a naive per-character map
+// would produce misleading, not just incomplete, output) — see the PR.
+// Deliberately hand-rolled, not a library: matcher.ts already avoids a heavy
+// dependency chain to keep Cloud Function cold start down, and this table is
+// ~50 entries.
+const CYRILLIC_TO_LATIN: Record<string, string> = {
+  а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z',
+  и: 'i', й: 'i', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r',
+  с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'ts', ч: 'ch', ш: 'sh', щ: 'sht',
+  ъ: 'a', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya',
+  // Ukrainian-specific letters not already covered above.
+  і: 'i', ї: 'yi', є: 'ye', ґ: 'g',
+};
+
+const GREEK_TO_LATIN: Record<string, string> = {
+  α: 'a', β: 'v', γ: 'g', δ: 'd', ε: 'e', ζ: 'z', η: 'i', θ: 'th', ι: 'i',
+  κ: 'k', λ: 'l', μ: 'm', ν: 'n', ξ: 'x', ο: 'o', π: 'p', ρ: 'r', σ: 's',
+  ς: 's', τ: 't', υ: 'y', φ: 'f', χ: 'ch', ψ: 'ps', ω: 'o',
+};
+
+const TRANSLITERATION_MAP: Record<string, string> = { ...CYRILLIC_TO_LATIN, ...GREEK_TO_LATIN };
+
+/**
+ * Best-effort Cyrillic/Greek → Latin transliteration, character by character.
+ * Returns null if nothing in the input maps (pure-Latin text, or a script
+ * with no table entry e.g. Arabic/CJK) — callers use that to skip adding a
+ * useless duplicate token. Any character with no mapping (including Latin
+ * letters already present in mixed-script input) passes through unchanged.
+ */
+export function transliterate(text: string): string | null {
+  if (!text) return null;
+  const lower = text.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+
+  let result = '';
+  let changed = false;
+  for (const ch of lower) {
+    const mapped = TRANSLITERATION_MAP[ch];
+    if (mapped !== undefined) {
+      result += mapped;
+      changed = true;
+    } else {
+      result += ch;
+    }
+  }
+  return changed ? result : null;
 }
 
 /**
  * Generates search tokens from a primary name and list of aliases.
  * Splits names into individual word tokens.
+ *
+ * issue #40: also includes a transliterated token for any Cyrillic/Greek
+ * name, alongside the original-script token (decision c) — e.g. "Абу Нидал"
+ * contributes both "абу"/"нидал" and "abu"/"nidal".
  */
 export function generateSearchTokens(primaryName: string, aliases: string[] = []): string[] {
   const allNames = [primaryName, ...aliases];
   const tokenSet = new Set<string>();
 
-  for (const name of allNames) {
+  const addTokensFrom = (name: string) => {
     const normalized = normalizeText(name);
-    const parts = normalized.split(' ');
-    for (const part of parts) {
+    for (const part of normalized.split(' ')) {
       if (part.length >= 2) { // Only index tokens of length 2 or more
         tokenSet.add(part);
       }
     }
+  };
+
+  for (const name of allNames) {
+    addTokensFrom(name);
+    const translit = transliterate(name);
+    if (translit) addTokensFrom(translit);
   }
 
   return Array.from(tokenSet);
