@@ -15,7 +15,8 @@
     "/api/search": {
       "get": {
         "summary": "Sök i sanktionslistor",
-        "description": "Sök efter personer eller organisationer baserat på namn, alias eller ID i EU:s, FN:s, USA:s och PEP-listor.",
+        "description": "Sök efter personer eller organisationer baserat på namn, alias eller ID i EU:s, FN:s, USA:s och PEP-listor. Kräver antingen en inloggad session eller en API-token med read-scope (issue #36).",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
         "parameters": [
           {
             "name": "q",
@@ -82,6 +83,12 @@
           },
           "400": {
             "description": "Felaktig sökförfrågan (t.ex. saknat sökord)"
+          },
+          "401": {
+            "description": "Ingen giltig session eller API-token"
+          },
+          "403": {
+            "description": "API-token saknar read-scope"
           }
         }
       }
@@ -89,7 +96,8 @@
     "/api/sanctions/{id}": {
       "get": {
         "summary": "Hämta en specifik sanktionspost",
-        "description": "Hämta detaljerad information om en sanktionerad person eller organisation baserat på dess unika ID.",
+        "description": "Hämta detaljerad information om en sanktionerad person eller organisation baserat på dess unika ID. Kräver antingen en inloggad session eller en API-token med read-scope (issue #36).",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
         "parameters": [
           {
             "name": "id",
@@ -112,6 +120,12 @@
               }
             }
           },
+          "401": {
+            "description": "Ingen giltig session eller API-token"
+          },
+          "403": {
+            "description": "API-token saknar read-scope"
+          },
           "404": {
             "description": "Hittade inte posten"
           }
@@ -121,8 +135,8 @@
     "/api/import": {
       "post": {
         "summary": "Trigga en uppdatering/import av data",
-        "description": "Startar en bakgrundsimport för att ladda ner och uppdatera sanktionslistorna. Kräver inloggad session.",
-        "security": [{ "cookieAuth": [] }],
+        "description": "Startar en bakgrundsimport för att ladda ner och uppdatera sanktionslistorna. Kräver antingen en inloggad session eller en API-token med write-scope (issue #36).",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
         "requestBody": {
           "content": {
             "application/json": {
@@ -168,7 +182,10 @@
             "description": "\"sources\" är inte en array"
           },
           "401": {
-            "description": "Ingen giltig session"
+            "description": "Ingen giltig session eller API-token"
+          },
+          "403": {
+            "description": "API-token saknar write-scope"
           }
         }
       }
@@ -176,8 +193,8 @@
     "/api/upload": {
       "post": {
         "summary": "Ladda upp en CSV- eller XML-fil för import",
-        "description": "Laddar upp en fil för en angiven källa och startar en bakgrundsimport. Kräver inloggad session.",
-        "security": [{ "cookieAuth": [] }],
+        "description": "Laddar upp en fil för en angiven källa och startar en bakgrundsimport. Kräver antingen en inloggad session eller en API-token med write-scope (issue #36).",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
         "requestBody": {
           "required": true,
           "content": {
@@ -219,7 +236,10 @@
             "description": "Ingen fil bifogad, ogiltig filtyp, eller okänt \"source\"-värde"
           },
           "401": {
-            "description": "Ingen giltig session"
+            "description": "Ingen giltig session eller API-token"
+          },
+          "403": {
+            "description": "API-token saknar write-scope"
           },
           "413": {
             "description": "Filen överskrider 64 MB-gränsen"
@@ -348,7 +368,13 @@
         "type": "apiKey",
         "in": "cookie",
         "name": "sid",
-        "description": "Session-cookie satt av POST /api/auth/verify-otp efter lyckad e-post-OTP-inloggning. Krävs numera av i princip alla /api/*-rutter (se app.use('/api', requireAuth) i src/api/index.ts)."
+        "description": "Session-cookie satt av POST /api/auth/verify-otp efter lyckad e-post-OTP-inloggning. Krävs av alla /api/*-rutter förutom auth-rutterna själva och /api/admin/tokens/* (endast admin-session, se requireAdmin)."
+      },
+      "apiTokenAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "sanc_<random>",
+        "description": "API-token skapad via POST /api/admin/tokens, skickad som 'Authorization: Bearer sanc_...'. Ett alternativ till cookieAuth på datavägarna (GET /api/search, GET /api/sanctions/{id} kräver read-scope; POST /api/import, POST /api/upload kräver write-scope) — issue #36. Accepteras INTE av /api/admin/tokens/* själv."
       }
     },
     "schemas": {

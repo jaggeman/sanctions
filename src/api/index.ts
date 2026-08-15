@@ -22,6 +22,7 @@ import { isAllowedEmail } from '../auth/emailAllowlist';
 import { TEST_LOGIN_EMAIL, TEST_LOGIN_CODE, isTestLoginEnabled, isTestLoginEmail } from '../auth/testAccount';
 import { requestLogger } from './middleware/requestLogger';
 import { errorLogger } from './middleware/errorLogger';
+import { requireAuthOrScope } from './middleware/requireAuthOrScope';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -159,8 +160,10 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-// Every other /api route requires an authenticated session.
-app.use('/api', requireAuth);
+// Every other /api route requires either an authenticated session or a
+// scoped API token — applied per-route below (issue #36) rather than as a
+// blanket gate here, since a blanket session-only check would reject a
+// bearer-token request before any route-level scope check could ever run.
 
 // Load OpenAPI Specification
 const openApiSpecPath = path.resolve(__dirname, 'openapi.json');
@@ -180,18 +183,21 @@ app.get('/openapi.json', (req, res) => {
 });
 
 // Admin: API token management (create / list / revoke)
-// Inherits the blanket requireAuth session gate above, so any logged-in user
-// can reach this today. It is NOT yet admin-role-specific — requireAdmin is
-// still a no-op placeholder. Tracked in issue #17.
-app.use('/api/admin/tokens', tokensRouter);
+// Session-only: authenticating to the endpoint that mints API tokens with an
+// API token would be circular, so this route does not accept a bearer token
+// (issue #36 is about the *data* routes below, not this one).
+app.use('/api/admin/tokens', requireAuth, tokensRouter);
 
 /**
  * GET /api/search
  * Fuzzy name search (phonetic + edit-distance + token-set matching), plus an
  * exact passport/ID fast path. See src/search/matcher.ts — the same matcher
  * backs this endpoint, the MCP server, and the CLI (issue #11).
+ *
+ * Accepts either a logged-in session or a `read`-scoped API token (issue #36)
+ * — this is the exact route external, session-less integrations need.
  */
-app.get('/api/search', async (req, res): Promise<any> => {
+app.get('/api/search', requireAuthOrScope('read'), async (req, res): Promise<any> => {
   const { q, source, type, limit, threshold, includeDelisted } = req.query;
 
   if (!q || typeof q !== 'string') {
@@ -226,8 +232,10 @@ app.get('/api/search', async (req, res): Promise<any> => {
  * an imported record is never hard-deleted (issue #9), so a delisted record
  * is a valid, meaningful answer and is returned with its status/delistedAt,
  * not a 404.
+ *
+ * Accepts either a logged-in session or a `read`-scoped API token (issue #36).
  */
-app.get('/api/sanctions/:id', async (req, res): Promise<any> => {
+app.get('/api/sanctions/:id', requireAuthOrScope('read'), async (req, res): Promise<any> => {
   const { id } = req.params;
 
   try {
@@ -244,9 +252,11 @@ app.get('/api/sanctions/:id', async (req, res): Promise<any> => {
 
 /**
  * POST /api/import
- * Trigger background import process
+ * Trigger background import process.
+ *
+ * Accepts either a logged-in session or a `write`-scoped API token (issue #36).
  */
-app.post('/api/import', async (req, res): Promise<any> => {
+app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<any> => {
   const { sources, csvPath } = req.body;
 
   // Validate sources if provided
@@ -286,8 +296,12 @@ app.post('/api/import', async (req, res): Promise<any> => {
  * fire-and-forget like the old handler) so the caller gets a real outcome —
  * files here are small enough, and the diff engine that will eventually make
  * this properly async again is issue #8.
+ *
+ * Accepts either a logged-in session or a `write`-scoped API token (issue
+ * #36) — checked before multer touches the request body, so an
+ * unauthenticated caller can't even get a file accepted.
  */
-app.post('/api/upload', uploadSingleFile('file'), async (req, res): Promise<any> => {
+app.post('/api/upload', requireAuthOrScope('write'), uploadSingleFile('file'), async (req, res): Promise<any> => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
