@@ -48,6 +48,20 @@ describe('CLI search command', () => {
     );
   });
 
+  it('issue #37: honors an explicit --limit 0 instead of silently falling back to the default', async () => {
+    runSearch.mockResolvedValue({ results: [], totalMatches: 0, truncated: false });
+    await runCli(['search', 'Vladimir Putin', '--limit', '0']);
+
+    expect(runSearch).toHaveBeenCalledWith('Vladimir Putin', expect.objectContaining({ limit: 0 }));
+  });
+
+  it('falls back to the default limit of 10 when --limit is omitted entirely', async () => {
+    runSearch.mockResolvedValue({ results: [], totalMatches: 0, truncated: false });
+    await runCli(['search', 'Vladimir Putin']);
+
+    expect(runSearch).toHaveBeenCalledWith('Vladimir Putin', expect.objectContaining({ limit: 10 }));
+  });
+
   it('prints the score for each hit', async () => {
     runSearch.mockResolvedValue({
       results: [{ id: 'PEP-1', primaryName: 'Vladimir Putin', source: 'PEP', type: 'individual', aliases: [], score: 92, matchedAlias: 'Vladimir Putin' }],

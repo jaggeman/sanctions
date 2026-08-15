@@ -204,7 +204,10 @@ app.get('/api/search', requireAuthOrScope('read'), async (req, res): Promise<any
     return res.status(400).json({ error: 'Query parameter "q" is required.' });
   }
 
-  const requestedLimit = Math.min(parseInt(limit as string) || 20, 100);
+  // issue #37: `|| 20` treats an explicit limit=0 the same as "not provided".
+  // Check for NaN explicitly so a real 0 survives.
+  const parsedLimit = parseInt(limit as string, 10);
+  const requestedLimit = Math.min(Number.isNaN(parsedLimit) ? 20 : parsedLimit, 100);
 
   try {
     const { results, totalMatches, truncated } = await runSearch(q, {
