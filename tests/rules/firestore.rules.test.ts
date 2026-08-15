@@ -122,3 +122,44 @@ describe('firestore.rules — direct client access to the sanctions collection',
     await assertFails(unauthedDb.collection('anything_else').doc('x').get());
   });
 });
+
+// Issue #10 acceptance criterion: "Rules tests: overrides are authenticated-write
+// only, never client-writable anonymously" — already covered by the blanket
+// deny-all backstop above, but the criterion names the collection explicitly,
+// so it gets its own explicit proof rather than relying solely on the generic
+// "anything_else" case.
+describe('firestore.rules — overrides/{entityId} collection (issue #10)', () => {
+  const SAMPLE_OVERRIDE = {
+    entityId: 'EU-1',
+    fields: { sanctionReason: 'Corrected reason' },
+    overriddenBy: 'analyst@example.com',
+    overriddenAt: '2026-08-15T00:00:00.000Z',
+    reason: 'Corrected transliteration',
+  };
+
+  it('denies an unauthenticated client writing an override', async () => {
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('overrides').doc('EU-1').set(SAMPLE_OVERRIDE));
+  });
+
+  it('denies an unauthenticated client reading an override', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().collection('overrides').doc('EU-1').set(SAMPLE_OVERRIDE);
+    });
+
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('overrides').doc('EU-1').get());
+  });
+
+  it('denies even an authenticated client — no token is privileged without a real auth system', async () => {
+    const authedDb = testEnv.authenticatedContext('some-user-id').firestore();
+    await assertFails(authedDb.collection('overrides').doc('EU-1').set(SAMPLE_OVERRIDE));
+  });
+
+  it('still allows the trusted server path (Admin SDK) to read and write overrides freely', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await assertSucceeds(ctx.firestore().collection('overrides').doc('EU-1').set(SAMPLE_OVERRIDE));
+      await assertSucceeds(ctx.firestore().collection('overrides').doc('EU-1').get());
+    });
+  });
+});
