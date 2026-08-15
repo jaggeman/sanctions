@@ -264,6 +264,17 @@ describe('uploadRecords — soft delete fields + version trail', () => {
     }
   });
 
+  it('issue #108: writes nothing at all — not even a same-data merge — on a truly unchanged re-import', async () => {
+    await uploadRecords([record()], 'import-1');
+    const firstBatch = fakeDb.batch.mock.results[0].value;
+    expect(firstBatch.set).toHaveBeenCalled(); // sanity: the create path does write
+
+    await uploadRecords([record()], 'import-2');
+    const secondBatch = fakeDb.batch.mock.results[1].value;
+
+    expect(secondBatch.set).not.toHaveBeenCalled();
+  });
+
   it('does not invent a listedAt for a pre-#9 legacy record on an unchanged re-import', async () => {
     // Simulates a record written before issue #9 existed: no listedAt, but
     // otherwise identical content to what record() below re-uploads.
