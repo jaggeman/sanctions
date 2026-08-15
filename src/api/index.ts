@@ -8,7 +8,7 @@ import * as os from 'os';
 import multer from 'multer';
 import * as swaggerUi from 'swagger-ui-express';
 import { db } from '../shared/firebase';
-import { runImport } from '../importer';
+import { enqueueImportTask } from '../importer/taskQueue';
 import { processUpload } from '../importer/uploadPipeline';
 import { tokensRouter } from './routes/tokens';
 import { decisionsRouter } from './routes/decisions';
@@ -278,7 +278,15 @@ app.get('/api/sanctions/:id', requireAuthOrScope('read'), async (req, res): Prom
 
 /**
  * POST /api/import
- * Trigger background import process.
+ * Queue a full import (issue #43). Handed off to `runImportTask`, a Cloud
+ * Tasks-dispatched function with its own instance/timeout budget, instead of
+ * running in-process here: `api` is pinned to maxInstances: 1 (issue #16),
+ * so a multi-minute import awaited in this same function would freeze
+ * login/search for everyone, and a bare fire-and-forget call is not
+ * guaranteed to run to completion if this instance freezes/recycles right
+ * after the response is sent. Cloud Tasks durably persists and retries the
+ * job independent of this request's own fate, so the 202 below is now
+ * actually true rather than merely optimistic.
  *
  * Accepts either a logged-in session or a `write`-scoped API token (issue #36).
  */
@@ -290,26 +298,21 @@ app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<a
     return res.status(400).json({ error: '"sources" must be an array.' });
   }
 
-  // Trigger import in the background
-  console.log('Import triggered via REST API. Starting background run...');
-  
-  runImport({
-    sources: sources,
-    csvPath: csvPath,
-    csvSource: 'PEP',
-    csvSeparator: ';',
-  })
-    .then((result) => {
-      console.log('API Background Import finished:', result);
-    })
-    .catch((err) => {
-      console.error('API Background Import failed:', err);
+  try {
+    await enqueueImportTask({
+      sources,
+      csvPath,
+      csvSource: 'PEP',
+      csvSeparator: ';',
     });
+  } catch (error: any) {
+    console.error('Failed to queue import task:', error);
+    return res.status(500).json({ error: 'Failed to start import', details: error.message });
+  }
 
-  // Accept request and return immediately (202 Accepted)
   res.status(202).json({
     status: 'import_started',
-    message: 'The import process has been started in the background. Check server logs for progress.',
+    message: 'The import has been queued and will run independently of this request.',
   });
 });
 
@@ -397,3 +400,8 @@ if (require.main === module) {
 // instance B would fail. This is the documented interim mitigation until
 // that storage moves to Firestore or another shared store.
 export const api = functions.https.onRequest({ maxInstances: 1 }, app);
+
+// The Cloud Tasks worker that POST /api/import enqueues onto (issue #43).
+// `package.json`'s `main` points straight at this file's compiled output, so
+// every deployable Cloud Function must be exported from here.
+export { runImportTask } from '../importer/importTask';

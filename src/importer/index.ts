@@ -9,7 +9,7 @@ import { uploadRecords, filterAutomatedBatch } from './uploader';
 import { invalidateSearchIndex } from '../search';
 import { SanctionRecord, SanctionSource } from '../shared/types';
 
-interface ImportOptions {
+export interface ImportOptions {
   sources?: ('EU' | 'UN' | 'US')[];
   csvPath?: string;
   csvSource?: 'PEP' | 'CUSTOM';
@@ -94,7 +94,7 @@ async function runUploadedFileImport(
     importedCounts[file.source] = parsed;
 
     if (uploaded > 0) {
-      invalidateSearchIndex();
+      await invalidateSearchIndex();
       return { success: true, importedCounts };
     } else if (parsed > 0) {
       return {
@@ -264,7 +264,7 @@ export async function runImport(options: ImportOptions = {}): Promise<{
 
     // 5. Report
     if (totalUploaded > 0) {
-      invalidateSearchIndex(); // next search rebuilds the in-memory index with the new data
+      await invalidateSearchIndex(); // next search rebuilds the in-memory index with the new data
       console.log(`Successfully processed and uploaded total of ${totalUploaded} records.`);
       return { success: true, importedCounts };
     } else if (totalParsed > 0) {

@@ -32,7 +32,7 @@ const runSearch = vi.fn();
 const verifyApiToken = vi.fn();
 
 vi.mock('../../src/shared/firebase', () => ({ db: fakeDb }));
-vi.mock('../../src/importer', () => ({ runImport: vi.fn(async () => ({ success: true, importedCounts: {} })) }));
+vi.mock('../../src/importer/taskQueue', () => ({ enqueueImportTask: vi.fn(async () => {}) }));
 vi.mock('../../src/search', () => ({ runSearch }));
 vi.mock('../../src/shared/apiTokens', () => ({ verifyApiToken }));
 vi.stubEnv('NODE_ENV', 'test');

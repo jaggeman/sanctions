@@ -135,7 +135,7 @@
     "/api/import": {
       "post": {
         "summary": "Trigga en uppdatering/import av data",
-        "description": "Startar en bakgrundsimport för att ladda ner och uppdatera sanktionslistorna. Kräver antingen en inloggad session eller en API-token med write-scope (issue #36).",
+        "description": "Köar en import (körs i en separat Cloud Task, garanterat till slutförande oavsett vad som händer med detta anrop — issue #43) för att ladda ner och uppdatera sanktionslistorna. Kräver antingen en inloggad session eller en API-token med write-scope (issue #36).",
         "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
         "requestBody": {
           "content": {
@@ -161,7 +161,7 @@
         },
         "responses": {
           "202": {
-            "description": "Import startad i bakgrunden",
+            "description": "Importen är köad (Cloud Task) och körs oberoende av detta anrop",
             "content": {
               "application/json": {
                 "schema": {
@@ -186,6 +186,9 @@
           },
           "403": {
             "description": "API-token saknar write-scope"
+          },
+          "500": {
+            "description": "Kunde inte köa importen (t.ex. Cloud Tasks otillgängligt)"
           }
         }
       }
