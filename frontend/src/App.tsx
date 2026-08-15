@@ -30,6 +30,7 @@ import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Brightness7Icon from '@mui/icons-material/Brightness7';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import InfoIcon from '@mui/icons-material/Info';
+import VpnKeyIcon from '@mui/icons-material/VpnKey';
 import ApiTokensTab from './ApiTokensTab';
 import LogoutIcon from '@mui/icons-material/Logout';
 import Login from './components/Login';
@@ -493,7 +494,7 @@ function App() {
                     The <strong>Search</strong> tab allows you to query the entire unified sanctions database. You can search by entering an individual's name, an entity name, a passport number, or an ID number.
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    The results will display the primary name along with any known aliases. If available, dates of birth are also shown. Each card uses colored chips to indicate which official list the entity was sourced from (e.g., EU, UN, US OFAC) and their classification (e.g., PERSON or ENTITY).
+                    The results will display the primary name along with any known aliases. If available, dates of birth are also shown. Each card uses colored chips to indicate which official list the entity was sourced from (e.g., EU, UN, US OFAC) and their classification (e.g., PERSON or ENTITY). Since the search uses fuzzy matching, each result also includes a match score percentage and, for non-exact hits, the specific alias that matched — this works for names written in non-Latin scripts (e.g. Arabic, Cyrillic) as well.
                   </Typography>
                 </CardContent>
               </Card>
@@ -505,10 +506,25 @@ function App() {
                     <Typography variant="h6">Uploading Lists</Typography>
                   </Box>
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    The <strong>Upload Lists</strong> tab enables you to manually synchronize new sanctions files into the system database. 
+                    The <strong>Upload Lists</strong> tab enables you to manually synchronize new sanctions files into the system database.
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Currently supported formats include structured <strong>CSV</strong> files and <strong>XML</strong> format lists (specifically parsing the EU, UN, and US standard schema). The processing of the files occurs automatically in the background. Note that large files may take a minute or two to fully parse and index.
+                    Currently supported formats are structured CSV files and XML format lists, covering EU, UN, US, PEP, and CUSTOM sources. The processing of the files occurs automatically in the background. Note that large files may take a minute or two to fully parse and index.
+                  </Typography>
+                </CardContent>
+              </Card>
+
+              <Card sx={{ height: '100%' }}>
+                <CardContent>
+                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                    <VpnKeyIcon color="primary" sx={{ mr: 1.5, fontSize: 32 }} />
+                    <Typography variant="h6">Managing API Tokens</Typography>
+                  </Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    The <strong>API Tokens</strong> tab lets you create, list, and revoke tokens for programmatic access to the search and import APIs.
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Each token is minted with an explicit <strong>read</strong> or <strong>write</strong> scope — grant only the scope a given integration actually needs, and revoke a token immediately if it's no longer in use or may have leaked.
                   </Typography>
                 </CardContent>
               </Card>
