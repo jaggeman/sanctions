@@ -9,6 +9,7 @@ import multer from 'multer';
 import * as swaggerUi from 'swagger-ui-express';
 import { db } from '../shared/firebase';
 import { runImport } from '../importer';
+import { tokensRouter } from './routes/tokens';
 import { runSearch } from '../search';
 import { createOtp, verifyOtp } from '../auth/otpStore';
 import { sendOtpEmail } from '../auth/mailer';
@@ -120,6 +121,12 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openApiSpec));
 app.get('/openapi.json', (req, res) => {
   res.json(openApiSpec);
 });
+
+// Admin: API token management (create / list / revoke)
+// Inherits the blanket requireAuth session gate above, so any logged-in user
+// can reach this today. It is NOT yet admin-role-specific — requireAdmin is
+// still a no-op placeholder. Tracked in issue #17.
+app.use('/api/admin/tokens', tokensRouter);
 
 /**
  * GET /api/search
