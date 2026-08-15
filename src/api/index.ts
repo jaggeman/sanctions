@@ -18,11 +18,43 @@ import { requireAuth, SESSION_COOKIE_NAME } from '../auth/middleware';
 import { TEST_LOGIN_EMAIL, TEST_LOGIN_CODE, isTestLoginEnabled, isTestLoginEmail } from '../auth/testAccount';
 import { requestLogger } from './middleware/requestLogger';
 import { errorLogger } from './middleware/errorLogger';
+import { SanctionSource } from '../shared/types';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const upload = multer({ dest: os.tmpdir() });
+const MAX_UPLOAD_BYTES = 64 * 1024 * 1024; // real EU FSD export is ~25 MB
+const ALLOWED_UPLOAD_EXTENSIONS = new Set(['.csv', '.xml']);
+const ALLOWED_SOURCES = new Set<SanctionSource>(['EU', 'UN', 'US', 'PEP', 'CUSTOM']);
+
+const upload = multer({
+  dest: os.tmpdir(),
+  limits: { fileSize: MAX_UPLOAD_BYTES },
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (!ALLOWED_UPLOAD_EXTENSIONS.has(ext)) {
+      return cb(new Error(`Unsupported file type "${ext}". Only .csv and .xml are accepted.`));
+    }
+    cb(null, true);
+  },
+});
+
+// Runs multer's single-file parsing, mapping its errors to the right HTTP
+// status instead of letting them fall through to the generic Express error
+// handler.
+function uploadSingleFile(fieldName: string) {
+  const middleware = upload.single(fieldName);
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    middleware(req, res, (err: any) => {
+      if (!err) return next();
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: `File exceeds the ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB limit.` });
+      }
+      return res.status(400).json({ error: err.message || 'Invalid upload.' });
+    });
+  };
+}
+
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SESSION_COOKIE_OPTIONS = {
   httpOnly: true,
@@ -220,29 +252,37 @@ app.post('/api/import', async (req, res): Promise<any> => {
  * POST /api/upload
  * Upload a CSV or XML file for processing
  */
-app.post('/api/upload', upload.single('file'), async (req, res): Promise<any> => {
+app.post('/api/upload', uploadSingleFile('file'), async (req, res): Promise<any> => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
 
   const { source } = req.body; // e.g. "PEP", "EU", "UN"
+
+  if (!ALLOWED_SOURCES.has(source)) {
+    await fs.remove(req.file.path).catch(e => console.error('Failed to cleanup temp file', e));
+    return res.status(400).json({
+      error: `"source" must be one of ${[...ALLOWED_SOURCES].join(', ')}.`,
+    });
+  }
+
   const uploadedPath = req.file.path;
 
   console.log(`Received uploaded file for source ${source}: ${uploadedPath}`);
-  
-  // Trigger background import with the uploaded file path
+
   runImport({
-    sources: source ? [source] : [],
+    sources: [source],
     csvPath: uploadedPath,
-    csvSource: source || 'MANUAL_CSV',
+    csvSource: source,
     csvSeparator: ';',
   })
-    .then(() => {
-      console.log('Upload Background Import finished.');
-      fs.remove(uploadedPath).catch(e => console.error('Failed to cleanup temp file', e));
+    .then((result) => {
+      console.log('Upload Background Import finished:', result);
     })
     .catch((err) => {
       console.error('Upload Background Import failed:', err);
+    })
+    .finally(() => {
       fs.remove(uploadedPath).catch(e => console.error('Failed to cleanup temp file', e));
     });
 

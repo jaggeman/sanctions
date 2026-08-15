@@ -164,4 +164,35 @@ describe('POST /api/upload', () => {
     expect(res.status).toBe(202);
     expect(res.body.status).toBe('upload_received');
   });
+
+  it('rejects an unknown source value with 400, without reaching runImport', async () => {
+    const { runImport } = await import('../../src/importer');
+    const res = await agent
+      .post('/api/upload')
+      .field('source', 'MANUAL_UPLOAD')
+      .attach('file', Buffer.from('id;name\n1;Test Person\n'), 'people.csv');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/source/i);
+    expect(runImport).not.toHaveBeenCalled();
+  });
+
+  it('rejects a file with a disallowed extension with 400', async () => {
+    const res = await agent
+      .post('/api/upload')
+      .field('source', 'PEP')
+      .attach('file', Buffer.from('not a real binary'), 'payload.exe');
+
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a file over the size limit with 413', async () => {
+    const oversized = Buffer.alloc(65 * 1024 * 1024, 'a'); // over the 64 MB cap
+    const res = await agent
+      .post('/api/upload')
+      .field('source', 'PEP')
+      .attach('file', oversized, 'huge.csv');
+
+    expect(res.status).toBe(413);
+  });
 });

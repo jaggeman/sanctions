@@ -17,9 +17,13 @@ import {
   Chip,
   Paper,
   CircularProgress,
-  IconButton
+  IconButton,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel
 } from '@mui/material';
-import type { PaletteMode } from '@mui/material';
+import type { PaletteMode, SelectChangeEvent } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import SearchIcon from '@mui/icons-material/Search';
 import Brightness4Icon from '@mui/icons-material/Brightness4';
@@ -124,6 +128,7 @@ function App() {
   const [totalMatches, setTotalMatches] = useState(0);
   const [truncated, setTruncated] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [uploadSource, setUploadSource] = useState('EU');
 
   const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
@@ -151,8 +156,8 @@ function App() {
     
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('source', 'MANUAL_UPLOAD');
-    
+    formData.append('source', uploadSource);
+
     setIsLoading(true);
     try {
       const res = await fetch('/api/upload', {
@@ -162,7 +167,8 @@ function App() {
       if (res.ok) {
         alert('File uploaded successfully! Import process has started.');
       } else {
-        alert('Upload failed.');
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Upload failed.');
       }
     } catch (err) {
       console.error(err);
@@ -316,9 +322,26 @@ function App() {
                 <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
                   Upload CSV or XML files to sync with the database. Processing happens in the background.
                 </Typography>
-                
-                <Paper 
-                  variant="outlined" 
+
+                <FormControl size="small" sx={{ minWidth: 200 }}>
+                  <InputLabel id="upload-source-label">Source</InputLabel>
+                  <Select
+                    labelId="upload-source-label"
+                    label="Source"
+                    value={uploadSource}
+                    onChange={(e: SelectChangeEvent) => setUploadSource(e.target.value)}
+                    disabled={isLoading}
+                  >
+                    <MenuItem value="EU">EU</MenuItem>
+                    <MenuItem value="UN">UN</MenuItem>
+                    <MenuItem value="US">US</MenuItem>
+                    <MenuItem value="PEP">PEP</MenuItem>
+                    <MenuItem value="CUSTOM">CUSTOM</MenuItem>
+                  </Select>
+                </FormControl>
+
+                <Paper
+                  variant="outlined"
                   sx={{ 
                     mt: 4, 
                     p: 6, 
