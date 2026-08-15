@@ -1,4 +1,5 @@
 import * as fs from 'fs-extra';
+import * as path from 'path';
 import { hashFileStreaming } from './hashFile';
 import { detectFormat, DetectedFormat } from './formatDetection';
 import {
@@ -57,6 +58,17 @@ function formatForRunImport(format: DetectedFormat): 'eu-xml-1.1' | 'un-xml' | '
   return format === 'eu-xml-1.1' || format === 'un-xml' || format === 'us-xml' ? format : 'csv';
 }
 
+// The client-supplied filename must never reach the Cloud Storage object
+// key (issue #94) — it's an untrusted string that can contain path
+// separators, "..", or control characters. Only a short, bounded,
+// alphanumeric extension is carried over; the base name is always the
+// fixed string "upload". The original name is still preserved separately
+// in the imports audit doc's `filename` field for display purposes.
+function safeStorageExtension(originalFilename: string): string {
+  const ext = path.extname(originalFilename);
+  return /^\.[a-zA-Z0-9]{1,10}$/.test(ext) ? ext.toLowerCase() : '';
+}
+
 /**
  * Orchestrates issue #7's upload pipeline: hash the file, sniff its format,
  * reject an exact duplicate of an already-applied import, atomically claim
@@ -96,7 +108,7 @@ export async function processUpload(options: ProcessUploadOptions): Promise<Proc
     return { outcome: 'dry_run', importId: sha256, counts: { parsed, uploaded: 0 }, diffs: preview.diffs };
   }
 
-  const storagePath = `imports/${sha256}/${originalFilename}`;
+  const storagePath = `imports/${sha256}/upload${safeStorageExtension(originalFilename)}`;
 
   try {
     await createPendingImport({
