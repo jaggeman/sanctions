@@ -12,7 +12,12 @@
     "dev:api": "nodemon --watch src -e ts --exec ts-node src/api/index.ts",
     "dev:mcp": "ts-node src/mcp/index.ts",
     "cli": "ts-node src/cli/index.ts",
-    "import": "ts-node src/importer/index.ts"
+    "import": "ts-node src/importer/index.ts",
+    "test": "firebase emulators:exec --only firestore \"vitest run\"",
+    "test:unit": "vitest run tests/unit",
+    "test:rules": "firebase emulators:exec --only firestore \"vitest run tests/rules\"",
+    "test:integration": "firebase emulators:exec --only firestore \"vitest run tests/integration\"",
+    "test:watch": "vitest watch tests/unit"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.1",
@@ -29,15 +34,19 @@
     "swagger-ui-express": "^5.0.1"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/fs-extra": "^11.0.4",
     "@types/multer": "^2.2.0",
     "@types/node": "^22.4.0",
+    "@types/supertest": "^6.0.3",
     "@types/swagger-ui-express": "^4.1.6",
     "nodemon": "^3.1.4",
     "rimraf": "^6.0.1",
+    "supertest": "^7.2.2",
     "ts-node": "^10.9.2",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "vitest": "^3.2.7"
   }
 }

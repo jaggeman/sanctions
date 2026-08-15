@@ -93,6 +93,34 @@ npm run import
 npm run cli -- --help
 ```
 
+## Running Tests
+
+The backend has three test layers (see [CLAUDE.md](./CLAUDE.md) §1 for the full policy): pure/offline unit tests, Firestore security rules tests, and integration tests against a real Firestore instance. The rules and integration layers require the **Firebase Firestore Emulator**, which in turn requires a **Java runtime (JDK 11+)** to be installed — the test scripts start and stop it automatically via `firebase emulators:exec`, so you don't need to run `firebase emulators:start` yourself first.
+
+Install dependencies once (from the repo root):
+```bash
+npm install
+```
+
+Run everything (recommended before opening a PR — this is the merge gate, since there's no CI configured yet):
+```bash
+npm test
+```
+
+Run a single layer:
+```bash
+npm run test:unit         # fast, offline — parsers, normalization, API handlers with mocked Firestore
+npm run test:rules        # firestore.rules against a real emulator
+npm run test:integration  # uploadRecords etc. against a real emulator
+```
+
+Watch mode while iterating on the offline unit layer:
+```bash
+npm run test:watch
+```
+
+Test files live under `tests/unit`, `tests/rules`, and `tests/integration`, with shared XML/CSV fixtures in `tests/fixtures`. New code should follow the TDD policy in `CLAUDE.md` §1 — write the test first, watch it fail, then implement.
+
 ## 🚀 Hur man deployar (Laddar upp till produktion)
 
 För att ladda upp dina ändringar så att de syns live på webben följer du dessa exakta steg. 

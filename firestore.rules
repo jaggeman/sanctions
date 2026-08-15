@@ -1,8 +1,15 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // This app has no client-side Firestore usage and no auth system: every
+    // read and write goes through the Express API (src/api/index.ts) via the
+    // Admin SDK, which always bypasses these rules regardless of what they
+    // say. Least privilege (CLAUDE.md §6) for a collection with no legitimate
+    // direct-client access path is to deny it outright — this is a
+    // defense-in-depth backstop against a leaked project config or a future
+    // client-side feature, not a live access-control layer for real users.
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
   }
 }

@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<export:export xmlns:export="http://eu.europa.ec/fpi/fsd/export">
+  <export:sanctionEntity logicalId="1001">
+    <export:subjectType code="I" classificationCode="PERSON"/>
+    <export:nameAlias logicalId="1" primary="true" strong="true">
+      <export:wholeName>Vladimir TESTOVICH</export:wholeName>
+      <export:firstName>Vladimir</export:firstName>
+      <export:lastName>Testovich</export:lastName>
+    </export:nameAlias>
+    <export:nameAlias logicalId="2" primary="false" strong="false">
+      <export:wholeName>Vova Testovich</export:wholeName>
+    </export:nameAlias>
+    <export:birthdate>
+      <export:birthdate>1965-04-12</export:birthdate>
+      <export:city>Moscow</export:city>
+      <export:countryDescription>Russia</export:countryDescription>
+    </export:birthdate>
+    <export:citizenship>
+      <export:countryDescription>Russia</export:countryDescription>
+    </export:citizenship>
+    <export:address>
+      <export:street>Red Square 1</export:street>
+      <export:city>Moscow</export:city>
+      <export:zipcode>101000</export:zipcode>
+      <export:countryDescription>Russia</export:countryDescription>
+    </export:address>
+    <export:identificationDocument>
+      <export:number>123456789</export:number>
+      <export:typeDescription>Passport</export:typeDescription>
+      <export:issueCountry>Russia</export:issueCountry>
+    </export:identificationDocument>
+    <export:regulationSummary>
+      <export:numberTitle>Council Regulation (EU) No 269/2014</export:numberTitle>
+      <export:publicationUrl>https://example.org/reg1</export:publicationUrl>
+    </export:regulationSummary>
+  </export:sanctionEntity>
+  <export:sanctionEntity logicalId="1002">
+    <export:subjectType code="E" classificationCode="ENTITY"/>
+    <export:nameAlias logicalId="3" primary="true">
+      <export:wholeName>Test Entity LLC</export:wholeName>
+    </export:nameAlias>
+    <export:regulation>
+      <export:numberTitle>Council Decision 2014/145/CFSP</export:numberTitle>
+    </export:regulation>
+  </export:sanctionEntity>
+  <export:sanctionEntity logicalId="1003">
+    <export:subjectType code="I"/>
+    <export:nameAlias logicalId="4" primary="false">
+      <export:firstName>Only</export:firstName>
+      <export:lastName>Alias</export:lastName>
+    </export:nameAlias>
+  </export:sanctionEntity>
+  <export:sanctionEntity logicalId="1004">
+    <export:subjectType code="I"/>
+  </export:sanctionEntity>
+</export:export>
