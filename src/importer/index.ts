@@ -6,6 +6,7 @@ import { parseUNList } from './parsers/un';
 import { parseUSList } from './parsers/us';
 import { parseCSVList } from './parsers/csv';
 import { uploadRecords } from './uploader';
+import { invalidateSearchIndex } from '../search';
 import { SanctionRecord } from '../shared/types';
 
 interface ImportOptions {
@@ -96,6 +97,7 @@ export async function runImport(options: ImportOptions = {}): Promise<{
     // 5. Upload everything to Firestore
     if (allRecords.length > 0) {
       await uploadRecords(allRecords);
+      invalidateSearchIndex(); // next search rebuilds the in-memory index with the new data
       console.log(`Successfully processed and uploaded total of ${allRecords.length} records.`);
       return { success: true, importedCounts };
     } else {
