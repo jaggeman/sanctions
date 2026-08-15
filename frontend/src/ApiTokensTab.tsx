@@ -28,6 +28,9 @@ import {
 } from '@mui/material';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DeleteIcon from '@mui/icons-material/DeleteOutlined';
+import { apiFetch } from './apiFetch';
+
+const SESSION_EXPIRED_MESSAGE = 'Your session has expired. Please sign in again.';
 
 type AccessState = 'checking' | 'admin' | 'denied';
 
@@ -67,13 +70,14 @@ export default function ApiTokensTab() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/admin/tokens');
+      const res = await apiFetch('/api/admin/tokens');
+      if (res.status === 401) throw new Error(SESSION_EXPIRED_MESSAGE);
       if (!res.ok) throw new Error(`Server returned ${res.status}`);
       const data = await res.json();
       setTokens(Array.isArray(data) ? data : []);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setError('Could not load API tokens.');
+      setError(err.message === SESSION_EXPIRED_MESSAGE ? SESSION_EXPIRED_MESSAGE : 'Could not load API tokens.');
     }
     setLoading(false);
   }, []);
@@ -81,7 +85,7 @@ export default function ApiTokensTab() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch('/api/auth/session');
+        const res = await apiFetch('/api/auth/session');
         if (!res.ok) {
           setAccessState('denied');
           return;
@@ -110,11 +114,12 @@ export default function ApiTokensTab() {
     setCreating(true);
     setError(null);
     try {
-      const res = await fetch('/api/admin/tokens', {
+      const res = await apiFetch('/api/admin/tokens', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: name.trim(), scopes }),
       });
+      if (res.status === 401) throw new Error(SESSION_EXPIRED_MESSAGE);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `Server returned ${res.status}`);
 
@@ -134,13 +139,14 @@ export default function ApiTokensTab() {
     if (!pendingRevoke) return;
     setRevoking(true);
     try {
-      const res = await fetch(`/api/admin/tokens/${pendingRevoke.id}/revoke`, { method: 'POST' });
+      const res = await apiFetch(`/api/admin/tokens/${pendingRevoke.id}/revoke`, { method: 'POST' });
+      if (res.status === 401) throw new Error(SESSION_EXPIRED_MESSAGE);
       if (!res.ok) throw new Error(`Server returned ${res.status}`);
       setPendingRevoke(null);
       await loadTokens();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setError('Failed to revoke token.');
+      setError(err.message === SESSION_EXPIRED_MESSAGE ? SESSION_EXPIRED_MESSAGE : 'Failed to revoke token.');
     }
     setRevoking(false);
   };
