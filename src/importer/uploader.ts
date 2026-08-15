@@ -2,6 +2,9 @@ import * as crypto from 'crypto';
 import * as admin from 'firebase-admin';
 import { db } from '../shared/firebase';
 import { SanctionRecord, RecordVersion, ChangeType } from '../shared/types';
+import { logger } from '../shared/logger';
+
+const log = logger.child({ module: 'importer.uploader' });
 
 /**
  * Normalizes text to lowercase and removes accents/diacritics for uniform search.
@@ -170,11 +173,10 @@ function canonicalize(value: any): any {
 export function filterAutomatedBatch(records: SanctionRecord[]): SanctionRecord[] {
   const dropped = records.filter((r) => r.source === 'CUSTOM');
   if (dropped.length > 0) {
-    console.warn(
-      `Dropping ${dropped.length} CUSTOM-sourced record(s) from an automated import batch ` +
-      `(ids: ${dropped.map((r) => r.id).join(', ')}) — custom records may only be created ` +
-      `via the dedicated custom-records path.`,
-    );
+    log.warn('batch.custom_records_dropped', {
+      count: dropped.length,
+      ids: dropped.map((r) => r.id),
+    });
   }
   return records.filter((r) => r.source !== 'CUSTOM');
 }
@@ -221,7 +223,7 @@ export async function uploadRecords(records: SanctionRecord[], importId?: string
   const batchSize = 500;
   const effectiveImportId = importId || generateImportId();
 
-  console.log(`Starting upload of ${records.length} records to Firestore...`);
+  log.info('upload.start', { recordCount: records.length, importId: effectiveImportId });
 
   for (let i = 0; i < records.length; i += batchSize) {
     const chunk = records.slice(i, i + batchSize);
@@ -290,10 +292,15 @@ export async function uploadRecords(records: SanctionRecord[], importId?: string
     });
 
     await batch.commit();
-    console.log(`Uploaded batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(records.length / batchSize)} (${chunk.length} records)`);
+    log.info('upload.batch_committed', {
+      importId: effectiveImportId,
+      batchNumber: Math.floor(i / batchSize) + 1,
+      totalBatches: Math.ceil(records.length / batchSize),
+      batchSize: chunk.length,
+    });
   }
 
-  console.log('All records uploaded successfully!');
+  log.info('upload.complete', { importId: effectiveImportId, recordCount: records.length });
 }
 
 /**

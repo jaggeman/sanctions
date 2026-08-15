@@ -1,6 +1,9 @@
 import * as sax from 'sax';
 import * as fs from 'fs-extra';
 import { SanctionRecord, Address, Identification, Regulation, NameAlias, BirthDate, ContactInfo } from '../../shared/types';
+import { logger } from '../../shared/logger';
+
+const log = logger.child({ module: 'importer.parsers.eu' });
 
 /**
  * Parser for the EU Financial Sanctions Database (FSD) consolidated export,
@@ -355,7 +358,7 @@ function mapEntityToRecord(entry: any): SanctionRecord | null {
   const logicalId = attr(entry, 'logicalId');
   if (!logicalId) return null;
   if (!SAFE_LOGICAL_ID.test(logicalId)) {
-    console.warn(`Skipping EU entity with unsafe logicalId: ${JSON.stringify(logicalId)}`);
+    log.warn('entity.skipped_unsafe_logical_id', { logicalId });
     return null;
   }
 
@@ -472,7 +475,7 @@ export async function parseEUListStreaming(
   filePath: string,
   onRecord: (record: SanctionRecord) => void | Promise<void>,
 ): Promise<number> {
-  console.log(`Streaming EU sanctions list from ${filePath}...`);
+  log.info('stream.start', { filePath });
 
   return new Promise((resolve, reject) => {
     const parserStream = sax.createStream(true, { trim: false, lowercase: false });
@@ -578,9 +581,9 @@ export async function parseEUListStreaming(
         if (settled) return;
         settled = true;
         if (emitted === 0) {
-          console.warn('No sanctionEntity found in EU XML file.');
+          log.warn('stream.no_entities_found', { filePath });
         }
-        console.log(`Streamed ${emitted} EU entities.`);
+        log.info('stream.complete', { filePath, entityCount: emitted });
         resolve(emitted);
       }, fail);
     });
@@ -600,6 +603,6 @@ export async function parseEUList(filePath: string): Promise<SanctionRecord[]> {
   await parseEUListStreaming(filePath, (record) => {
     records.push(record);
   });
-  console.log(`Parsed ${records.length} EU records.`);
+  log.info('parse.complete', { filePath, recordCount: records.length });
   return records;
 }
