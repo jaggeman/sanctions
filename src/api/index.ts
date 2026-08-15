@@ -11,6 +11,7 @@ import { db } from '../shared/firebase';
 import { runImport } from '../importer';
 import { processUpload } from '../importer/uploadPipeline';
 import { tokensRouter } from './routes/tokens';
+import { decisionsRouter } from './routes/decisions';
 import { runSearch } from '../search';
 import { SanctionSource } from '../shared/types';
 import { createOtp, verifyOtp } from '../auth/otpStore';
@@ -184,6 +185,10 @@ app.get('/openapi.json', (req, res) => {
 // can reach this today. It is NOT yet admin-role-specific — requireAdmin is
 // still a no-op placeholder. Tracked in issue #17.
 app.use('/api/admin/tokens', tokensRouter);
+
+// Screening adjudications (false-positive/true-positive decisions, issue #22).
+// Inherits the blanket requireAuth session gate above.
+app.use('/api/decisions', decisionsRouter);
 
 /**
  * GET /api/search

@@ -270,3 +270,43 @@ describe('firestore.rules — imports/{importId} collection (issue #7)', () => {
     });
   });
 });
+
+// Issue #22 acceptance criterion: "Firestore rules test for the new
+// collection (mirror the overrides block)" — already covered by the blanket
+// deny-all backstop above, but named explicitly, so it gets its own proof
+// rather than relying solely on the generic "anything_else" case.
+describe('firestore.rules — decisions/{entityId__subjectId} collection (issue #22)', () => {
+  const SAMPLE_DECISION = {
+    entityId: 'EU-1',
+    subjectId: 'customer-acme',
+    verdict: 'false_positive',
+    decidedBy: 'analyst@example.com',
+    decidedAt: '2026-08-15T00:00:00.000Z',
+  };
+
+  it('denies an unauthenticated client writing a decision', async () => {
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('decisions').doc('EU-1__customer-acme').set(SAMPLE_DECISION));
+  });
+
+  it('denies an unauthenticated client reading a decision', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().collection('decisions').doc('EU-1__customer-acme').set(SAMPLE_DECISION);
+    });
+
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('decisions').doc('EU-1__customer-acme').get());
+  });
+
+  it('denies even an authenticated client — no token is privileged without a real auth system', async () => {
+    const authedDb = testEnv.authenticatedContext('some-user-id').firestore();
+    await assertFails(authedDb.collection('decisions').doc('EU-1__customer-acme').set(SAMPLE_DECISION));
+  });
+
+  it('still allows the trusted server path (Admin SDK) to read and write decisions freely', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await assertSucceeds(ctx.firestore().collection('decisions').doc('EU-1__customer-acme').set(SAMPLE_DECISION));
+      await assertSucceeds(ctx.firestore().collection('decisions').doc('EU-1__customer-acme').get());
+    });
+  });
+});
