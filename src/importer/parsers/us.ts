@@ -1,5 +1,8 @@
 import { SanctionRecord, Address, NameAlias, BirthDate } from '../../shared/types';
 import { streamXmlRecords } from './xmlSubtreeStream';
+import { logger } from '../../shared/logger';
+
+const log = logger.child({ module: 'importer.parsers.us' });
 
 /**
  * Issue #6: OFAC SDN has no strong/language markers on aliases and no
@@ -54,7 +57,7 @@ function mapEntryToRecord(entry: any): SanctionRecord | null {
   const uid = String(entry.uid ?? '').trim();
   if (!uid) return null;
   if (!SAFE_UID.test(uid)) {
-    console.warn(`Skipping US SDN entry with unsafe uid: ${JSON.stringify(uid)}`);
+    log.warn('entry.skipped_unsafe_uid', { uid });
     return null;
   }
 
@@ -166,7 +169,7 @@ export async function parseUSListStreaming(
   filePath: string,
   onRecord: (record: SanctionRecord) => void | Promise<void>,
 ): Promise<number> {
-  console.log(`Streaming US OFAC SDN list from ${filePath}...`);
+  log.info('stream.start', { filePath });
   let emitted = 0;
 
   await streamXmlRecords(filePath, 'sdnEntry', async (subtree) => {
@@ -177,9 +180,9 @@ export async function parseUSListStreaming(
   });
 
   if (emitted === 0) {
-    console.warn('No sdnEntry found in US XML file.');
+    log.warn('stream.no_entries_found', { filePath });
   }
-  console.log(`Streamed ${emitted} US OFAC records.`);
+  log.info('stream.complete', { filePath, recordCount: emitted });
   return emitted;
 }
 

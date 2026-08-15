@@ -14,6 +14,9 @@ import {
 } from './diff';
 import { invalidateSearchIndex } from '../search';
 import { SanctionRecord, SanctionSource } from '../shared/types';
+import { logger } from '../shared/logger';
+
+const log = logger.child({ module: 'importer.index' });
 
 interface ImportOptions {
   sources?: ('EU' | 'UN' | 'US')[];
@@ -187,7 +190,7 @@ export async function runImport(options: ImportOptions = {}): Promise<{
   let totalParsed = 0;
   let totalUploaded = 0;
 
-  console.log(`Starting import process for sources: ${sources.join(', ')}`);
+  log.info('import.start', { sources });
 
   try {
     const downloadsDir = path.resolve(__dirname, '../../downloads');
@@ -227,7 +230,7 @@ export async function runImport(options: ImportOptions = {}): Promise<{
         // abort(), not finish(): a partial parse cannot tell "removed
         // upstream" from "never reached", so nothing is delisted.
         diffs.push(session.abort());
-        console.error(`Error importing EU sanctions list: ${error.message}`);
+        log.error('import.source_failed', { source: 'EU', error });
       }
 
       // finish() runs OUTSIDE the catch on purpose. A parse failure is
@@ -254,7 +257,7 @@ export async function runImport(options: ImportOptions = {}): Promise<{
         unParseSucceeded = true;
       } catch (error: any) {
         diffs.push(session.abort());
-        console.error(`Error importing UN sanctions list: ${error.message}`);
+        log.error('import.source_failed', { source: 'UN', error });
         importedCounts.UN = 0;
       }
       if (unParseSucceeded) diffs.push(await session.finish());
@@ -291,7 +294,7 @@ export async function runImport(options: ImportOptions = {}): Promise<{
       } catch (error: any) {
         await flush().catch(() => {});
         diffs.push(session.abort());
-        console.error(`Error importing US sanctions list: ${error.message}`);
+        log.error('import.source_failed', { source: 'US', error });
       }
       if (usParseSucceeded) diffs.push(await session.finish());
 
@@ -317,10 +320,10 @@ export async function runImport(options: ImportOptions = {}): Promise<{
           totalUploaded += await session.addChunk(records);
           diffs.push(await session.finish());
         } else {
-          console.error(`CSV file not found at path: ${absoluteCsvPath}`);
+          log.error('import.csv_file_not_found', { path: absoluteCsvPath });
         }
       } catch (error: any) {
-        console.error(`Error importing CSV file: ${error.message}`);
+        log.error('import.source_failed', { source: 'CSV', error });
       }
     }
 
@@ -332,12 +335,15 @@ export async function runImport(options: ImportOptions = {}): Promise<{
     if (totalParsed > 0) {
       const delisted = diffs.reduce((n, d) => n + d.counts.delisted, 0);
       const skipped = diffs.reduce((n, d) => n + d.counts.skipped, 0);
-      console.log(
-        `Import finished: ${totalParsed} parsed, ${totalUploaded} written, ` +
-        `${delisted} delisted, ${skipped} skipped across ${diffs.length} source(s).`,
-      );
+      log.info('import.finished', {
+        parsed: totalParsed,
+        uploaded: totalUploaded,
+        delisted,
+        skipped,
+        sourceCount: diffs.length,
+      });
       if (totalUploaded === 0 && delisted === 0 && skipped > 0) {
-        console.warn('Every parsed record was skipped — see the CUSTOM guard in startDiffSession.');
+        log.warn('import.all_records_skipped');
         return {
           success: false,
           importedCounts,
@@ -347,11 +353,11 @@ export async function runImport(options: ImportOptions = {}): Promise<{
       }
       return { success: true, importedCounts, diffs };
     } else {
-      console.warn('No records were parsed or imported.');
+      log.warn('import.nothing_parsed');
       return { success: false, importedCounts, error: 'No records parsed' };
     }
   } catch (error: any) {
-    console.error(`Import pipeline failed: ${error.message}`);
+    log.error('import.pipeline_failed', { error });
     return { success: false, importedCounts, error: error.message };
   }
 }
@@ -368,11 +374,11 @@ if (require.main === module) {
     csvSeparator: ';',
   })
     .then((res) => {
-      console.log('Import completed:', res);
+      log.info('cli_run.completed', { result: res });
       process.exit(0);
     })
     .catch((err) => {
-      console.error('Import failed with error:', err);
+      log.error('cli_run.failed', { error: err });
       process.exit(1);
     });
 }
