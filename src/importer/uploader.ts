@@ -286,9 +286,12 @@ export async function uploadRecords(records: SanctionRecord[], importId?: string
         }
         batch.set(docRef, toWrite, { merge: true });
         writeVersion(batch, docRef, effectiveImportId, changeType, now, record);
-      } else {
-        batch.set(docRef, record, { merge: true });
       }
+      // changeType === null: truly unchanged (issue #108) — the docstring
+      // above says this case "writes nothing," so it must not, not even a
+      // same-data merge. record's in-memory contentHash/searchNames were
+      // already recomputed above for this batch's own bookkeeping, but
+      // nothing about the stored doc actually needs to change.
     });
 
     await batch.commit();
@@ -342,4 +345,15 @@ export async function delistRecords(ids: string[], importId?: string): Promise<v
 
     await batch.commit();
   }
+}
+
+/**
+ * Returns a record's full version trail, newest first (issue #12 — record
+ * detail view). Empty array if the record has no version history (or
+ * doesn't exist) — callers that need to distinguish "no history" from
+ * "no such record" should check the record itself first.
+ */
+export async function listRecordVersions(id: string): Promise<RecordVersion[]> {
+  const snapshot = await db.collection('sanctions').doc(id).collection('versions').orderBy('changedAt', 'desc').get();
+  return snapshot.docs.map((doc: any) => doc.data() as RecordVersion);
 }

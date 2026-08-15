@@ -65,6 +65,28 @@
               "type": "boolean",
               "default": false
             }
+          },
+          {
+            "name": "threshold",
+            "in": "query",
+            "description": "Lägsta matchningspoäng (0-100) för att en träff ska tas med. Standard 65.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100,
+              "default": 65
+            }
+          },
+          {
+            "name": "dob",
+            "in": "query",
+            "description": "Födelsedatum (helt eller delvis, t.ex. ett årtal) som boostar — men inte krävs av — poster vars datesOfBirth innehåller värdet. Inte ett hårt filter: en post utan matchande datum exkluderas aldrig enbart av detta.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "1952-10-07"
+            }
           }
         ],
         "responses": {
@@ -73,10 +95,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/SanctionRecord"
-                  }
+                  "$ref": "#/components/schemas/SearchResponse"
                 }
               }
             }
@@ -132,10 +151,96 @@
         }
       }
     },
+    "/api/sanctions/{id}/versions": {
+      "get": {
+        "summary": "Hämta versionshistorik för en sanktionspost",
+        "description": "Listar hela ändringshistoriken (skapad/uppdaterad/avlistad/relistad) för en post, nyaste först. Kräver antingen en inloggad session eller en API-token med read-scope (issue #36).",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Unikt ID för sanktionsposten",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versionshistorik, nyaste först",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/RecordVersion" }
+                }
+              }
+            }
+          },
+          "404": { "description": "Hittade inte posten" }
+        }
+      }
+    },
+    "/api/imports": {
+      "get": {
+        "summary": "Lista importhistorik",
+        "description": "Listar tidigare uppladdningar/importer, nyaste först (issue #12). Kräver antingen en inloggad session eller en API-token med read-scope (issue #36).",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max antal (standard 20, max 100)",
+            "required": false,
+            "schema": { "type": "integer", "default": 20 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Importhistorik",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/ImportRecord" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/imports/{id}": {
+      "get": {
+        "summary": "Hämta detaljer för en import",
+        "description": "Hämtar en enskild imports status, källa, format och räknare (issue #12). Kräver antingen en inloggad session eller en API-token med read-scope (issue #36).",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Import-ID (== filens SHA-256)",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Importdetaljer",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ImportRecord" }
+              }
+            }
+          },
+          "404": { "description": "Hittade inte importen" }
+        }
+      }
+    },
     "/api/import": {
       "post": {
         "summary": "Trigga en uppdatering/import av data",
-        "description": "Startar en bakgrundsimport för att ladda ner och uppdatera sanktionslistorna. Kräver antingen en inloggad session eller en API-token med write-scope (issue #36).",
+        "description": "Köar en import (körs i en separat Cloud Task, garanterat till slutförande oavsett vad som händer med detta anrop — issue #43) för att ladda ner och uppdatera sanktionslistorna. Kräver antingen en inloggad session eller en API-token med write-scope (issue #36).",
         "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
         "requestBody": {
           "content": {
@@ -197,7 +302,7 @@
             }
           },
           "202": {
-            "description": "Import startad i bakgrunden (endast när dryRun inte är satt)",
+            "description": "Importen är köad (Cloud Task) och körs oberoende av detta anrop",
             "content": {
               "application/json": {
                 "schema": {
@@ -222,6 +327,9 @@
           },
           "403": {
             "description": "API-token saknar write-scope"
+          },
+          "500": {
+            "description": "Kunde inte köa importen (t.ex. Cloud Tasks otillgängligt)"
           }
         }
       }
@@ -619,6 +727,52 @@
           }
         }
       },
+      "SearchResponse": {
+        "type": "object",
+        "description": "Faktiskt svar från GET /api/search (src/api/index.ts) — inte en bar array, till skillnad från hur det tidigare stod i denna spec.",
+        "required": ["results", "totalMatches", "truncated"],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ScoredResult" }
+          },
+          "totalMatches": {
+            "type": "integer",
+            "description": "Antal träffar innan 'limit' tillämpades."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "true om totalMatches är fler än vad 'results' innehåller, dvs fler träffar finns än vad som returnerades."
+          }
+        }
+      },
+      "ScoredResult": {
+        "description": "En sanktionspost så som den returneras av GET /api/search, med matchningsinformation utöver den lagrade posten.",
+        "allOf": [
+          { "$ref": "#/components/schemas/SanctionRecord" },
+          {
+            "type": "object",
+            "required": ["score", "matchedAlias", "overriddenFields"],
+            "properties": {
+              "score": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Matchningspoäng för denna sökning (fuzzy namnmatchning, eller 100 vid exakt pass-/ID-träff)."
+              },
+              "matchedAlias": {
+                "type": "string",
+                "description": "Vilket namn (primaryName eller alias) som gav den högsta poängen."
+              },
+              "overriddenFields": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Fältnamn som lokalt korrigerats via /api/overrides och sammanslagits in i denna post."
+              }
+            }
+          }
+        ]
+      },
       "SanctionRecord": {
         "type": "object",
         "required": ["id", "source", "type", "primaryName", "aliases", "createdAt", "updatedAt"],
@@ -745,6 +899,50 @@
           },
           "overriddenAt": { "type": "string", "format": "date-time" },
           "reason": { "type": "string", "example": "Source transliteration was inaccurate" }
+        }
+      },
+      "RecordVersion": {
+        "type": "object",
+        "required": ["importId", "changedAt", "changeType", "record"],
+        "properties": {
+          "importId": { "type": "string" },
+          "changedAt": { "type": "string", "format": "date-time" },
+          "changeType": {
+            "type": "string",
+            "enum": ["created", "updated", "delisted", "relisted"]
+          },
+          "record": { "$ref": "#/components/schemas/SanctionRecord" }
+        }
+      },
+      "ImportRecord": {
+        "type": "object",
+        "required": ["importId", "filename", "sha256", "source", "format", "uploadedAt", "status"],
+        "properties": {
+          "importId": { "type": "string", "description": "== the file's SHA-256" },
+          "filename": { "type": "string" },
+          "sha256": { "type": "string" },
+          "sizeBytes": { "type": "integer" },
+          "source": { "type": "string", "enum": ["EU", "UN", "US", "PEP", "CUSTOM"] },
+          "format": {
+            "type": "string",
+            "enum": ["eu-xml-1.1", "eu-csv-1.1", "eu-csv-1.0", "un-xml", "us-xml", "csv"]
+          },
+          "fileGenerationDate": { "type": "string", "nullable": true },
+          "uploadedBy": { "type": "string", "nullable": true },
+          "uploadedAt": { "type": "string", "format": "date-time" },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "parsing", "applied", "failed", "rejected"]
+          },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "parsed": { "type": "integer" },
+              "uploaded": { "type": "integer" }
+            }
+          },
+          "duplicateOfImportId": { "type": "string" },
+          "error": { "type": "string" }
         }
       }
     }

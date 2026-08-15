@@ -9,8 +9,11 @@ import * as os from 'os';
 import multer from 'multer';
 import * as swaggerUi from 'swagger-ui-express';
 import { db } from '../shared/firebase';
+import { enqueueImportTask } from '../importer/taskQueue';
 import { runImport } from '../importer';
 import { processUpload } from '../importer/uploadPipeline';
+import { listImports, findImportBySha256 } from '../importer/importRecord';
+import { listRecordVersions } from '../importer/uploader';
 import { tokensRouter } from './routes/tokens';
 import { decisionsRouter } from './routes/decisions';
 import { runSearch } from '../search';
@@ -66,6 +69,10 @@ function uploadSingleFile(fieldName: string) {
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Allow-list for Firestore document IDs taken from a URL path param (CLAUDE.md
+// §6) — rejects '/' and other structural characters so a client can't smuggle
+// a multi-segment path (e.g. "../otherCollection/doc") into .doc(id).
+const DOC_ID_PATTERN = /^[A-Za-z0-9_.-]{1,200}$/;
 // importId (issue #8) becomes a Firestore document ID under
 // sanctions/{id}/versions/{importId} — validate it before it ever reaches
 // there, same as any other client-supplied value used as a storage key
@@ -206,6 +213,13 @@ app.get('/api/auth/session', requireAuth, (req, res) => {
 
 /**
  * POST /api/auth/logout
+ * Deliberately not gated by requireAuth (issue #108, explicit decision):
+ * it only ever destroys the session matching whatever `sid` cookie the
+ * caller presents, so at most a caller logs out their own (possibly
+ * already-invalid) session — there is no cross-account effect to guard
+ * against, and requiring a still-valid session just to end that session
+ * would reject the exact "my session already looks broken" case logout
+ * exists to recover from.
  */
 app.post('/api/auth/logout', async (req, res) => {
   const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
@@ -228,10 +242,15 @@ try {
   console.error('Failed to load openapi.json. Run npm run build or verify path.');
 }
 
-// Swagger UI Route
+// Swagger UI Route.
+// Deliberately public, no auth (issue #108, explicit decision): this is API
+// documentation, not API data — the route/schema shapes it exposes have no
+// data-confidentiality value on their own, and self-registering integrators
+// need to be able to read the docs before they have a session or token to
+// authenticate a real call with.
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openApiSpec));
 
-// Raw OpenAPI JSON endpoint
+// Raw OpenAPI JSON endpoint — same reasoning as /api-docs above.
 app.get('/openapi.json', (req, res) => {
   res.json(openApiSpec);
 });
@@ -265,7 +284,7 @@ app.use('/api/decisions', decisionsRouter);
  * — this is the exact route external, session-less integrations need.
  */
 app.get('/api/search', requireAuthOrScope('read'), async (req, res): Promise<any> => {
-  const { q, source, type, limit, threshold, includeDelisted } = req.query;
+  const { q, source, type, limit, threshold, includeDelisted, dob } = req.query;
 
   if (!q || typeof q !== 'string') {
     return res.status(400).json({ error: 'Query parameter "q" is required.' });
@@ -286,6 +305,9 @@ app.get('/api/search', requireAuthOrScope('read'), async (req, res): Promise<any
       // opts in. Filtered inside runSearch rather than here, so a delisted record
       // never enters the matcher and cannot surface as a scored hit.
       includeDelisted: includeDelisted === 'true',
+      // Booster, not a hard filter (src/search/index.ts) — was already built
+      // into runSearch/matcher but never reachable from this route.
+      dob: typeof dob === 'string' ? dob : undefined,
     });
 
     res.json({ results, totalMatches, truncated });
@@ -329,8 +351,78 @@ app.get('/api/sanctions/:id', requireAuthOrScope('read'), async (req, res): Prom
 });
 
 /**
+ * GET /api/sanctions/:id/versions
+ * Version trail for a record, newest first (issue #12), backed by the
+ * sanctions/{id}/versions subcollection issue #9 writes to.
+ */
+app.get('/api/sanctions/:id/versions', requireAuthOrScope('read'), async (req, res): Promise<any> => {
+  const { id } = req.params;
+  if (!DOC_ID_PATTERN.test(id)) {
+    return res.status(400).json({ error: 'Invalid record ID.' });
+  }
+
+  try {
+    const doc = await db.collection('sanctions').doc(id).get();
+    if (!doc.exists) {
+      return res.status(404).json({ error: `Sanction record with ID ${id} not found.` });
+    }
+    const versions = await listRecordVersions(id);
+    res.json(versions);
+  } catch (error: any) {
+    console.error('List record versions error:', error);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
+
+/**
+ * GET /api/imports
+ * List import audit records, newest first (issue #12 — import history view).
+ */
+app.get('/api/imports', requireAuthOrScope('read'), async (req, res): Promise<any> => {
+  const requestedLimit = Math.min(parseInt(req.query.limit as string) || 20, 100);
+
+  try {
+    const imports = await listImports(requestedLimit);
+    res.json(imports);
+  } catch (error: any) {
+    console.error('List imports error:', error);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
+
+/**
+ * GET /api/imports/:id
+ * Retrieve a single import's detail (issue #12).
+ */
+app.get('/api/imports/:id', requireAuthOrScope('read'), async (req, res): Promise<any> => {
+  const { id } = req.params;
+  if (!DOC_ID_PATTERN.test(id)) {
+    return res.status(400).json({ error: 'Invalid import ID.' });
+  }
+
+  try {
+    const record = await findImportBySha256(id);
+    if (!record) {
+      return res.status(404).json({ error: `Import with ID ${id} not found.` });
+    }
+    res.json(record);
+  } catch (error: any) {
+    console.error('Get import detail error:', error);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
+
+/**
  * POST /api/import
- * Trigger background import process.
+ * Queue a full import (issue #43). Handed off to `runImportTask`, a Cloud
+ * Tasks-dispatched function with its own instance/timeout budget, instead of
+ * running in-process here: `api` is pinned to maxInstances: 1 (issue #16),
+ * so a multi-minute import awaited in this same function would freeze
+ * login/search for everyone, and a bare fire-and-forget call is not
+ * guaranteed to run to completion if this instance freezes/recycles right
+ * after the response is sent. Cloud Tasks durably persists and retries the
+ * job independent of this request's own fate, so the 202 below is now
+ * actually true rather than merely optimistic.
  *
  * Accepts either a logged-in session or a `write`-scoped API token (issue #36).
  */
@@ -375,28 +467,21 @@ app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<a
     }
   }
 
-  // Trigger import in the background
-  console.log('Import triggered via REST API. Starting background run...');
+  try {
+    // importOptions already carries mode/dryRun/force/importId — building a
+    // fresh object here (as an earlier version of this route did) silently
+    // drops them before they reach the worker, defeating the diff engine's
+    // sync-mode guard and the delist-guard force override for anyone using
+    // the async path instead of dryRun.
+    await enqueueImportTask(importOptions);
+  } catch (error: any) {
+    console.error('Failed to queue import task:', error);
+    return res.status(500).json({ error: 'Failed to start import', details: error.message });
+  }
 
-  runImport(importOptions)
-    .then((result) => {
-      console.log('API Background Import finished:', result);
-    })
-    .catch((err) => {
-      // A refused delist guard (issue #8's DelistGuardError) surfaces only
-      // here today, same as any other background-import failure — the 202
-      // already went out by the time this rejects. Known gap, not solved by
-      // this change: making the sync-mode apply path synchronous (or adding
-      // a status-polling endpoint) is bigger than this diff engine's own
-      // scope and touches the same fire-and-forget pattern every endpoint
-      // in this file uses.
-      console.error('API Background Import failed:', err);
-    });
-
-  // Accept request and return immediately (202 Accepted)
   res.status(202).json({
     status: 'import_started',
-    message: 'The import process has been started in the background. Check server logs for progress.',
+    message: 'The import has been queued and will run independently of this request.',
   });
 });
 
@@ -523,7 +608,8 @@ if (require.main === module) {
 // PR that removes it explicitly rather than as a side effect of this one.
 export const api = functions.https.onRequest({ maxInstances: 1 }, app);
 
-// Re-exported so the scheduled Cloud Function is picked up: `dist/api/index.js`
-// (package.json's `main`) is the sole file Firebase Functions discovery walks
-// at deploy time (issue #97).
-export { scheduledSourceFetch };
+// Both re-exported so their deployable Cloud Functions are discovered:
+// `dist/api/index.js` (package.json's `main`) is the sole file Firebase
+// Functions discovery walks at deploy time.
+export { runImportTask } from '../importer/importTask'; // issue #43
+export { scheduledSourceFetch }; // issue #97

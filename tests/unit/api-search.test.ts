@@ -42,6 +42,7 @@ const runSearch = vi.fn();
 const verifyApiToken = vi.fn();
 
 vi.mock('../../src/shared/firebase', () => ({ db: fakeDb }));
+vi.mock('../../src/importer/taskQueue', () => ({ enqueueImportTask: vi.fn(async () => {}) }));
 vi.mock('../../src/importer', () => ({ runImport: vi.fn(async () => ({ success: true, importedCounts: {} })) }));
 vi.mock('../../src/search', () => ({ runSearch }));
 vi.mock('../../src/shared/apiTokens', () => ({ verifyApiToken }));
@@ -105,6 +106,18 @@ describe('GET /api/search', () => {
       threshold: 70,
       includeDelisted: false,
     });
+  });
+
+  it('passes dob through to runSearch so the date-of-birth booster is actually reachable via the API', async () => {
+    await agent.get('/api/search').query({ q: 'Vladimir Putin', dob: '1952-10-07' });
+
+    expect(runSearch).toHaveBeenCalledWith('Vladimir Putin', expect.objectContaining({ dob: '1952-10-07' }));
+  });
+
+  it('omits dob when not provided, rather than passing an empty string through as a real filter', async () => {
+    await agent.get('/api/search').query({ q: 'Vladimir Putin' });
+
+    expect(runSearch).toHaveBeenCalledWith('Vladimir Putin', expect.not.objectContaining({ dob: expect.anything() }));
   });
 
   it('returns each hit with its score and matched alias', async () => {
@@ -278,8 +291,11 @@ describe('POST /api/import — force:true restricted to admins (issue #105)', ()
     const res = await agent.post('/api/import').send({ sources: ['EU'], force: true });
     expect(res.status).toBe(202);
 
-    const { runImport } = await import('../../src/importer');
-    expect(runImport).toHaveBeenCalledWith(expect.objectContaining({ force: true }));
+    // The import now runs on a Cloud Tasks worker (issue #43), enqueued
+    // rather than called in-process — assert on what actually crosses the
+    // boundary.
+    const { enqueueImportTask } = await import('../../src/importer/taskQueue');
+    expect(enqueueImportTask).toHaveBeenCalledWith(expect.objectContaining({ force: true }));
   });
 
   it('rejects force:true for a logged-in non-admin session with 403, without ever calling runImport', async () => {

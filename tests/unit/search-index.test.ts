@@ -4,6 +4,8 @@ import type { SanctionRecord, Override } from '../../src/shared/types';
 let allRecords: SanctionRecord[] = [];
 let allOverrides: Override[] = [];
 let getCallCount = 0;
+// undefined = the meta/searchIndex doc doesn't exist yet, mirrors a fresh DB.
+let metaVersion: number | undefined = undefined;
 
 // Issue #35: getRecords() now also fetches the `overrides` collection
 // alongside `sanctions` and merges each override in. Empty by default so
@@ -26,6 +28,25 @@ const fakeDb = {
         get: vi.fn(async () => ({
           docs: allOverrides.map((o) => ({ id: o.entityId, data: () => o })),
         })),
+      };
+    }
+    if (name === 'meta') {
+      return {
+        doc: vi.fn((id: string) => {
+          if (id !== 'searchIndex') throw new Error(`unexpected meta doc ${id}`);
+          return {
+            get: vi.fn(async () => ({
+              exists: metaVersion !== undefined,
+              data: () => (metaVersion !== undefined ? { version: metaVersion } : undefined),
+            })),
+            // Real writes use FieldValue.increment(1); the fake applies the
+            // increment it's meant to simulate rather than inspecting the
+            // sentinel value.
+            set: vi.fn(async () => {
+              metaVersion = (metaVersion || 0) + 1;
+            }),
+          };
+        }),
       };
     }
     throw new Error(`unexpected collection ${name}`);
@@ -61,11 +82,16 @@ function record(overrides: Partial<SanctionRecord> = {}): SanctionRecord {
   };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   allRecords = [];
   allOverrides = [];
   getCallCount = 0;
-  invalidateSearchIndex();
+  // Deliberately not resetting metaVersion: it's a monotonic counter meant
+  // to keep incrementing across calls, exactly like the real Firestore
+  // FieldValue.increment(1) it stands in for. Resetting it here would make
+  // every test converge back to the same version number and defeat the
+  // very staleness check being tested.
+  await invalidateSearchIndex();
   vi.clearAllMocks();
 });
 
@@ -198,7 +224,36 @@ describe('runSearch — index caching', () => {
   it('refetches after invalidateSearchIndex() is called', async () => {
     allRecords = [record({ id: 'PEP-1' })];
     await runSearch('Vladimir Putin');
-    invalidateSearchIndex();
+    await invalidateSearchIndex();
+    await runSearch('Vladimir Putin');
+    expect(getCallCount).toBe(2);
+  });
+});
+
+// Issue #43: runImport now executes in its own Cloud Function (a Cloud
+// Tasks-dispatched worker), separate from the `api` function that serves
+// /api/search. A plain in-memory flag flip in invalidateSearchIndex() would
+// only clear the *worker's* copy of cachedRecords and never reach api's —
+// search would keep serving stale data again, just via a new mechanism. The
+// fix is a shared Firestore marker (meta/searchIndex.version) every
+// instance checks before trusting its own local cache.
+describe('runSearch — cross-instance index invalidation (issue #43)', () => {
+  it('invalidateSearchIndex writes the shared Firestore marker, not just a local flag', async () => {
+    const before = metaVersion;
+    await invalidateSearchIndex();
+    expect(metaVersion).toBe((before || 0) + 1);
+  });
+
+  it('detects an invalidation made by a different process via the shared marker, without this process ever calling invalidateSearchIndex itself', async () => {
+    allRecords = [record({ id: 'PEP-1' })];
+    await runSearch('Vladimir Putin');
+    expect(getCallCount).toBe(1);
+
+    // Simulate a separate Cloud Function instance (the import worker)
+    // calling invalidateSearchIndex() — bump the shared marker directly,
+    // bypassing this process's own in-memory state entirely.
+    metaVersion = (metaVersion || 0) + 1;
+
     await runSearch('Vladimir Putin');
     expect(getCallCount).toBe(2);
   });

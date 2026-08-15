@@ -1,3 +1,4 @@
+import * as admin from 'firebase-admin';
 import { db } from '../shared/firebase';
 import { SanctionRecord, Override } from '../shared/types';
 import { scoreNameMatch } from './matcher';
@@ -35,13 +36,31 @@ const MIN_PASSPORT_QUERY_LENGTH = 4; // avoids matching every ID on a 1-2 char q
  * three copies (issue #11's explicit requirement). Loaded once and cached;
  * `invalidateSearchIndex` should be called after a successful import so the
  * next search picks up new/changed records rather than serving a stale set.
+ *
+ * Since issue #43, imports run in their own Cloud Function
+ * (`runImportTask`), a separate process from whichever `api` instance
+ * serves `/api/search` — a plain in-memory flag flip here would only clear
+ * the *import worker's* copy and never reach api's, silently reintroducing
+ * a stale-index bug. `meta/searchIndex.version` is a shared Firestore
+ * counter every instance checks before trusting its own local cache; one
+ * extra small doc read per search is far cheaper than the full `sanctions`
+ * collection read it's guarding.
  */
 type IndexedRecord = SanctionRecord & { overriddenFields: string[] };
 
 let cachedRecords: IndexedRecord[] | null = null;
+let cachedVersion: number | null = null;
 
-export function invalidateSearchIndex(): void {
-  cachedRecords = null;
+const searchIndexMetaDoc = () => db.collection('meta').doc('searchIndex');
+
+export async function invalidateSearchIndex(): Promise<void> {
+  await searchIndexMetaDoc().set({ version: admin.firestore.FieldValue.increment(1) }, { merge: true });
+}
+
+async function getCurrentVersion(): Promise<number> {
+  const snap = await searchIndexMetaDoc().get();
+  const version = snap.exists ? snap.data()?.version : undefined;
+  return typeof version === 'number' ? version : 0;
 }
 
 /**
@@ -53,7 +72,8 @@ export function invalidateSearchIndex(): void {
  * override write/delete, or the cache serves stale data until the next import.
  */
 async function getRecords(): Promise<IndexedRecord[]> {
-  if (cachedRecords === null) {
+  const currentVersion = await getCurrentVersion();
+  if (cachedRecords === null || currentVersion !== cachedVersion) {
     const [sanctionsSnapshot, overridesSnapshot] = await Promise.all([
       db.collection('sanctions').get(),
       db.collection('overrides').get(),
@@ -69,6 +89,7 @@ async function getRecords(): Promise<IndexedRecord[]> {
       const { record: merged, overriddenFields } = applyOverride(record, overridesByEntityId.get(record.id));
       return { ...merged, overriddenFields };
     });
+    cachedVersion = currentVersion;
   }
   return cachedRecords;
 }

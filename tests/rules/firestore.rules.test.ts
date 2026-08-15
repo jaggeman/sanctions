@@ -384,3 +384,30 @@ describe('firestore.rules — sessions/{sessionId} collection (issue #63)', () =
     });
   });
 });
+
+// Issue #43: meta/searchIndex is the cross-instance cache-invalidation
+// marker (a bare version counter, no user data) — covered by the blanket
+// deny-all backstop above like every other collection, given its own proof
+// here for the same explicitness reason as imports/{importId} above.
+describe('firestore.rules — meta/searchIndex collection (issue #43)', () => {
+  it('denies an unauthenticated client writing the search index marker', async () => {
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('meta').doc('searchIndex').set({ version: 1 }));
+  });
+
+  it('denies an unauthenticated client reading the search index marker', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().collection('meta').doc('searchIndex').set({ version: 1 });
+    });
+
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('meta').doc('searchIndex').get());
+  });
+
+  it('still allows the trusted server path (Admin SDK) to read and write the marker freely', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await assertSucceeds(ctx.firestore().collection('meta').doc('searchIndex').set({ version: 1 }));
+      await assertSucceeds(ctx.firestore().collection('meta').doc('searchIndex').get());
+    });
+  });
+});

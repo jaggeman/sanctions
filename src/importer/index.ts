@@ -18,7 +18,7 @@ import { logger } from '../shared/logger';
 
 const log = logger.child({ module: 'importer.index' });
 
-interface ImportOptions {
+export interface ImportOptions {
   sources?: ('EU' | 'UN' | 'US')[];
   csvPath?: string;
   csvSource?: 'PEP' | 'CUSTOM';
@@ -125,7 +125,7 @@ async function runUploadedFileImport(
     importedCounts[file.source] = parsed;
 
     if (!options.dryRun && (uploaded > 0 || diff.counts.delisted > 0)) {
-      invalidateSearchIndex();
+      await invalidateSearchIndex();
     }
 
     if (parsed === 0) {
@@ -329,7 +329,7 @@ export async function runImport(options: ImportOptions = {}): Promise<{
 
     // 5. Report
     if (!options.dryRun && totalUploaded > 0) {
-      invalidateSearchIndex(); // next search rebuilds the in-memory index with the new data
+      await invalidateSearchIndex(); // next search rebuilds the in-memory index with the new data
     }
 
     if (totalParsed > 0) {

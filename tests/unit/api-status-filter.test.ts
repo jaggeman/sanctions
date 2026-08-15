@@ -9,6 +9,9 @@ import { createFakeDb } from './helpers/fakeFirestore';
 let snapshotDocs: SanctionRecord[] = [];
 let docGetResult: { exists: boolean; data?: () => any } = { exists: false };
 const whereCalls: Array<[string, string, any]> = [];
+// Issue #43: src/search's getRecords() checks this shared version marker
+// before trusting its cache — undefined mirrors the doc not existing yet.
+let metaVersion: number | undefined = undefined;
 
 function makeQuery() {
   return {
@@ -46,6 +49,22 @@ const fakeDb = {
         doc: vi.fn(() => ({ get: vi.fn(async () => ({ exists: false })) })),
       };
     }
+    if (name === 'meta') {
+      return {
+        doc: vi.fn((id: string) => {
+          if (id !== 'searchIndex') throw new Error(`unexpected meta doc ${id}`);
+          return {
+            get: vi.fn(async () => ({
+              exists: metaVersion !== undefined,
+              data: () => (metaVersion !== undefined ? { version: metaVersion } : undefined),
+            })),
+            set: vi.fn(async () => {
+              metaVersion = (metaVersion || 0) + 1;
+            }),
+          };
+        }),
+      };
+    }
     if (name !== 'sanctions') throw new Error(`unexpected collection ${name}`);
     return {
       ...makeQuery(),
@@ -61,7 +80,7 @@ const fakeDb = {
 };
 
 vi.mock('../../src/shared/firebase', () => ({ db: fakeDb }));
-vi.mock('../../src/importer', () => ({ runImport: vi.fn(async () => ({ success: true, importedCounts: {} })) }));
+vi.mock('../../src/importer/taskQueue', () => ({ enqueueImportTask: vi.fn(async () => {}) }));
 vi.stubEnv('NODE_ENV', 'test');
 
 function record(overrides: Partial<SanctionRecord> = {}): SanctionRecord {
@@ -96,7 +115,7 @@ beforeEach(async () => {
   whereCalls.length = 0;
   // runSearch caches the whole collection in memory; drop it so each test's
   // snapshotDocs are actually read.
-  invalidateSearchIndex();
+  await invalidateSearchIndex();
   vi.clearAllMocks();
   await agent.post('/api/auth/verify-otp').send({ email: 'admin@sanctions.com', code: '123456' });
 });
