@@ -125,6 +125,20 @@ If another process on your machine already holds the Firestore emulator port, ch
 
 ## Configuration
 
+### `ALLOWED_EMAIL_DOMAINS` — required in production
+
+A comma-separated allow-list of the email domains permitted to log in at all. Without it, `POST /api/auth/request-otp` would email a one-time login code to *any* syntactically valid address, and `verify-otp` would hand out a full session for it — since the entire API sits behind that one session check, that is a two-request path to a working session for anyone on the internet.
+
+```
+ALLOWED_EMAIL_DOMAINS=yourcompany.com
+```
+
+The guard **fails closed**: if `ALLOWED_EMAIL_DOMAINS` is unset in production, nobody can log in — not even the dev test account — and both `request-otp` and `verify-otp` reject every address. That is deliberate — the alternative failure mode is open login for the whole internet — but it does mean **you must set this before deploying**, or nobody (including you) will be able to sign in.
+
+Outside production (`NODE_ENV !== 'production'`), an unset list falls back to the dev test account `admin@sanctions.com` so local work isn't blocked. Setting `ALLOWED_EMAIL_DOMAINS` supersedes that fallback entirely — once configured, even the dev test account needs its own domain on the list.
+
+Membership is re-read on every request (not just at login), so removing a domain from the list revokes every session using it immediately, on that session's very next request — no separate step and no need to wait for sessions to expire. Both endpoints reject a disallowed address with the exact same response shape as an allowed one, so the login flow can't be used to probe which domains are permitted.
+
 ### `ADMIN_EMAILS` — required in production
 
 A comma-separated allow-list of the email addresses permitted to reach the administrative endpoints (`/api/admin/*`, currently API token creation, listing and revocation).

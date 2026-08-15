@@ -18,6 +18,7 @@ import { sendOtpEmail } from '../auth/mailer';
 import { createSession, destroySession } from '../auth/session';
 import { requireAuth, SESSION_COOKIE_NAME } from '../auth/middleware';
 import { isAdminEmail } from '../auth/admins';
+import { isAllowedEmail } from '../auth/emailAllowlist';
 import { TEST_LOGIN_EMAIL, TEST_LOGIN_CODE, isTestLoginEnabled, isTestLoginEmail } from '../auth/testAccount';
 import { requestLogger } from './middleware/requestLogger';
 import { errorLogger } from './middleware/errorLogger';
@@ -89,6 +90,15 @@ app.post('/api/auth/request-otp', async (req, res): Promise<any> => {
     return res.json({ ok: true });
   }
 
+  // issue #33: reject an address whose domain isn't allow-listed with the
+  // SAME response as a real send — no email, no OTP created, but nothing in
+  // the response reveals that. Checked here (not just in verify-otp) so this
+  // endpoint can't be used to email codes to arbitrary strangers, which is a
+  // spam vector independent of the access question.
+  if (!isAllowedEmail(email)) {
+    return res.json({ ok: true });
+  }
+
   const code = createOtp(email);
   if (!code) {
     return res.status(429).json({ error: 'A code was already sent recently. Please wait before requesting another.' });
@@ -116,7 +126,10 @@ app.post('/api/auth/verify-otp', (req, res): any => {
 
   const isTestLogin = isTestLoginEnabled() && isTestLoginEmail(email) && code === TEST_LOGIN_CODE;
 
-  if (!isTestLogin && !verifyOtp(email, code)) {
+  // issue #33: same allow-list check as request-otp, defense in depth — even
+  // if a valid code somehow exists for a disallowed address, it can't be
+  // exchanged for a session. Same 401 shape as an invalid/expired code.
+  if (!isTestLogin && (!isAllowedEmail(email) || !verifyOtp(email, code))) {
     return res.status(401).json({ error: 'Invalid or expired code.' });
   }
 

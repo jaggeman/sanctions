@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 
 vi.mock('../../src/shared/firebase', () => ({ db: { collection: vi.fn() } }));
@@ -24,13 +24,18 @@ beforeEach(() => {
   vi.stubEnv('NODE_ENV', 'test');
 });
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe('POST /api/auth/request-otp', () => {
   it('rejects a missing/invalid email', async () => {
     const res = await request(api).post('/api/auth/request-otp').send({});
     expect(res.status).toBe(400);
   });
 
-  it('sends an email with a generated code for a real address', async () => {
+  it('sends an email with a generated code for a real address on an allowed domain', async () => {
+    vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'example.com');
     const res = await request(api).post('/api/auth/request-otp').send({ email: 'user@example.com' });
     expect(res.status).toBe(200);
     expect(sendOtpEmail).toHaveBeenCalledTimes(1);
@@ -45,12 +50,40 @@ describe('POST /api/auth/request-otp', () => {
   });
 
   it('rate limits a repeated request for the same email within the cooldown window (issue #16)', async () => {
+    vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'example.com');
     const first = await request(api).post('/api/auth/request-otp').send({ email: 'user@example.com' });
     expect(first.status).toBe(200);
 
     const second = await request(api).post('/api/auth/request-otp').send({ email: 'user@example.com' });
     expect(second.status).toBe(429);
     expect(sendOtpEmail).toHaveBeenCalledTimes(1); // no second email sent
+  });
+
+  it('issue #33: rejects a domain not on the allow-list with the SAME response as an allowed address, sending no email', async () => {
+    vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'example.com');
+
+    const allowed = await request(api).post('/api/auth/request-otp').send({ email: 'user@example.com' });
+    sendOtpEmail.mockClear();
+    const disallowed = await request(api).post('/api/auth/request-otp').send({ email: 'attacker@evil.com' });
+
+    expect(disallowed.status).toBe(allowed.status);
+    expect(disallowed.body).toEqual(allowed.body);
+    expect(sendOtpEmail).not.toHaveBeenCalled();
+  });
+
+  it('issue #33: production admits nobody when ALLOWED_EMAIL_DOMAINS is unset, not even the test account', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const res = await request(api).post('/api/auth/request-otp').send({ email: 'admin@sanctions.com' });
+    expect(res.status).toBe(200); // identical-looking response — no email, no error revealed
+    expect(sendOtpEmail).not.toHaveBeenCalled();
+  });
+
+  it('issue #33: the dev test account still gets a login code path when ALLOWED_EMAIL_DOMAINS is unset outside production', async () => {
+    const res = await request(api).post('/api/auth/request-otp').send({ email: 'admin@sanctions.com' });
+    expect(res.status).toBe(200);
+    // Handled by the pre-existing test-login branch (console-logged code, no
+    // real email) — asserting here only that this account is not swept up by
+    // the new allow-list rejection.
   });
 });
 
@@ -71,6 +104,7 @@ describe('POST /api/auth/verify-otp', () => {
   });
 
   it('logs in with a real generated code end-to-end', async () => {
+    vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'example.com');
     await request(api).post('/api/auth/request-otp').send({ email: 'user@example.com' });
     const code = sendOtpEmail.mock.calls[0][1];
 
@@ -84,6 +118,21 @@ describe('POST /api/auth/verify-otp', () => {
       .post('/api/auth/verify-otp')
       .send({ email: 'nobody@example.com', code: '123456' });
     expect(res.status).toBe(401);
+  });
+
+  it('issue #33: rejects a disallowed domain even with an objectively correct code (defense in depth)', async () => {
+    vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'example.com');
+    // Simulate a code actually existing for the disallowed address (e.g. one
+    // issued before a domain was removed from the list) by going straight to
+    // the OTP store, bypassing request-otp's own gate entirely — proving
+    // verify-otp does its own independent check rather than relying on
+    // request-otp having refused to ever create the code.
+    const { createOtp } = await import('../../src/auth/otpStore');
+    const code = createOtp('attacker@evil.com')!;
+
+    const res = await request(api).post('/api/auth/verify-otp').send({ email: 'attacker@evil.com', code });
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: 'Invalid or expired code.' });
   });
 });
 
@@ -124,6 +173,7 @@ describe('GET /api/auth/session', () => {
 
   it('reports isAdmin: false for a regular logged-in user not on the ADMIN_EMAILS allow-list', async () => {
     vi.stubEnv('ADMIN_EMAILS', 'someone-else@example.com');
+    vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'example.com');
     await request(api).post('/api/auth/request-otp').send({ email: 'user@example.com' });
     const code = sendOtpEmail.mock.calls[0][1];
 
@@ -135,6 +185,7 @@ describe('GET /api/auth/session', () => {
 
   it('reports isAdmin: true once ADMIN_EMAILS is set to include the caller, checked fresh (not cached)', async () => {
     vi.stubEnv('ADMIN_EMAILS', 'user@example.com');
+    vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'example.com');
     await request(api).post('/api/auth/request-otp').send({ email: 'user@example.com' });
     const code = sendOtpEmail.mock.calls[0][1];
 
