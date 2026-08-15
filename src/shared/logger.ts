@@ -2,10 +2,10 @@ type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 const LEVEL_WEIGHT: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };
 
-// Field names redacted verbatim, regardless of nesting depth. Email gets
-// special handling below (domain kept, local part masked) rather than a
-// blanket drop, per CLAUDE.md's "log a domain, not a full email" guidance.
-const REDACTED_KEYS = new Set([
+// Substrings matched anywhere in the lowercased key name, not an exact-match
+// set (issue #67) — an exact set missed `apiToken`/`userSecret`, only ever
+// catching a field named precisely `token`/`secret`.
+const REDACTED_KEY_SUBSTRINGS = [
   'password',
   'token',
   'secret',
@@ -15,7 +15,18 @@ const REDACTED_KEYS = new Set([
   'cookie',
   'sessionid',
   'session_id',
-]);
+];
+
+function isRedactedKey(lowerKey: string): boolean {
+  return REDACTED_KEY_SUBSTRINGS.some((substring) => lowerKey.includes(substring));
+}
+
+// Matches an email address anywhere inside a string, not only a string that
+// is itself nothing but an email — issue #67: a field named anything other
+// than `email` (`userEmail`), or free text with an address embedded inside a
+// longer value (a decision's `notes`, an override's `reason`), was invisible
+// to the old key-name-only check.
+const EMAIL_PATTERN = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 
 function currentLevel(): LogLevel {
   const raw = (process.env.LOG_LEVEL || '').toLowerCase();
@@ -33,11 +44,21 @@ function serializeError(err: Error): Record<string, unknown> {
   return { name: err.name, message: err.message, stack: err.stack };
 }
 
+/**
+ * Masks every embedded email address in a string, wherever it appears —
+ * whether the whole string is just an email (the old `email`-key special
+ * case, now just one instance of this) or it's a free-text field with an
+ * address embedded inside a longer value.
+ */
+function redactEmailsInText(value: string): string {
+  return value.replace(EMAIL_PATTERN, (match) => maskEmail(match));
+}
+
 function redactValue(key: string, value: unknown): unknown {
   if (value instanceof Error) return serializeError(value);
   const lowerKey = key.toLowerCase();
-  if (lowerKey === 'email' && typeof value === 'string') return maskEmail(value);
-  if (REDACTED_KEYS.has(lowerKey)) return '[REDACTED]';
+  if (isRedactedKey(lowerKey)) return '[REDACTED]';
+  if (typeof value === 'string') return redactEmailsInText(value);
   return serializeContext(value);
 }
 

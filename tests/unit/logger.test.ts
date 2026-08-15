@@ -84,6 +84,51 @@ describe('logger', () => {
     expect(entry.email).not.toContain('tammeleht');
   });
 
+  it('issue #67: redacts a secret-ish key that is not an exact match, e.g. apiToken/userSecret', () => {
+    const logger = createLogger();
+    logger.info('token issued', { apiToken: 'abc123', userSecret: 'xyz' });
+    const [entry] = readJsonLines(logSpy);
+    expect(entry.apiToken).toBe('[REDACTED]');
+    expect(entry.userSecret).toBe('[REDACTED]');
+  });
+
+  it('issue #67: masks a field named userEmail/contactEmail — not just the exact key "email"', () => {
+    const logger = createLogger();
+    logger.info('contact updated', {
+      userEmail: 'jagannath.tammeleht@novro.se',
+      contactEmail: 'jane.doe@customer.com',
+    });
+    const [entry] = readJsonLines(logSpy);
+    expect(entry.userEmail).toBe('j***@novro.se');
+    expect(entry.contactEmail).toBe('j***@customer.com');
+  });
+
+  it('issue #67: masks an email address embedded inside a larger free-text string, regardless of key name', () => {
+    const logger = createLogger();
+    logger.info('decision recorded', {
+      notes: 'confirmed with jane.doe@customer.com over the phone',
+    });
+    const [entry] = readJsonLines(logSpy);
+    expect(entry.notes).toBe('confirmed with j***@customer.com over the phone');
+    expect(entry.notes).not.toContain('jane.doe@customer.com');
+  });
+
+  it('issue #67: masks every embedded email when a string contains more than one', () => {
+    const logger = createLogger();
+    logger.info('escalation', {
+      reason: 'reported by jane.doe@customer.com, cc john.smith@customer.com',
+    });
+    const [entry] = readJsonLines(logSpy);
+    expect(entry.reason).toBe('reported by j***@customer.com, cc j***@customer.com');
+  });
+
+  it('issue #67: leaves plain text with no embedded email untouched', () => {
+    const logger = createLogger();
+    logger.info('decision recorded', { reason: 'false positive, name collision only' });
+    const [entry] = readJsonLines(logSpy);
+    expect(entry.reason).toBe('false positive, name collision only');
+  });
+
   it('serializes Error objects with name/message/stack instead of {}', () => {
     const logger = createLogger();
     logger.error('search failed', { error: new Error('boom') });
