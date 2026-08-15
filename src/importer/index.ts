@@ -64,9 +64,24 @@ async function runUploadedFileImport(
       parsed = records.length;
       uploaded = await uploadFiltered(records);
     } else if (file.format === 'us-xml') {
-      const records = await parseUSList(file.path);
-      parsed = records.length;
-      uploaded = await uploadFiltered(records);
+      // Streamed for the same reason as EU: the real OFAC SDN export (~29 MB)
+      // peaked at ~317 MB RSS under the full-DOM parse, over the deployed
+      // function's 256 MiB ceiling (see parsers/us.ts and issue #31). An
+      // uploaded SDN file is exactly that file, so the non-streaming
+      // parseUSList would OOM here.
+      let buffer: SanctionRecord[] = [];
+      const flush = async () => {
+        if (buffer.length === 0) return;
+        const chunk = buffer;
+        buffer = [];
+        uploaded += await uploadFiltered(chunk);
+      };
+      await parseUSListStreaming(file.path, async (record) => {
+        parsed++;
+        buffer.push(record);
+        if (buffer.length >= EU_UPLOAD_CHUNK_SIZE) await flush();
+      });
+      await flush();
     } else {
       const records = await parseCSVList(file.path, {
         separator: ';',

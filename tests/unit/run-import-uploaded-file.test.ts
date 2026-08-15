@@ -17,7 +17,7 @@ vi.mock('../../src/importer/fetcher', () => ({
 }));
 vi.mock('../../src/importer/parsers/eu', () => ({ parseEUListStreaming: vi.fn() }));
 vi.mock('../../src/importer/parsers/un', () => ({ parseUNList: vi.fn() }));
-vi.mock('../../src/importer/parsers/us', () => ({ parseUSList: vi.fn() }));
+vi.mock('../../src/importer/parsers/us', () => ({ parseUSListStreaming: vi.fn() }));
 vi.mock('../../src/importer/parsers/csv', () => ({ parseCSVList: vi.fn() }));
 vi.mock('../../src/importer/uploader', () => ({
   uploadRecords: vi.fn(async () => {}),
@@ -28,7 +28,7 @@ vi.mock('../../src/search', () => ({ invalidateSearchIndex: vi.fn() }));
 import { runImport } from '../../src/importer/index';
 import { parseEUListStreaming } from '../../src/importer/parsers/eu';
 import { parseUNList } from '../../src/importer/parsers/un';
-import { parseUSList } from '../../src/importer/parsers/us';
+import { parseUSListStreaming } from '../../src/importer/parsers/us';
 import { parseCSVList } from '../../src/importer/parsers/csv';
 import { uploadRecords } from '../../src/importer/uploader';
 import { invalidateSearchIndex } from '../../src/search';
@@ -68,12 +68,19 @@ describe('runImport({ uploadedFile }) — dispatches by detected format', () => 
     expect(vi.mocked(uploadRecords)).toHaveBeenCalledWith([record('UN-1', 'UN')]);
   });
 
-  it('parses a us-xml file via parseUSList', async () => {
-    vi.mocked(parseUSList).mockResolvedValue([record('US-SDN-1', 'US')]);
+  it('parses a us-xml file via the streaming US parser, never the full-DOM one', async () => {
+    // Streaming matters here specifically: an uploaded SDN file is the ~29 MB
+    // export that OOMs the deployed function under a full-DOM parse (issue #31).
+    vi.mocked(parseUSListStreaming).mockImplementation(async (_path, onRecord) => {
+      await onRecord(record('US-SDN-1', 'US'));
+      return 1;
+    });
+
     const result = await runImport({ uploadedFile: { path: '/tmp/upload.xml', format: 'us-xml', source: 'US' } });
 
     expect(result.success).toBe(true);
     expect(result.importedCounts.US).toBe(1);
+    expect(vi.mocked(uploadRecords)).toHaveBeenCalledWith([record('US-SDN-1', 'US')]);
   });
 
   it('parses a generic csv file via parseCSVList, tagged with the given source', async () => {
