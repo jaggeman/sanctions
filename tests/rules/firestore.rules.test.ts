@@ -122,3 +122,50 @@ describe('firestore.rules — direct client access to the sanctions collection',
     await assertFails(unauthedDb.collection('anything_else').doc('x').get());
   });
 });
+
+describe('firestore.rules — the "versions" subcollection (issue #9)', () => {
+  // sanctions/{id}/versions/{importId} is written only by the trusted server
+  // path (uploadRecords/delistRecords via the Admin SDK). No client should
+  // ever be able to read or write a version entry directly — that would let a
+  // client forge or read the audit trail. Already covered by the blanket
+  // deny-all above; made explicit here because the issue's acceptance
+  // criteria call it out by name.
+  const SAMPLE_VERSION = {
+    importId: 'import-1',
+    changedAt: '2024-01-01T00:00:00.000Z',
+    changeType: 'created',
+    record: SAMPLE_RECORD,
+  };
+
+  it('denies an unauthenticated client reading a version entry', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx
+        .firestore()
+        .collection('sanctions')
+        .doc('PEP-1')
+        .collection('versions')
+        .doc('import-1')
+        .set(SAMPLE_VERSION);
+    });
+
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(
+      unauthedDb.collection('sanctions').doc('PEP-1').collection('versions').doc('import-1').get(),
+    );
+  });
+
+  it('denies an unauthenticated client writing a version entry', async () => {
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(
+      unauthedDb.collection('sanctions').doc('PEP-1').collection('versions').doc('import-1').set(SAMPLE_VERSION),
+    );
+  });
+
+  it('still allows the trusted server path (Admin SDK) to read and write version entries freely', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const ref = ctx.firestore().collection('sanctions').doc('PEP-1').collection('versions').doc('import-1');
+      await assertSucceeds(ref.set(SAMPLE_VERSION));
+      await assertSucceeds(ref.get());
+    });
+  });
+});

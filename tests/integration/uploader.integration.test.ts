@@ -17,7 +17,7 @@ process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || 'lo
 process.env.FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'sanctions-integration-test';
 
 const { db } = await import('../../src/shared/firebase');
-const { uploadRecords, generateSearchTokens } = await import('../../src/importer/uploader');
+const { uploadRecords, delistRecords, generateSearchTokens } = await import('../../src/importer/uploader');
 
 function record(overrides: Record<string, any> = {}) {
   return {
@@ -34,10 +34,11 @@ function record(overrides: Record<string, any> = {}) {
 }
 
 async function clearCollection() {
+  // recursiveDelete (not a plain batch delete) so orphaned `versions`
+  // subcollections from prior tests can't leak into later ones — Firestore
+  // does not cascade-delete subcollections on its own (see issue #9 gotchas).
   const snap = await db.collection('sanctions').get();
-  const batch = db.batch();
-  snap.forEach((doc) => batch.delete(doc.ref));
-  if (!snap.empty) await batch.commit();
+  await Promise.all(snap.docs.map((doc) => db.recursiveDelete(doc.ref)));
 }
 
 beforeEach(async () => {
@@ -98,5 +99,70 @@ describe('uploadRecords — real Firestore write path', () => {
     await expect(uploadRecords([])).resolves.toBeUndefined();
     const snap = await db.collection('sanctions').get();
     expect(snap.empty).toBe(true);
+  });
+});
+
+describe('soft delete + version history — real Firestore write path (issue #9)', () => {
+  it('writes a "created" version doc and never a bare .delete() for a new record', async () => {
+    await uploadRecords([record({ id: 'PEP-int-ver-1' })], 'import-1');
+
+    const doc = await db.collection('sanctions').doc('PEP-int-ver-1').get();
+    expect(doc.data()!.status).toBe('active');
+    expect(doc.data()!.listedAt).toBeTruthy();
+
+    const versions = await db.collection('sanctions').doc('PEP-int-ver-1').collection('versions').get();
+    expect(versions.size).toBe(1);
+    expect(versions.docs[0].id).toBe('import-1');
+    expect(versions.docs[0].data().changeType).toBe('created');
+  });
+
+  it('writes no new version doc for an unchanged re-import', async () => {
+    await uploadRecords([record({ id: 'PEP-int-ver-2' })], 'import-1');
+    await uploadRecords([record({ id: 'PEP-int-ver-2' })], 'import-2');
+
+    const versions = await db.collection('sanctions').doc('PEP-int-ver-2').collection('versions').get();
+    expect(versions.size).toBe(1);
+  });
+
+  it('delists a record via delistRecords, then relists it on reappearance, reconstructing its full history', async () => {
+    await uploadRecords([record({ id: 'PEP-int-ver-3', primaryName: 'Original Name' })], 'import-1');
+    await delistRecords(['PEP-int-ver-3'], 'import-2');
+
+    let doc = await db.collection('sanctions').doc('PEP-int-ver-3').get();
+    expect(doc.data()!.status).toBe('delisted');
+    expect(doc.data()!.delistedAt).toBeTruthy();
+
+    await uploadRecords([record({ id: 'PEP-int-ver-3', primaryName: 'Original Name' })], 'import-3');
+
+    doc = await db.collection('sanctions').doc('PEP-int-ver-3').get();
+    expect(doc.data()!.status).toBe('active');
+    expect(doc.data()!.delistedAt).toBeUndefined();
+
+    const versionsSnap = await db
+      .collection('sanctions')
+      .doc('PEP-int-ver-3')
+      .collection('versions')
+      .orderBy('changedAt')
+      .get();
+    const changeTypes = versionsSnap.docs.map((v) => v.data().changeType);
+    expect(changeTypes).toEqual(['created', 'delisted', 'relisted']);
+
+    // Reconstruct the record as of the first import from its version snapshot.
+    const firstVersion = versionsSnap.docs[0].data();
+    expect(firstVersion.record.primaryName).toBe('Original Name');
+    expect(firstVersion.record.status).toBe('active');
+  });
+});
+
+describe('delistRecords — real Firestore write path (issue #9)', () => {
+  it('is a no-op for an id that does not exist, and for an already-delisted id', async () => {
+    await expect(delistRecords(['DOES-NOT-EXIST'], 'import-1')).resolves.toBeUndefined();
+
+    await uploadRecords([record({ id: 'PEP-int-ver-4' })], 'import-1');
+    await delistRecords(['PEP-int-ver-4'], 'import-2');
+    await delistRecords(['PEP-int-ver-4'], 'import-3'); // already delisted
+
+    const versions = await db.collection('sanctions').doc('PEP-int-ver-4').collection('versions').get();
+    expect(versions.size).toBe(2); // created + delisted, not a second delisted entry
   });
 });

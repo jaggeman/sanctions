@@ -128,7 +128,7 @@ app.get('/openapi.json', (req, res) => {
  * Search sanctions by name/alias token matching, source, or type
  */
 app.get('/api/search', async (req, res): Promise<any> => {
-  const { q, source, type, limit } = req.query;
+  const { q, source, type, limit, includeDelisted } = req.query;
 
   if (!q || typeof q !== 'string') {
     return res.status(400).json({ error: 'Query parameter "q" is required.' });
@@ -144,10 +144,11 @@ app.get('/api/search', async (req, res): Promise<any> => {
   const requestedLimit = Math.min(parseInt(limit as string) || 20, 100);
   const sourcesFilter = source ? (source as string).split(',').map(s => s.trim().toUpperCase()) : null;
   const typeFilter = type ? (type as string).trim().toLowerCase() : null;
+  const includeDelistedRecords = includeDelisted === 'true';
 
   try {
     const sanctionsCollection = db.collection('sanctions');
-    
+
     // Firestore only supports one array-contains per query.
     // We query on the FIRST token, then filter remaining tokens in-memory.
     const firstToken = queryTokens[0];
@@ -156,6 +157,13 @@ app.get('/api/search', async (req, res): Promise<any> => {
     // Apply type filter directly in DB query if provided
     if (typeFilter) {
       query = query.where('type', '==', typeFilter);
+    }
+
+    // Soft-deleted (delisted) records are excluded by default (issue #9);
+    // ?includeDelisted=true opts in. See firestore.indexes.json for the
+    // composite indexes this combination needs in production.
+    if (!includeDelistedRecords) {
+      query = query.where('status', '==', 'active');
     }
 
     // Since we need to perform in-memory filtering for additional name tokens,
@@ -194,7 +202,10 @@ app.get('/api/search', async (req, res): Promise<any> => {
 
 /**
  * GET /api/sanctions/:id
- * Retrieve detail record by ID
+ * Retrieve detail record by ID. No status filtering here, unlike /api/search:
+ * an imported record is never hard-deleted (issue #9), so a delisted record
+ * is a valid, meaningful answer and is returned with its status/delistedAt,
+ * not a 404.
  */
 app.get('/api/sanctions/:id', async (req, res): Promise<any> => {
   const { id } = req.params;
