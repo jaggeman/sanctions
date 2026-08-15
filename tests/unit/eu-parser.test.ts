@@ -1,80 +1,214 @@
 import { describe, it, expect } from 'vitest';
 import * as path from 'path';
 import { parseEUList } from '../../src/importer/parsers/eu';
+import { SanctionRecord } from '../../src/shared/types';
 
+// tests/fixtures/eu_sample.xml is carved verbatim out of the official EU FSD
+// v1.1 consolidated export. Every element and attribute name below is what the
+// EU actually ships — see issue #4 for why that matters.
 const FIXTURE = path.join(__dirname, '../fixtures/eu_sample.xml');
 
-describe('parseEUList', () => {
-  it('parses an individual, picking the primary=true nameAlias as primaryName', async () => {
-    const records = await parseEUList(FIXTURE);
-    const vlad = records.find((r) => r.id === 'EU-1001');
+let cache: SanctionRecord[] | null = null;
+async function records(): Promise<SanctionRecord[]> {
+  if (!cache) cache = await parseEUList(FIXTURE);
+  return cache;
+}
+const byId = async (id: string) => (await records()).find((r) => r.id === id);
 
-    expect(vlad).toBeDefined();
-    expect(vlad!.type).toBe('individual');
-    expect(vlad!.primaryName).toBe('Vladimir TESTOVICH');
-    expect(vlad!.aliases).toEqual(['Vova Testovich']);
-    expect(vlad!.citizenships).toEqual(['Russia']);
-    expect(vlad!.datesOfBirth).toEqual(['1965-04-12']);
-    expect(vlad!.placesOfBirth).toEqual(['Moscow, Russia']);
-    expect(vlad!.passports).toEqual(['Passport 123456789 (Russia)']);
-    expect(vlad!.legalBasis).toBe('https://example.org/reg1');
-    expect(vlad!.sanctionReason).toBe('Council Regulation (EU) No 269/2014');
+describe('parseEUList — real EU FSD v1.1 structure', () => {
+  describe('names live in attributes, not child elements', () => {
+    it('extracts a name for every entity that has one', async () => {
+      const all = await records();
+      const nameless = all.filter((r) => r.primaryName === 'Unknown Name');
+      // Only the synthetic no-nameAlias entity may fall back.
+      expect(nameless.map((r) => r.id)).toEqual(['EU-999999']);
+    });
+
+    it('reads wholeName off the nameAlias attribute', async () => {
+      const r = await byId('EU-13');
+      expect(r!.primaryName).toBe('Saddam Hussein Al-Tikriti');
+    });
+
+    it('keeps the remaining aliases, without duplicating the primary', async () => {
+      const r = await byId('EU-13');
+      expect(r!.aliases).toEqual(['Abu Ali', 'Abou Ali']);
+      expect(r!.aliases).not.toContain(r!.primaryName);
+    });
+
+    it('preserves non-Latin aliases verbatim', async () => {
+      const r = await byId('EU-330');
+      expect(r!.aliases).toContain('Организация за подпомагане на Ulema, Пакистан');
+    });
   });
 
-  it('parses an entity (subjectType code E)', async () => {
-    const records = await parseEUList(FIXTURE);
-    const entity = records.find((r) => r.id === 'EU-1002');
+  describe('subjectType uses person/enterprise, not I/E', () => {
+    it('maps code="person" to individual', async () => {
+      expect((await byId('EU-13'))!.type).toBe('individual');
+      expect((await byId('EU-191'))!.type).toBe('individual');
+    });
 
-    expect(entity).toBeDefined();
-    expect(entity!.type).toBe('entity');
-    expect(entity!.primaryName).toBe('Test Entity LLC');
-    expect(entity!.sanctionReason).toBe('Council Decision 2014/145/CFSP');
+    it('maps code="enterprise" to entity', async () => {
+      expect((await byId('EU-980'))!.type).toBe('entity');
+      expect((await byId('EU-330'))!.type).toBe('entity');
+    });
+
+    it('does not collapse every record into a single type', async () => {
+      const all = await records();
+      const types = new Set(all.map((r) => r.type));
+      expect(types.size).toBeGreaterThan(1);
+    });
   });
 
-  it('falls back to the first alias as primaryName when nothing is marked primary', async () => {
-    const records = await parseEUList(FIXTURE);
-    const onlyAlias = records.find((r) => r.id === 'EU-1003');
+  describe('primary name selection is deterministic', () => {
+    it('prefers the alias carrying structured first/last name parts', async () => {
+      // EU-191 lists seven strong aliases; only logicalId 289 has firstName +
+      // lastName, and it is the canonical form. Document order would instead
+      // pick the French transliteration at logicalId 161419.
+      expect((await byId('EU-191'))!.primaryName).toBe('Khalid Sheikh MOHAMMED');
+    });
 
-    expect(onlyAlias).toBeDefined();
-    expect(onlyAlias!.primaryName).toBe('Only Alias');
-    expect(onlyAlias!.aliases).toEqual([]);
+    it('prefers English/unmarked aliases over other languages', async () => {
+      // EU-330 has no structured names at all, and one Bulgarian alias.
+      expect((await byId('EU-330'))!.primaryName).toBe('Al-Rasheed Trust');
+    });
+
+    it('produces the same result on a re-parse', async () => {
+      const a = await parseEUList(FIXTURE);
+      const b = await parseEUList(FIXTURE);
+      expect(a.map((r) => r.primaryName)).toEqual(b.map((r) => r.primaryName));
+    });
   });
 
-  it('falls back to "Unknown Name" when there is no name data whatsoever', async () => {
-    const records = await parseEUList(FIXTURE);
-    const nameless = records.find((r) => r.id === 'EU-1004');
+  describe('<identification> — not <identificationDocument>', () => {
+    it('captures the passport number and its type', async () => {
+      const r = await byId('EU-191');
+      expect(r!.passports).toBeDefined();
+      expect(r!.passports).toContain('National passport 488555');
+    });
 
-    expect(nameless).toBeDefined();
-    expect(nameless!.primaryName).toBe('Unknown Name');
+    it('omits the issuing country when the source says it is unknown', async () => {
+      // countryIso2Code="00" countryDescription="UNKNOWN"
+      const r = await byId('EU-191');
+      expect(r!.passports!.join(' ')).not.toMatch(/UNKNOWN/);
+    });
   });
 
-  it('defaults subjectType to entity when the code is neither I nor recognised', async () => {
-    const records = await parseEUList(FIXTURE);
-    const entity = records.find((r) => r.id === 'EU-1002');
-    expect(entity!.type).toBe('entity');
+  describe('addresses', () => {
+    it('reads zipCode, not zipcode', async () => {
+      const r = await byId('EU-980');
+      const withZip = r!.addresses!.find((a) => a.fullAddress?.includes('60455'));
+      expect(withZip).toBeDefined();
+    });
+
+    it('reads street and city off attributes', async () => {
+      const r = await byId('EU-980');
+      const street = r!.addresses!.find(
+        (a) => a.street === '9935 South 76th Avenue, Unit 1',
+      );
+      expect(street).toBeDefined();
+      expect(street!.city).toBe('Bridgeview, Illinois');
+      expect(street!.country).toBe('UNITED STATES');
+    });
+
+    it('never emits an address object with nothing in it', async () => {
+      const all = await records();
+      for (const r of all) {
+        for (const a of r.addresses ?? []) {
+          expect(a.fullAddress, `empty address on ${r.id}`).toBeTruthy();
+        }
+      }
+    });
   });
 
-  it('returns an empty list when no sanctionEntity nodes are present', async () => {
-    const os = await import('os');
-    const fs = await import('fs-extra');
-    const tmp = path.join((os as any).tmpdir(), `eu-empty-${Date.now()}.xml`);
-    await (fs as any).writeFile(
-      tmp,
-      '<?xml version="1.0"?><export:export xmlns:export="http://eu.europa.ec/fpi/fsd/export"></export:export>',
-      'utf-8',
-    );
-    try {
-      const records = await parseEUList(tmp);
-      expect(records).toEqual([]);
-    } finally {
-      await (fs as any).remove(tmp);
-    }
+  describe('birthdate and citizenship', () => {
+    it('reads the birthdate attribute', async () => {
+      expect((await byId('EU-13'))!.datesOfBirth).toEqual(['1937-04-28']);
+    });
+
+    it('reads multiple birthdates when the source lists several', async () => {
+      expect((await byId('EU-191'))!.datesOfBirth).toEqual([
+        '1965-04-14',
+        '1964-03-01',
+      ]);
+    });
+
+    it('combines birth city and country', async () => {
+      expect((await byId('EU-13'))!.placesOfBirth).toEqual([
+        'al-Awja, near Tikrit, IRAQ',
+      ]);
+    });
+
+    it('treats a placeholder city of "-" as absent and de-duplicates', async () => {
+      expect((await byId('EU-191'))!.placesOfBirth).toEqual(['PAKISTAN']);
+    });
+
+    it('reads citizenship countryDescription', async () => {
+      expect((await byId('EU-13'))!.citizenships).toEqual(['IRAQ']);
+    });
   });
 
-  it('strips the namespace prefix regardless of what it is called', async () => {
-    // removeNSPrefix is what lets `export:sanctionEntity` be read as
-    // `sanctionEntity` — this is the load-bearing assertion for that config flag.
-    const records = await parseEUList(FIXTURE);
-    expect(records.length).toBeGreaterThan(0);
+  describe('regulation metadata', () => {
+    it('reads numberTitle and publicationUrl off the regulation element', async () => {
+      const r = await byId('EU-13');
+      expect(r!.sanctionReason).toBe('1210/2003 (OJ L169)');
+      expect(r!.legalBasis).toBe(
+        'http://eur-lex.europa.eu/LexUriServ/LexUriServ.do?uri=OJ:L:2003:169:0006:0023:EN:PDF',
+      );
+    });
+  });
+
+  describe('structural handling', () => {
+    it('parses the default namespace, which has no prefix', async () => {
+      // The real export declares xmlns="..." on <export>, not export:export.
+      expect((await records()).length).toBe(5);
+    });
+
+    it('falls back to "Unknown Name" only when there is no nameAlias at all', async () => {
+      expect((await byId('EU-999999'))!.primaryName).toBe('Unknown Name');
+    });
+
+    it('skips an entity whose logicalId would escape the collection path', async () => {
+      // logicalId becomes a Firestore document ID and arrives from an uploaded
+      // file, so a value containing '/' must not be trusted.
+      const os = await import('os');
+      const fs = await import('fs-extra');
+      const tmp = path.join(os.tmpdir(), `eu-unsafe-${process.pid}.xml`);
+      await fs.writeFile(
+        tmp,
+        `<?xml version="1.0"?><export xmlns="http://eu.europa.ec/fpi/fsd/export">
+           <sanctionEntity logicalId="../../admin/evil">
+             <subjectType code="person" classificationCode="P"/>
+             <nameAlias wholeName="Path Traversal" strong="true"/>
+           </sanctionEntity>
+           <sanctionEntity logicalId="42">
+             <subjectType code="person" classificationCode="P"/>
+             <nameAlias wholeName="Legitimate Record" strong="true"/>
+           </sanctionEntity>
+         </export>`,
+        'utf-8',
+      );
+      try {
+        const parsed = await parseEUList(tmp);
+        expect(parsed.map((r) => r.id)).toEqual(['EU-42']);
+      } finally {
+        await fs.remove(tmp);
+      }
+    });
+
+    it('returns an empty list when there are no sanctionEntity nodes', async () => {
+      const os = await import('os');
+      const fs = await import('fs-extra');
+      const tmp = path.join(os.tmpdir(), `eu-empty-${process.pid}.xml`);
+      await fs.writeFile(
+        tmp,
+        '<?xml version="1.0"?><export xmlns="http://eu.europa.ec/fpi/fsd/export"></export>',
+        'utf-8',
+      );
+      try {
+        expect(await parseEUList(tmp)).toEqual([]);
+      } finally {
+        await fs.remove(tmp);
+      }
+    });
   });
 });
