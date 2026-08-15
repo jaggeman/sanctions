@@ -96,6 +96,7 @@ program
       if (!doc.exists) {
         console.error(`❌ Posten med ID ${id} kunde inte hittas.`);
         process.exit(1);
+        return; // process.exit never returns; this guards a stubbed exit in tests
       }
 
       console.log('\n📄 FULLSTÄNDIGA DETALJER:');

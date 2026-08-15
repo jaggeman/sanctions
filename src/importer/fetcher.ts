@@ -1,6 +1,9 @@
 import axios from 'axios';
 import * as fs from 'fs-extra';
 import * as path from 'path';
+import { logger } from '../shared/logger';
+
+const log = logger.child({ module: 'importer.fetcher' });
 
 export const DOWNLOADS_DIR = path.resolve(__dirname, '../../downloads');
 
@@ -18,7 +21,7 @@ export async function downloadFile(url: string, filename: string): Promise<strin
   await fs.ensureDir(DOWNLOADS_DIR);
   const outputPath = path.join(DOWNLOADS_DIR, filename);
 
-  console.log(`Downloading ${url} to ${outputPath}...`);
+  log.info('download.start', { url, outputPath });
 
   const response = await axios({
     method: 'get',
@@ -35,6 +38,10 @@ export async function downloadFile(url: string, filename: string): Promise<strin
   return new Promise((resolve, reject) => {
     writer.on('finish', () => resolve(outputPath));
     writer.on('error', (err) => reject(err));
+    // pipe() does not forward the source's errors to the destination — an
+    // interrupted download (dropped connection mid-stream) would otherwise
+    // leave this promise never settling instead of rejecting.
+    response.data.on('error', (err: Error) => reject(err));
   });
 }
 
@@ -47,19 +54,19 @@ export async function downloadAllSources(): Promise<Record<string, string>> {
   try {
     paths.EU = await downloadFile(SOURCE_URLS.EU, 'eu_sanctions.xml');
   } catch (error: any) {
-    console.error(`Failed to download EU sanctions list: ${error.message}`);
+    log.error('download.failed', { source: 'EU', error });
   }
 
   try {
     paths.UN = await downloadFile(SOURCE_URLS.UN, 'un_sanctions.xml');
   } catch (error: any) {
-    console.error(`Failed to download UN sanctions list: ${error.message}`);
+    log.error('download.failed', { source: 'UN', error });
   }
 
   try {
     paths.US = await downloadFile(SOURCE_URLS.US, 'us_sdn.xml');
   } catch (error: any) {
-    console.error(`Failed to download US SDN list: ${error.message}`);
+    log.error('download.failed', { source: 'US', error });
   }
 
   return paths;

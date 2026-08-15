@@ -55,6 +55,33 @@ const uploadRecordsMock = vi.fn(async () => {});
 // admin.initializeApp(). Stub it out the same way tests/unit/normalize.test.ts
 // does, so importActual below can pull in the real (pure) filterAutomatedBatch
 // without touching firebase-admin at all.
+vi.mock('../../src/importer/diff', async () => {
+  // runImport writes through the streaming diff session (issue #8), which now
+  // owns the CUSTOM guard by delegating to filterAutomatedBatch. Forwarding
+  // addChunk to the mocked uploadRecords keeps this file testing the same
+  // thing: that no CUSTOM record reaches the write path.
+  const { uploadRecords, filterAutomatedBatch } = await import('../../src/importer/uploader');
+  const empty = (source: string) => ({
+    source,
+    counts: { parsed: 0, added: 0, updated: 0, unchanged: 0, delisted: 0, skipped: 0 },
+    toDelistIds: [],
+    activeCount: 0,
+    guardTripped: false,
+  });
+  return {
+    DEFAULT_IMPORT_MODE: 'append',
+    startDiffSession: vi.fn(async (source: string) => ({
+      addChunk: vi.fn(async (records: any[]) => {
+        const eligible = source === 'CUSTOM' ? records : filterAutomatedBatch(records);
+        if (eligible.length > 0) await uploadRecords(eligible);
+        return eligible.length;
+      }),
+      finish: vi.fn(async () => empty(source)),
+      abort: vi.fn(() => empty(source)),
+    })),
+  };
+});
+
 vi.mock('../../src/shared/firebase', () => ({
   db: { collection: () => ({}), batch: () => ({ set: () => {}, commit: async () => {} }) },
 }));

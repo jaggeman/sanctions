@@ -231,6 +231,83 @@ describe('uploadRecords — soft delete fields + version trail', () => {
     const current = store.get('PEP-1')!.data;
     expect(current.primaryName).toBe('Updated Name');
   });
+
+  // --- issue #68 -----------------------------------------------------------
+
+  it('does not let firstSeenImport/lastSeenImport participate in contentHash', () => {
+    const a = record({ firstSeenImport: 'import-1', lastSeenImport: 'import-1' } as any);
+    const b = record({ firstSeenImport: 'import-1', lastSeenImport: 'import-99' } as any);
+    expect(computeContentHash(a)).toBe(computeContentHash(b));
+  });
+
+  it('does not bump updatedAt when a re-import is content-identical', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+      await uploadRecords([record()], 'import-1');
+      const firstUpdatedAt = store.get('PEP-1')!.data.updatedAt;
+
+      vi.setSystemTime(new Date('2026-01-02T00:00:00.000Z'));
+      await uploadRecords([record()], 'import-2');
+
+      expect(store.get('PEP-1')!.data.updatedAt).toBe(firstUpdatedAt);
+      expect(store.get('PEP-1')!.data.updatedAt).toBe('2026-01-01T00:00:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does bump updatedAt when content actually changes', async () => {
+    // The two uploadRecords calls can land in the same millisecond, which
+    // would make "recomputed to a new now()" indistinguishable from
+    // "preserved the old value" by coincidence alone — advance the clock so
+    // the two `now` values are guaranteed different.
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+      await uploadRecords([record()], 'import-1');
+      const firstUpdatedAt = store.get('PEP-1')!.data.updatedAt;
+
+      vi.setSystemTime(new Date('2026-01-02T00:00:00.000Z'));
+      await uploadRecords([record({ primaryName: 'Changed Name' })], 'import-2');
+
+      expect(store.get('PEP-1')!.data.updatedAt).not.toBe(firstUpdatedAt);
+      expect(store.get('PEP-1')!.data.updatedAt).toBe('2026-01-02T00:00:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not invent a listedAt for a pre-#9 legacy record on an unchanged re-import', async () => {
+    // Simulates a record written before issue #9 existed: no listedAt, but
+    // otherwise identical content to what record() below re-uploads.
+    const legacy = record();
+    (legacy as any).contentHash = computeContentHash(legacy);
+    // deliberately no listedAt field at all — the pre-#9 shape.
+    store.set('PEP-1', { data: { ...legacy }, versions: new Map() });
+
+    await uploadRecords([record()], 'import-1');
+
+    expect(store.get('PEP-1')!.data.listedAt).toBeUndefined();
+  });
+
+  it('canonicalizes array element order before hashing, so a reordered source does not look like a content change', () => {
+    const a = record({
+      aliases: ['Abu Ali', 'Abou Ali'],
+      addresses: [{ fullAddress: 'A' }, { fullAddress: 'B' }],
+    } as any);
+    const b = record({
+      aliases: ['Abou Ali', 'Abu Ali'],
+      addresses: [{ fullAddress: 'B' }, { fullAddress: 'A' }],
+    } as any);
+    expect(computeContentHash(a)).toBe(computeContentHash(b));
+  });
+
+  it('still detects a genuine content change, not just any hash difference', () => {
+    const a = record({ aliases: ['Abu Ali'] } as any);
+    const b = record({ aliases: ['Abu Ali', 'Someone Else'] } as any);
+    expect(computeContentHash(a)).not.toBe(computeContentHash(b));
+  });
 });
 
 describe('delistRecords', () => {

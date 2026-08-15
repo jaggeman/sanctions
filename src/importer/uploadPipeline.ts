@@ -1,4 +1,5 @@
 import * as fs from 'fs-extra';
+import * as path from 'path';
 import { hashFileStreaming } from './hashFile';
 import { detectFormat, DetectedFormat } from './formatDetection';
 import {
@@ -9,6 +10,7 @@ import {
   ImportAlreadyInFlightError,
 } from './importRecord';
 import { runImport } from './index';
+import { ImportMode, StreamedDiffResult } from './diff';
 import { getBucket } from '../shared/firebase';
 import { SanctionSource } from '../shared/types';
 
@@ -17,10 +19,23 @@ export interface ProcessUploadOptions {
   originalFilename: string;
   sourceHint: SanctionSource;
   uploadedBy: string | null;
+  /** Diff-engine controls (issue #8), forwarded verbatim to runImport. */
+  importOptions?: {
+    mode?: ImportMode;
+    dryRun?: boolean;
+    force?: boolean;
+    importId?: string;
+  };
 }
 
 export type ProcessUploadResult =
   | { outcome: 'applied'; importId: string; counts: { parsed: number; uploaded: number } }
+  | {
+      outcome: 'dry_run';
+      importId: string;
+      counts: { parsed: number; uploaded: number };
+      diffs?: StreamedDiffResult[];
+    }
   | { outcome: 'rejected'; importId: string; duplicateOfImportId: string }
   | { outcome: 'in_flight'; importId: string }
   | { outcome: 'unsupported_format'; importId: string; format: DetectedFormat }
@@ -43,6 +58,17 @@ function formatForRunImport(format: DetectedFormat): 'eu-xml-1.1' | 'un-xml' | '
   return format === 'eu-xml-1.1' || format === 'un-xml' || format === 'us-xml' ? format : 'csv';
 }
 
+// The client-supplied filename must never reach the Cloud Storage object
+// key (issue #94) — it's an untrusted string that can contain path
+// separators, "..", or control characters. Only a short, bounded,
+// alphanumeric extension is carried over; the base name is always the
+// fixed string "upload". The original name is still preserved separately
+// in the imports audit doc's `filename` field for display purposes.
+function safeStorageExtension(originalFilename: string): string {
+  const ext = path.extname(originalFilename);
+  return /^\.[a-zA-Z0-9]{1,10}$/.test(ext) ? ext.toLowerCase() : '';
+}
+
 /**
  * Orchestrates issue #7's upload pipeline: hash the file, sniff its format,
  * reject an exact duplicate of an already-applied import, atomically claim
@@ -51,7 +77,7 @@ function formatForRunImport(format: DetectedFormat): 'eu-xml-1.1' | 'un-xml' | '
  * pipeline and record the outcome. Called from the POST /api/upload route.
  */
 export async function processUpload(options: ProcessUploadOptions): Promise<ProcessUploadResult> {
-  const { filePath, originalFilename, sourceHint, uploadedBy } = options;
+  const { filePath, originalFilename, sourceHint, uploadedBy, importOptions } = options;
 
   const [{ sha256, sizeBytes }, head] = await Promise.all([
     hashFileStreaming(filePath),
@@ -65,7 +91,24 @@ export async function processUpload(options: ProcessUploadOptions): Promise<Proc
     return { outcome: 'rejected', importId: sha256, duplicateOfImportId: existingApplied.importId };
   }
 
-  const storagePath = `imports/${sha256}/${originalFilename}`;
+  // A dry run must leave no trace: no imports doc, no Storage object, no
+  // writes. Recording it as an applied import would be actively harmful —
+  // the sha256 dedup would then reject the real upload of the same file as a
+  // duplicate of a preview that never wrote anything (issue #8 + #7).
+  if (importOptions?.dryRun) {
+    if (UNSUPPORTED_FORMATS.has(format)) {
+      return { outcome: 'unsupported_format', importId: sha256, format };
+    }
+    const preview = await runImport({
+      uploadedFile: { path: filePath, format: formatForRunImport(format), source },
+      ...importOptions,
+      dryRun: true,
+    });
+    const parsed = Object.values(preview.importedCounts).reduce((a, b) => a + b, 0);
+    return { outcome: 'dry_run', importId: sha256, counts: { parsed, uploaded: 0 }, diffs: preview.diffs };
+  }
+
+  const storagePath = `imports/${sha256}/upload${safeStorageExtension(originalFilename)}`;
 
   try {
     await createPendingImport({
@@ -97,6 +140,8 @@ export async function processUpload(options: ProcessUploadOptions): Promise<Proc
 
     const result = await runImport({
       uploadedFile: { path: filePath, format: formatForRunImport(format), source },
+      // Diff-engine controls (issue #8) forwarded from the upload request.
+      ...importOptions,
     });
 
     if (!result.success) {

@@ -14,7 +14,6 @@ vi.mock('../../src/decisions', () => ({
 }));
 
 import { decisionsRouter } from '../../src/api/routes/decisions';
-import { requireAuth } from '../../src/auth/middleware';
 import { createSession, _resetSessionStoreForTests } from '../../src/auth/session';
 import { SESSION_COOKIE_NAME } from '../../src/auth/middleware';
 
@@ -24,10 +23,12 @@ function buildApp() {
   const app = express();
   app.use(express.json());
   app.use(cookieParser());
-  // Mirrors production wiring: the blanket app.use('/api', requireAuth) in
-  // src/api/index.ts, applied here directly since this router carries no
-  // auth logic of its own.
-  app.use('/api/decisions', requireAuth, decisionsRouter);
+  // decisionsRouter carries its own requireAuthOrScope gate internally (a
+  // prior version relied on a blanket app.use('/api', requireAuth) that no
+  // longer exists — see the "requires authentication" tests below, which
+  // mount the bare router with no test-only auth shim, so they only pass if
+  // the router itself actually enforces auth).
+  app.use('/api/decisions', decisionsRouter);
   return app;
 }
 
