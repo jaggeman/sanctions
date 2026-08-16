@@ -4,6 +4,7 @@ import { downloadFile, SOURCE_URLS } from './fetcher';
 import { parseEUListStreaming } from './parsers/eu';
 import { parseUNList } from './parsers/un';
 import { parseUSListStreaming } from './parsers/us';
+import { parseUKListStreaming } from './parsers/uk';
 import { parseCSVList } from './parsers/csv';
 import {
   startDiffSession,
@@ -19,7 +20,7 @@ import { logger } from '../shared/logger';
 const log = logger.child({ module: 'importer.index' });
 
 export interface ImportOptions {
-  sources?: ('EU' | 'UN' | 'US')[];
+  sources?: ('EU' | 'UN' | 'US' | 'UK')[];
   csvPath?: string;
   csvSource?: 'PEP' | 'CUSTOM';
   csvSeparator?: string;
@@ -78,7 +79,13 @@ async function runUploadedFileImport(
         if (buffer.length === 0) return;
         const chunk = buffer;
         buffer = [];
-        uploaded += await session.addChunk(chunk);
+        // issue #171: reading `uploaded` happens BEFORE evaluating an
+        // awaited right-hand side in a compound assignment, so two
+        // overlapping flushes would both read the same stale value and the
+        // second write would clobber the first's contribution. Splitting
+        // the read of `uploaded` to after the await removes that window.
+        const addedCount = await session.addChunk(chunk);
+        uploaded += addedCount;
       };
       await parseEUListStreaming(file.path, async (record) => {
         parsed++;
@@ -101,7 +108,13 @@ async function runUploadedFileImport(
         if (buffer.length === 0) return;
         const chunk = buffer;
         buffer = [];
-        uploaded += await session.addChunk(chunk);
+        // issue #171: reading `uploaded` happens BEFORE evaluating an
+        // awaited right-hand side in a compound assignment, so two
+        // overlapping flushes would both read the same stale value and the
+        // second write would clobber the first's contribution. Splitting
+        // the read of `uploaded` to after the await removes that window.
+        const addedCount = await session.addChunk(chunk);
+        uploaded += addedCount;
       };
       await parseUSListStreaming(file.path, async (record) => {
         parsed++;
@@ -161,6 +174,9 @@ export const EU_UPLOAD_CHUNK_SIZE = 500;
 /** Same rationale as `EU_UPLOAD_CHUNK_SIZE`, for the streamed US SDN parse (issue #31). */
 export const US_UPLOAD_CHUNK_SIZE = 500;
 
+/** Same rationale as `EU_UPLOAD_CHUNK_SIZE`, for the streamed UK Sanctions List parse (issue #99). */
+export const UK_UPLOAD_CHUNK_SIZE = 500;
+
 /**
  * Main import function that coordinates fetching, parsing, and uploading.
  *
@@ -184,7 +200,7 @@ export async function runImport(options: ImportOptions = {}): Promise<{
     return runUploadedFileImport(options.uploadedFile, options);
   }
 
-  const sources = options.sources || ['EU', 'UN', 'US'];
+  const sources = options.sources || ['EU', 'UN', 'US', 'UK'];
   const importedCounts: Record<string, number> = {};
   const diffs: StreamedDiffResult[] = [];
   let totalParsed = 0;
@@ -209,7 +225,13 @@ export async function runImport(options: ImportOptions = {}): Promise<{
         if (buffer.length === 0) return;
         const chunk = buffer;
         buffer = [];
-        uploaded += await session.addChunk(chunk);
+        // issue #171: reading `uploaded` happens BEFORE evaluating an
+        // awaited right-hand side in a compound assignment, so two
+        // overlapping flushes would both read the same stale value and the
+        // second write would clobber the first's contribution. Splitting
+        // the read of `uploaded` to after the await removes that window.
+        const addedCount = await session.addChunk(chunk);
+        uploaded += addedCount;
       };
 
       try {
@@ -277,7 +299,13 @@ export async function runImport(options: ImportOptions = {}): Promise<{
         if (buffer.length === 0) return;
         const chunk = buffer;
         buffer = [];
-        uploaded += await session.addChunk(chunk);
+        // issue #171: reading `uploaded` happens BEFORE evaluating an
+        // awaited right-hand side in a compound assignment, so two
+        // overlapping flushes would both read the same stale value and the
+        // second write would clobber the first's contribution. Splitting
+        // the read of `uploaded` to after the await removes that window.
+        const addedCount = await session.addChunk(chunk);
+        uploaded += addedCount;
       };
 
       try {
@@ -303,7 +331,47 @@ export async function runImport(options: ImportOptions = {}): Promise<{
       totalUploaded += uploaded;
     }
 
-    // 4. Process CSV (PEP / Custom)
+    // 4. Process UK (FCDO Sanctions List, issue #99). Streamed and
+    // chunk-uploaded like EU/US — the real export (~22 MB) is in the same
+    // size class.
+    if (sources.includes('UK')) {
+      const session = await startDiffSession('UK', diffOptionsFrom(options));
+      let ukParseSucceeded = false;
+      let buffer: SanctionRecord[] = [];
+      let parsed = 0;
+      let uploaded = 0;
+
+      const flush = async () => {
+        if (buffer.length === 0) return;
+        const chunk = buffer;
+        buffer = [];
+        uploaded += await session.addChunk(chunk);
+      };
+
+      try {
+        const filePath = await downloadFile(SOURCE_URLS.UK, 'uk_sanctions.xml');
+        await parseUKListStreaming(filePath, async (record) => {
+          parsed++;
+          buffer.push(record);
+          if (buffer.length >= UK_UPLOAD_CHUNK_SIZE) {
+            await flush();
+          }
+        });
+        await flush();
+        ukParseSucceeded = true;
+      } catch (error: any) {
+        await flush().catch(() => {});
+        diffs.push(session.abort());
+        log.error('import.source_failed', { source: 'UK', error });
+      }
+      if (ukParseSucceeded) diffs.push(await session.finish());
+
+      importedCounts.UK = parsed;
+      totalParsed += parsed;
+      totalUploaded += uploaded;
+    }
+
+    // 5. Process CSV (PEP / Custom)
     if (options.csvPath) {
       try {
         const absoluteCsvPath = path.resolve(options.csvPath);

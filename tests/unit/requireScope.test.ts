@@ -72,8 +72,13 @@ describe('requireScope', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it('calls next() and attaches the token id when valid', async () => {
-    mockVerifyApiToken.mockResolvedValueOnce({ valid: true, tokenId: 'tok-1', scopes: ['read', 'write'] });
+  it('calls next() and attaches the token id and owner email when valid', async () => {
+    mockVerifyApiToken.mockResolvedValueOnce({
+      valid: true,
+      tokenId: 'tok-1',
+      scopes: ['read', 'write'],
+      ownerEmail: 'owner@corp.test',
+    });
     const req = makeReq('Bearer sanc_good') as any;
     const res = makeRes();
     const next = vi.fn() as NextFunction;
@@ -83,5 +88,54 @@ describe('requireScope', () => {
     expect(next).toHaveBeenCalledTimes(1);
     expect(res.status).not.toHaveBeenCalled();
     expect(req.apiTokenId).toBe('tok-1');
+    expect(req.userEmail).toBe('owner@corp.test');
+  });
+
+  it('responds 401 with a reissue message for a legacy token missing an owner email', async () => {
+    mockVerifyApiToken.mockResolvedValueOnce({
+      valid: false,
+      reason: 'no_owner_email',
+      tokenId: 'tok-1',
+      scopes: ['write'],
+    });
+    const req = makeReq('Bearer sanc_legacy');
+    const res = makeRes();
+    const next = vi.fn() as NextFunction;
+
+    await requireScope('write')(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.stringMatching(/reissue|mint a new token/i) })
+    );
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('binds tokenId and the owner email into req.log when present (issue #110)', async () => {
+    mockVerifyApiToken.mockResolvedValueOnce({
+      valid: true,
+      tokenId: 'tok-1',
+      scopes: ['read'],
+      ownerEmail: 'owner@corp.test',
+    });
+    const req = makeReq('Bearer sanc_good') as any;
+    const childSpy = vi.fn();
+    req.log = { child: childSpy };
+    const res = makeRes();
+    const next = vi.fn() as NextFunction;
+
+    await requireScope('read')(req, res, next);
+
+    expect(childSpy).toHaveBeenCalledWith({ tokenId: 'tok-1', userEmail: 'owner@corp.test' });
+  });
+
+  it('does not touch req.log when it does not exist', async () => {
+    mockVerifyApiToken.mockResolvedValueOnce({ valid: true, tokenId: 'tok-1', scopes: ['read'] });
+    const req = makeReq('Bearer sanc_good') as any;
+    const res = makeRes();
+    const next = vi.fn() as NextFunction;
+
+    await expect(requireScope('read')(req, res, next)).resolves.toBeUndefined();
+    expect(req.log).toBeUndefined();
   });
 });

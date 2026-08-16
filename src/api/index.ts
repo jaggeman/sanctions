@@ -12,16 +12,19 @@ import { db } from '../shared/firebase';
 import { enqueueImportTask } from '../importer/taskQueue';
 import { runImport } from '../importer';
 import { processUpload } from '../importer/uploadPipeline';
-import { listImports, findImportBySha256 } from '../importer/importRecord';
-import { listRecordVersions } from '../importer/uploader';
+import { listImports, findImportBySha256, createFetchImportRecord, markImportFailed } from '../importer/importRecord';
+import { listRecordVersions, generateImportId } from '../importer/uploader';
 import { tokensRouter } from './routes/tokens';
 import { decisionsRouter } from './routes/decisions';
+import { customRecordsRouter } from './routes/customRecords';
 import { runSearch } from '../search';
+import { logSearchEvent } from '../search/searchLog';
 import { SanctionSource, SanctionRecord } from '../shared/types';
 import { applyOverride, getOverride } from '../overrides';
 import { overridesRouter } from './routes/overrides';
 import { validateEntityIdParam } from './middleware/validateEntityIdParam';
-import { createOtp, verifyOtp } from '../auth/otpStore';
+import { createOtp, verifyOtp, isInCooldown } from '../auth/otpStore';
+import { consumeGlobalOtpBudget } from '../auth/otpBudget';
 import { sendOtpEmail } from '../auth/mailer';
 import { createSession, destroySession } from '../auth/session';
 import { requireAuth, SESSION_COOKIE_NAME } from '../auth/middleware';
@@ -98,12 +101,30 @@ const IMPORT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
  * sanctions source. `requireAuthOrScope('write')` alone only proves the
  * caller is logged in (or holds a write-scoped token), not that they're
  * trusted with overriding a safety mechanism — restricting it to real admin
- * sessions specifically (issue #105). A write-scoped API token has no
- * associated identity to check admin status against at all, so it's
- * rejected outright rather than silently treated as non-admin.
+ * sessions specifically (issue #105).
+ *
+ * The token check below is load-bearing and must not be reduced back to an
+ * `isAdminEmail` test alone (issue #153). This guard originally relied on a
+ * bearer token carrying no identity, so that `req.userEmail` being set
+ * implied a session. Token owner-attribution (#123) broke that assumption:
+ * `requireScope` now sets `req.userEmail` from the token's `ownerEmail`,
+ * and since only an admin can mint a token, that address always passes
+ * `isAdminEmail` — every write-scoped token silently satisfied this guard.
+ *
+ * Identity is therefore not sufficient; the *authentication method* is what
+ * matters. `req.apiTokenId` is set only by `requireScope`, never by
+ * `requireAuth`, and `requireAuthOrScope` routes to exactly one of the two,
+ * so its presence is a reliable "this caller is a token, not a session".
  */
 function assertForceAllowed(req: express.Request, res: express.Response, force: boolean): boolean {
   if (!force) return true;
+
+  if (req.apiTokenId) {
+    res.status(403).json({
+      error: '"force" (delist safety guard override) requires an admin session; an API token cannot be used for it.',
+    });
+    return false;
+  }
 
   const email = (req as any).userEmail;
   if (!email || !isAdminEmail(email)) {
@@ -133,13 +154,51 @@ app.use((req, res, next) => {
   applyHeaders(req, res, next);
 });
 
+// Every /api/* response is dynamic and cookie-authenticated — never
+// cacheable. Without this, Firebase Hosting's CDN (Fastly) treats a
+// response with no Cache-Control as publicly cacheable and, per its default
+// policy for cacheable paths, STRIPS the inbound Cookie request header
+// before it ever reaches this function. That's silent and total: every
+// GET route gating on requireAuth/requireAuthOrScope would 401 for every
+// caller, session cookie or not, because req.cookies is empty by the time
+// Express sees the request — confirmed live (a real incident): the session
+// cookie was correctly set by POST /api/auth/verify-otp, but GET
+// /api/auth/session immediately 401'd through Hosting's rewrite while the
+// exact same request against the underlying Cloud Run URL directly worked.
+// POST responses happened to still work because Google Frontend
+// auto-appends Cache-Control: private whenever a response sets a cookie —
+// but GET routes returning no cookie of their own got no such header and
+// were silently broken for cookie-forwarding on every request.
+app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
+
+// requestLogger must run before express.json()/cookieParser() (issue #66):
+// Express treats it as regular (3-arg) middleware, so if either of those
+// throws (a malformed JSON body, a bad cookie), Express skips every
+// remaining regular middleware — including requestLogger — and jumps
+// straight to errorLogger, which then had no requestId to attach at all.
+app.use(requestLogger);
+
 // Enable CORS and JSON parsing.
 // Cookie-based sessions mean credentialed CORS must not reflect an arbitrary origin —
 // only an explicitly configured frontend origin is allowed to send/receive the session cookie.
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN || false, credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
-app.use(requestLogger);
+
+// Every /api/* response is dynamic and cookie-authenticated — never
+// cacheable. Defense in depth against Firebase Hosting's CDN treating an
+// uncached-looking response as publicly cacheable; the real fix for the
+// session-cookie-not-forwarded incident this was found alongside is #151
+// (the cookie must be named __session for Hosting to forward it at all —
+// this alone does not fix that), but a dynamic, per-user API response
+// should never carry an implicit "cacheable" default regardless.
+app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
 
 // Rejects any :id route param before it can reach a Firestore .doc(id) call
 // (CLAUDE.md §6) — param callbacks are local to the router they're
@@ -173,6 +232,23 @@ app.post('/api/auth/request-otp', async (req, res): Promise<any> => {
     return res.json({ ok: true });
   }
 
+  // issue #62: the per-email cooldown below stops one address being spammed
+  // repeatedly, but does nothing against many DISTINCT real addresses each
+  // being sent one code at once. Only charge the org-wide budget for a
+  // request that will actually cause a new send — a request already blocked
+  // by the per-email cooldown must not also burn a global-budget slot, or a
+  // single attacker flooding one address could exhaust it for everyone else.
+  if (!(await isInCooldown(email)) && !(await consumeGlobalOtpBudget())) {
+    return res.status(429).json({ error: 'Too many login codes have been requested. Please try again shortly.' });
+  }
+
+  // Narrow, accepted race: two concurrent first-ever requests for the same
+  // brand-new email can both pass isInCooldown (neither sees the other's
+  // write yet), each consuming a global-budget slot. createOtp itself has
+  // the same pre-existing non-atomic read-then-write shape for its own
+  // cooldown check, so this doesn't introduce a new class of gap — just
+  // inherits the existing one, and is low-probability/low-impact enough
+  // not to warrant a cross-document transaction here.
   const code = await createOtp(email);
   if (!code) {
     return res.status(429).json({ error: 'A code was already sent recently. Please wait before requesting another.' });
@@ -274,6 +350,15 @@ app.get('/openapi.json', (req, res) => {
 app.use('/api/admin/tokens', requireAuth, tokensRouter);
 
 /**
+ * POST/PUT/DELETE/GET /api/admin/custom-records
+ * Internal watchlist entries (source: 'CUSTOM') the official lists don't
+ * cover (issue #172). Auth is enforced inside customRecordsRouter itself
+ * (requireAdmin) — no middleware needed at this mount site. See
+ * src/api/routes/customRecords.ts.
+ */
+app.use('/api/admin/custom-records', customRecordsRouter);
+
+/**
  * PUT/DELETE /api/overrides/:id
  * Field-level corrections layered on top of an imported record (issue #35).
  * Auth is enforced inside overridesRouter itself (requireAuthOrScope) — no
@@ -287,6 +372,19 @@ app.use('/api/overrides', overridesRouter);
 app.use('/api/decisions', decisionsRouter);
 
 /**
+ * Requester identity for the search audit log (issue #109) — a session
+ * carries `userEmail` (set by requireAuth), a bearer-token request carries
+ * `apiTokenId` instead (set by requireScope). Exactly one is ever present,
+ * since requireAuthOrScope delegates to one or the other, never both.
+ */
+function requesterIdentity(req: express.Request): string {
+  const userEmail = (req as any).userEmail;
+  if (userEmail) return userEmail;
+  if (req.apiTokenId) return `token:${req.apiTokenId}`;
+  return 'unknown';
+}
+
+/**
  * GET /api/search
  * Fuzzy name search (phonetic + edit-distance + token-set matching), plus an
  * exact passport/ID fast path. See src/search/matcher.ts — the same matcher
@@ -294,6 +392,10 @@ app.use('/api/decisions', decisionsRouter);
  *
  * Accepts either a logged-in session or a `read`-scoped API token (issue #36)
  * — this is the exact route external, session-less integrations need.
+ *
+ * Fires (does not await) a durable searchLog entry (issue #109) so a later
+ * "did we ever search for X" question is answerable — never on the response
+ * latency path, and a write failure there is logged, not thrown.
  */
 app.get('/api/search', requireAuthOrScope('read'), async (req, res): Promise<any> => {
   const { q, source, type, limit, threshold, includeDelisted, dob } = req.query;
@@ -324,6 +426,21 @@ app.get('/api/search', requireAuthOrScope('read'), async (req, res): Promise<any
 
     res.json({ results, totalMatches, truncated });
 
+    logSearchEvent({
+      action: 'search',
+      requestedBy: requesterIdentity(req),
+      query: q,
+      filters: {
+        source: typeof source === 'string' ? source : undefined,
+        type: typeof type === 'string' ? type : undefined,
+        threshold: threshold !== undefined ? parseInt(threshold as string) : undefined,
+        includeDelisted: includeDelisted === 'true',
+        dob: typeof dob === 'string' ? dob : undefined,
+      },
+      resultCount: totalMatches,
+      timestamp: new Date().toISOString(),
+    });
+
   } catch (error: any) {
     console.error('Search error:', error);
     res.status(500).json({ error: 'Internal server error', details: error.message });
@@ -350,12 +467,27 @@ app.get('/api/sanctions/:id', requireAuthOrScope('read'), async (req, res): Prom
   try {
     const doc = await db.collection('sanctions').doc(id).get();
     if (!doc.exists) {
+      logSearchEvent({
+        action: 'lookup',
+        requestedBy: requesterIdentity(req),
+        entityId: id,
+        resultCount: 0,
+        timestamp: new Date().toISOString(),
+      });
       return res.status(404).json({ error: `Sanction record with ID ${id} not found.` });
     }
 
     const override = await getOverride(id);
     const { record, overriddenFields } = applyOverride(doc.data() as SanctionRecord, override);
     res.json({ ...record, overriddenFields });
+
+    logSearchEvent({
+      action: 'lookup',
+      requestedBy: requesterIdentity(req),
+      entityId: id,
+      resultCount: 1,
+      timestamp: new Date().toISOString(),
+    });
   } catch (error: any) {
     console.error('Get details error:', error);
     res.status(500).json({ error: 'Internal server error', details: error.message });
@@ -428,13 +560,12 @@ app.get('/api/imports/:id', requireAuthOrScope('read'), async (req, res): Promis
  * POST /api/import
  * Queue a full import (issue #43). Handed off to `runImportTask`, a Cloud
  * Tasks-dispatched function with its own instance/timeout budget, instead of
- * running in-process here: `api` is pinned to maxInstances: 1 (issue #16),
- * so a multi-minute import awaited in this same function would freeze
- * login/search for everyone, and a bare fire-and-forget call is not
- * guaranteed to run to completion if this instance freezes/recycles right
- * after the response is sent. Cloud Tasks durably persists and retries the
- * job independent of this request's own fate, so the 202 below is now
- * actually true rather than merely optimistic.
+ * running in-process here: a multi-minute import awaited in this same
+ * function would tie up a request-serving instance for the duration, and a
+ * bare fire-and-forget call is not guaranteed to run to completion if this
+ * instance freezes/recycles right after the response is sent. Cloud Tasks
+ * durably persists and retries the job independent of this request's own
+ * fate, so the 202 below is now actually true rather than merely optimistic.
  *
  * Accepts either a logged-in session or a `write`-scoped API token (issue #36).
  */
@@ -454,6 +585,14 @@ app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<a
   }
   if (!assertForceAllowed(req, res, !!force)) return;
 
+  // A dry run must leave no trace (same precedent as uploadPipeline.ts's
+  // dry-run path) — no audit doc, since it never actually applies anything.
+  // Resolve the real importId here, before dryRun's early return, so the
+  // dry-run's own DiffResults (which get stamped with importId internally
+  // for record versioning) and a real apply of the same request use a
+  // consistent id if the caller re-sends the same importId for both.
+  const resolvedImportId = importId || generateImportId();
+
   const importOptions = {
     sources,
     csvPath,
@@ -462,7 +601,7 @@ app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<a
     mode,
     dryRun: !!dryRun,
     force: !!force,
-    importId,
+    importId: resolvedImportId,
   };
 
   // Dry-run is a preview (issue #8): the caller needs the counts back to
@@ -479,6 +618,19 @@ app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<a
     }
   }
 
+  // issue #111: a fetch-triggered import has no file to hash-dedup on like
+  // an upload does, so this is its own durable audit record — created
+  // before enqueueing so "who triggered this and what was requested" is
+  // captured even if the Cloud Task itself never runs.
+  await createFetchImportRecord({
+    importId: resolvedImportId,
+    sources,
+    mode,
+    force: !!force,
+    uploadedBy: (req as any).userEmail || null,
+    uploadedAt: new Date().toISOString(),
+  });
+
   try {
     // importOptions already carries mode/dryRun/force/importId — building a
     // fresh object here (as an earlier version of this route did) silently
@@ -488,11 +640,13 @@ app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<a
     await enqueueImportTask(importOptions);
   } catch (error: any) {
     console.error('Failed to queue import task:', error);
+    await markImportFailed(resolvedImportId, error.message);
     return res.status(500).json({ error: 'Failed to start import', details: error.message });
   }
 
   res.status(202).json({
     status: 'import_started',
+    importId: resolvedImportId,
     message: 'The import has been queued and will run independently of this request.',
   });
 });
@@ -608,17 +762,19 @@ if (require.main === module) {
 // sessions lived in an in-memory Map, which fragmented across concurrent
 // instances. Issue #63 moved that storage to Firestore
 // (src/auth/otpStore.ts, src/auth/session.ts), shared across every instance
-// and durable across a cold start — that half of the reason is gone.
+// and durable across a cold start.
 //
-// The pin stays for now regardless: src/search/index.ts's `cachedRecords` is
-// its own separate in-memory, per-instance cache, invalidated only within
-// the process that ran the import. With a single instance that's trivially
-// consistent; with maxInstances > 1, a search served by a different
-// instance than the one that just imported would silently return stale
-// results. Issue #43 is adding a Firestore-backed invalidation marker for
-// exactly that — this pin should come out once #43 lands, in a follow-up
-// PR that removes it explicitly rather than as a side effect of this one.
-export const api = functions.https.onRequest({ maxInstances: 1 }, app);
+// The pin then stayed for a second reason: src/search/index.ts's
+// `cachedRecords` was its own separate in-memory, per-instance cache,
+// invalidated only within the process that ran the import — with more than
+// one instance, a search served by an instance that didn't just import
+// would silently return stale results. Issue #43 added a Firestore-backed
+// `meta/searchIndex.version` counter that `getRecords()` checks against its
+// local cache on every call, so every instance now picks up an invalidation
+// regardless of which one ran the import.
+//
+// Both reasons are gone — no longer pinned (issue #101).
+export const api = functions.https.onRequest(app);
 
 // Both re-exported so their deployable Cloud Functions are discovered:
 // `dist/api/index.js` (package.json's `main`) is the sole file Firebase

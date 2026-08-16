@@ -8,11 +8,15 @@ const {
   mockSaveOverride,
   mockDeleteOverride,
   mockInvalidateSearchIndex,
+  mockVerifyApiToken,
 } = vi.hoisted(() => ({
   mockSaveOverride: vi.fn(),
   mockDeleteOverride: vi.fn(),
   mockInvalidateSearchIndex: vi.fn(),
+  mockVerifyApiToken: vi.fn(),
 }));
+
+vi.mock('../../src/shared/apiTokens', () => ({ verifyApiToken: mockVerifyApiToken }));
 
 vi.mock('../../src/overrides', async () => {
   const actual = await vi.importActual<typeof import('../../src/overrides')>('../../src/overrides');
@@ -183,8 +187,71 @@ describe('DELETE /api/overrides/:id', () => {
       .set('Cookie', await authedCookie());
 
     expect(res.status).toBe(200);
-    expect(mockDeleteOverride).toHaveBeenCalledWith('EU-1');
+    expect(mockDeleteOverride).toHaveBeenCalledWith('EU-1', CALLER_EMAIL);
     expect(mockInvalidateSearchIndex).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('write-scoped bearer token attribution', () => {
+  it("attributes overriddenBy to the token's ownerEmail, not undefined", async () => {
+    mockVerifyApiToken.mockResolvedValueOnce({
+      valid: true,
+      tokenId: 'tok-1',
+      scopes: ['write'],
+      ownerEmail: 'svc-agent@corp.test',
+    });
+
+    const res = await request(buildApp())
+      .put('/api/overrides/EU-1')
+      .set('Authorization', 'Bearer sanc_sometoken')
+      .send({ fields: { sanctionReason: 'Corrected' }, reason: 'Fix' });
+
+    expect(res.status).toBe(200);
+    expect(mockSaveOverride).toHaveBeenCalledWith(
+      'EU-1',
+      { sanctionReason: 'Corrected' },
+      { overriddenBy: 'svc-agent@corp.test', reason: 'Fix' },
+    );
+  });
+});
+
+describe('invalidateSearchIndex ordering (issue #170)', () => {
+  // A controlled delayed promise stands in for real Firestore commit
+  // latency — the point of these tests is that the HANDLER awaits it, not
+  // that any particular timing occurs. Order is recorded rather than timed.
+  function deferredInvalidate() {
+    const order: string[] = [];
+    mockInvalidateSearchIndex.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          setTimeout(() => {
+            order.push('invalidated');
+            resolve();
+          }, 10);
+        }),
+    );
+    return order;
+  }
+
+  it('PUT /:id waits for invalidateSearchIndex to resolve before responding', async () => {
+    const order = deferredInvalidate();
+
+    await request(buildApp())
+      .put('/api/overrides/EU-1')
+      .set('Cookie', await authedCookie())
+      .send({ fields: { sanctionReason: 'Corrected' }, reason: 'Fix' });
+
+    order.push('responded');
+    expect(order).toEqual(['invalidated', 'responded']);
+  });
+
+  it('DELETE /:id waits for invalidateSearchIndex to resolve before responding', async () => {
+    const order = deferredInvalidate();
+
+    await request(buildApp()).delete('/api/overrides/EU-1').set('Cookie', await authedCookie());
+
+    order.push('responded');
+    expect(order).toEqual(['invalidated', 'responded']);
   });
 });
 

@@ -111,6 +111,22 @@ const PHONETIC_MATCH_SCORE = 0.85;
 const MIN_LENGTH_FOR_EDIT_DISTANCE = 3;
 const EDIT_DISTANCE_MATCH_THRESHOLD = 0.75;
 
+// issue #104: 0.75 was not a high enough bar for genuinely SHORT words
+// specifically — e.g. jaroWinkler('qusay','musa') = 0.7833, two real,
+// phonetically-unrelated (soundex 'Q200' vs 'M200') aliases in the corpus
+// that happen to share enough characters by pure chance. A corpus-wide
+// calibration (see this fix's PR description) found coincidental short-word
+// pairs scoring as high as ~0.88-0.89 with no phonetic or substring
+// relationship at all, while genuine short-name spelling variants
+// (ahmed/ahmad, nasser/nassar, musa/musab, hana/hanan...) mostly score
+// >= 0.90 even when their soundex codes disagree too. A stricter bar for
+// short words (rather than raising MIN_LENGTH_FOR_EDIT_DISTANCE, which
+// would drop genuine short variants to phonetic-only matching and miss the
+// ones whose soundex also disagrees) keeps both effects: it rejects the
+// reported coincidence and its siblings while still matching real variants.
+const SHORT_WORD_MAX_LENGTH = 6;
+const EDIT_DISTANCE_MATCH_THRESHOLD_SHORT_WORD = 0.9;
+
 /**
  * Generic name particles (issue #41, decision (b)): these carry far less
  * identifying information than an actual name part, so a match on one alone
@@ -127,17 +143,36 @@ function wordWeight(word: string): number {
   return GENERIC_PARTICLES.has(word) ? PARTICLE_WEIGHT : REAL_WORD_WEIGHT;
 }
 
+/**
+ * A single word variant with its Soundex code precomputed alongside it
+ * (issue #42) — `pairScore` runs for every query-word/candidate-word pair
+ * across every candidate name in the index on every search, so recomputing
+ * `soundex()` on the same candidate token again for each query (it never
+ * changes between searches) is pure waste at scale.
+ */
+export interface TokenizedWord {
+  text: string;
+  soundex: string;
+}
+
+function annotateWithSoundex(wordGroups: string[][]): TokenizedWord[][] {
+  return wordGroups.map((variants) => variants.map((text) => ({ text, soundex: soundex(text) })));
+}
+
 /** Similarity (0..1) between exactly one query token and one candidate token. */
-function pairScore(token: string, candidate: string): number {
-  if (token === candidate) return 1;
-  const phoneticScore = soundex(token) === soundex(candidate) && soundex(token) !== ''
+function pairScore(token: TokenizedWord, candidate: TokenizedWord): number {
+  if (token.text === candidate.text) return 1;
+  const phoneticScore = token.soundex === candidate.soundex && token.soundex !== ''
     ? PHONETIC_MATCH_SCORE
     : 0;
-  const minLen = Math.min(token.length, candidate.length);
+  const minLen = Math.min(token.text.length, candidate.text.length);
   let editScore = 0;
   if (minLen >= MIN_LENGTH_FOR_EDIT_DISTANCE) {
-    const jw = jaroWinkler(token, candidate);
-    editScore = jw >= EDIT_DISTANCE_MATCH_THRESHOLD ? jw : 0;
+    const threshold = minLen <= SHORT_WORD_MAX_LENGTH
+      ? EDIT_DISTANCE_MATCH_THRESHOLD_SHORT_WORD
+      : EDIT_DISTANCE_MATCH_THRESHOLD;
+    const jw = jaroWinkler(token.text, candidate.text);
+    editScore = jw >= threshold ? jw : 0;
   }
   return Math.max(phoneticScore, editScore);
 }
@@ -149,7 +184,7 @@ function pairScore(token: string, candidate: string): number {
  * counts fully, on both the query and the candidate side alike (issue #40's
  * cross-script matching, extended symmetrically for issue #41).
  */
-function groupPairScore(a: string[], b: string[]): number {
+function groupPairScore(a: TokenizedWord[], b: TokenizedWord[]): number {
   let best = 0;
   for (const variantA of a) {
     for (const variantB of b) {
@@ -177,7 +212,7 @@ interface Assignment {
  * against a candidate word's original-script AND transliterated forms if
  * those were treated as two separate candidate slots instead of one.
  */
-function greedyOneToOneMatch(queryWordGroups: string[][], candidateWordGroups: string[][]): Assignment[] {
+function greedyOneToOneMatch(queryWordGroups: TokenizedWord[][], candidateWordGroups: TokenizedWord[][]): Assignment[] {
   const pairs: Assignment[] = [];
   for (let qi = 0; qi < queryWordGroups.length; qi++) {
     for (let ci = 0; ci < candidateWordGroups.length; ci++) {
@@ -201,10 +236,29 @@ function greedyOneToOneMatch(queryWordGroups: string[][], candidateWordGroups: s
 }
 
 function weightedAverage(scores: number[], weights: number[]): number {
-  const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+  let totalWeight = 0;
+  let weightedSum = 0;
+  for (let i = 0; i < scores.length; i++) {
+    totalWeight += weights[i];
+    weightedSum += scores[i] * weights[i];
+  }
   if (totalWeight === 0) return 0;
-  const weightedSum = scores.reduce((sum, score, i) => sum + score * weights[i], 0);
   return weightedSum / totalWeight;
+}
+
+/**
+ * A word group's weight only depends on its first variant's text
+ * (`wordWeight`), which never changes for a given query or candidate name
+ * across searches — precomputed once (issue #42) alongside the word groups
+ * themselves rather than recomputed via `.map()` for every single candidate
+ * name comparison within every search.
+ */
+function computeWordWeights(wordGroups: TokenizedWord[][]): number[] {
+  const weights = new Array(wordGroups.length);
+  for (let i = 0; i < wordGroups.length; i++) {
+    weights[i] = wordWeight(wordGroups[i][0].text);
+  }
+  return weights;
 }
 
 /**
@@ -237,7 +291,12 @@ function weightedAverage(scores: number[], weights: number[]): number {
  * word, making candidate coverage look artificially low for non-Latin
  * candidates under this task's new symmetric measure.
  */
-function tokenSetScore(queryWordGroups: string[][], candidateWordGroups: string[][]): number {
+function tokenSetScore(
+  queryWordGroups: TokenizedWord[][],
+  queryWeights: number[],
+  candidateWordGroups: TokenizedWord[][],
+  candidateWeights: number[],
+): number {
   if (queryWordGroups.length === 0 || candidateWordGroups.length === 0) return 0;
 
   const assignments = greedyOneToOneMatch(queryWordGroups, candidateWordGroups);
@@ -247,9 +306,6 @@ function tokenSetScore(queryWordGroups: string[][], candidateWordGroups: string[
     scorePerQueryWord[queryIndex] = score;
     scorePerCandidateWord[candidateIndex] = score;
   }
-
-  const queryWeights = queryWordGroups.map((variants) => wordWeight(variants[0]));
-  const candidateWeights = candidateWordGroups.map((variants) => wordWeight(variants[0]));
 
   const queryCoverage = weightedAverage(scorePerQueryWord, queryWeights);
   const candidateCoverage = weightedAverage(scorePerCandidateWord, candidateWeights);
@@ -275,8 +331,12 @@ export interface NameMatch {
  * `normalizeText(transliterate(name))` split into the same number of words
  * in the same order — transliteration maps character-by-character and never
  * merges/splits words — so the two token lists line up positionally.
+ *
+ * Exported (issue #42) so callers can precompute a candidate name's tokens
+ * once at index-build time instead of paying this cost (a Unicode NFD
+ * normalize plus several regex passes) again on every single search.
  */
-function tokenizeGrouped(name: string): string[][] {
+export function tokenizeGrouped(name: string): string[][] {
   const words = normalizeText(name).split(' ').filter(Boolean);
   const translit = transliterate(name);
   const translitWords = translit ? normalizeText(translit).split(' ').filter(Boolean) : [];
@@ -300,22 +360,54 @@ function tokenizeGrouped(name: string): string[][] {
 const NON_LITERAL_MATCH_CAP = 0.99;
 
 /**
- * Scores a query against a list of candidate names (primary name + aliases),
- * returning the best-matching one and its 0..100 score. Reuses normalizeText
- * verbatim so query-side and index-side normalisation always agree.
+ * A candidate name's tokenized form, precomputed once (issue #42) so a
+ * search doesn't pay tokenizeGrouped/normalizeText/soundex's cost again for
+ * every query against a candidate whose name hasn't changed since the last
+ * import — none of that work depends on what's being searched for.
  */
-export function scoreNameMatch(query: string, candidateNames: string[]): NameMatch {
-  const queryWordGroups = tokenizeGrouped(query);
-  if (queryWordGroups.length === 0 || candidateNames.length === 0) {
+export interface TokenizedName {
+  name: string;
+  wordGroups: TokenizedWord[][];
+  weights: number[];
+  normalizedName: string;
+}
+
+export function buildTokenizedName(name: string): TokenizedName {
+  const wordGroups = annotateWithSoundex(tokenizeGrouped(name));
+  return { name, wordGroups, weights: computeWordWeights(wordGroups), normalizedName: normalizeText(name) };
+}
+
+/**
+ * The query's own tokenized form, precomputed once per search (issue #42)
+ * rather than once per candidate record — the query is identical across
+ * every candidate comparison within a single search.
+ */
+export interface TokenizedQuery {
+  wordGroups: TokenizedWord[][];
+  weights: number[];
+  normalizedQuery: string;
+}
+
+export function buildTokenizedQuery(query: string): TokenizedQuery {
+  const wordGroups = annotateWithSoundex(tokenizeGrouped(query));
+  return { wordGroups, weights: computeWordWeights(wordGroups), normalizedQuery: normalizeText(query) };
+}
+
+/**
+ * The actual scoring loop `scoreNameMatch` runs, taking an already-tokenized
+ * query and candidates instead of raw strings (issue #42) — lets a caller
+ * that holds a precomputed index (query tokenized once per search, each
+ * candidate tokenized once at index-build time) skip all re-tokenization.
+ */
+export function scoreTokenizedNameMatch(query: TokenizedQuery, candidates: TokenizedName[]): NameMatch {
+  if (query.wordGroups.length === 0 || candidates.length === 0) {
     return { score: 0, matchedName: '' };
   }
-  const normalizedQuery = normalizeText(query);
 
   let best: NameMatch = { score: 0, matchedName: '' };
-  for (const name of candidateNames) {
-    const candidateWordGroups = tokenizeGrouped(name);
-    const rawScore = tokenSetScore(queryWordGroups, candidateWordGroups);
-    const isLiteralMatch = normalizedQuery === normalizeText(name);
+  for (const { name, wordGroups, weights, normalizedName } of candidates) {
+    const rawScore = tokenSetScore(query.wordGroups, query.weights, wordGroups, weights);
+    const isLiteralMatch = query.normalizedQuery === normalizedName;
     const boundedScore = isLiteralMatch ? rawScore : Math.min(rawScore, NON_LITERAL_MATCH_CAP);
     const score = Math.round(boundedScore * 100);
     if (score > best.score) {
@@ -323,4 +415,23 @@ export function scoreNameMatch(query: string, candidateNames: string[]): NameMat
     }
   }
   return best;
+}
+
+/**
+ * Scores a query against a list of candidate names (primary name + aliases),
+ * returning the best-matching one and its 0..100 score. Reuses normalizeText
+ * verbatim so query-side and index-side normalisation always agree.
+ *
+ * A thin wrapper around `scoreTokenizedNameMatch` (issue #42) — tokenizes
+ * everything on the spot for a caller that doesn't hold a precomputed index
+ * (tests, one-off callers), while `runSearch` calls the precomputed variant
+ * directly to avoid re-tokenizing the same candidate names on every query.
+ */
+export function scoreNameMatch(query: string, candidateNames: string[]): NameMatch {
+  const tokenizedQuery = buildTokenizedQuery(query);
+  if (tokenizedQuery.wordGroups.length === 0 || candidateNames.length === 0) {
+    return { score: 0, matchedName: '' };
+  }
+  const candidates = candidateNames.map(buildTokenizedName);
+  return scoreTokenizedNameMatch(tokenizedQuery, candidates);
 }

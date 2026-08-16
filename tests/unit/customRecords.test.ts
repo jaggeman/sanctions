@@ -3,7 +3,10 @@ import type { SanctionRecord } from '../../src/shared/types';
 
 // Same fake-Firestore-doc pattern as tests/unit/api-search.test.ts: an
 // in-memory store keyed by id, with collection('sanctions').doc(id) exposing
-// get/set/delete against it.
+// get/set/delete/create against it. `create` mimics the real Admin SDK:
+// throws a gRPC-style ALREADY_EXISTS (code 6) error instead of silently
+// overwriting — this is what lets createCustomRecord drop its own
+// get-then-set race window and rely on Firestore's own atomicity instead.
 let store: Record<string, SanctionRecord> = {};
 
 const fakeDb = {
@@ -15,6 +18,14 @@ const fakeDb = {
           exists: id in store,
           data: () => store[id],
         })),
+        create: vi.fn(async (data: SanctionRecord) => {
+          if (id in store) {
+            const err: any = new Error(`ALREADY_EXISTS: ${id}`);
+            err.code = 6;
+            throw err;
+          }
+          store[id] = data;
+        }),
         set: vi.fn(async (data: SanctionRecord) => {
           store[id] = data;
         }),
@@ -27,6 +38,9 @@ const fakeDb = {
 };
 
 vi.mock('../../src/shared/firebase', () => ({ db: fakeDb }));
+
+const invalidateSearchIndex = vi.fn(async () => {});
+vi.mock('../../src/search', () => ({ invalidateSearchIndex }));
 
 const {
   createCustomRecord,
@@ -91,6 +105,31 @@ describe('createCustomRecord', () => {
     // The official record must survive the rejected attempt untouched.
     expect(store['EU-1'].primaryName).toBe('Official Person');
   });
+
+  it('creates via an atomic create() rather than a get-then-set race window (TOCTOU fix, issue #172)', async () => {
+    await createCustomRecord({ id: 'CUSTOM-1', type: 'individual', primaryName: 'Jane Doe' });
+
+    const docMock = fakeDb.collection.mock.results[0].value.doc.mock.results[0].value;
+    expect(docMock.create).toHaveBeenCalledTimes(1);
+    // The old bug was a separate get() existence check with a suspension
+    // point between the read and the write — this must be gone entirely,
+    // not merely unused.
+    expect(docMock.get).not.toHaveBeenCalled();
+    expect(docMock.set).not.toHaveBeenCalled();
+  });
+
+  it('calls invalidateSearchIndex after a successful create', async () => {
+    await createCustomRecord({ id: 'CUSTOM-1', type: 'individual', primaryName: 'Jane Doe' });
+    expect(invalidateSearchIndex).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not call invalidateSearchIndex when create is rejected as a duplicate', async () => {
+    store['EU-1'] = officialRecord();
+    await expect(
+      createCustomRecord({ id: 'EU-1', type: 'individual', primaryName: 'Attempted Overwrite' }),
+    ).rejects.toThrow();
+    expect(invalidateSearchIndex).not.toHaveBeenCalled();
+  });
 });
 
 describe('updateCustomRecord', () => {
@@ -141,6 +180,31 @@ describe('updateCustomRecord', () => {
     expect(updated.createdAt).toBe(original.createdAt);
     expect(store['CUSTOM-HACKED']).toBeUndefined();
   });
+
+  it('re-pins searchNames even when only smuggled via patch — never trusts a client-supplied value (issue #172)', async () => {
+    await createCustomRecord({ id: 'CUSTOM-1', type: 'individual', primaryName: 'Jane Doe' });
+
+    // A patch that doesn't touch primaryName/aliases at all, but tries to
+    // set searchNames directly — this is exactly what would let an
+    // untrusted caller control which queries match this record.
+    const malicious = { searchNames: ['totally-unrelated-token'] } as any;
+    const updated = await updateCustomRecord('CUSTOM-1', malicious);
+
+    expect(updated.searchNames).not.toContain('totally-unrelated-token');
+    expect(updated.searchNames).toEqual(expect.arrayContaining(['jane', 'doe']));
+  });
+
+  it('calls invalidateSearchIndex after a successful update', async () => {
+    await createCustomRecord({ id: 'CUSTOM-1', type: 'individual', primaryName: 'Jane Doe' });
+    vi.clearAllMocks();
+    await updateCustomRecord('CUSTOM-1', { sanctionReason: 'note' });
+    expect(invalidateSearchIndex).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not call invalidateSearchIndex when the update target does not exist', async () => {
+    await expect(updateCustomRecord('CUSTOM-404', { primaryName: 'x' })).rejects.toThrow();
+    expect(invalidateSearchIndex).not.toHaveBeenCalled();
+  });
 });
 
 describe('deleteCustomRecord', () => {
@@ -165,6 +229,20 @@ describe('deleteCustomRecord', () => {
     await deleteCustomRecord('CUSTOM-1', { confirm: true });
     expect(store['CUSTOM-1']).toBeUndefined();
   });
+
+  it('calls invalidateSearchIndex after a successful delete', async () => {
+    await createCustomRecord({ id: 'CUSTOM-1', type: 'individual', primaryName: 'Jane Doe' });
+    vi.clearAllMocks();
+    await deleteCustomRecord('CUSTOM-1', { confirm: true });
+    expect(invalidateSearchIndex).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not call invalidateSearchIndex when delete is refused (missing confirm)', async () => {
+    await createCustomRecord({ id: 'CUSTOM-1', type: 'individual', primaryName: 'Jane Doe' });
+    vi.clearAllMocks();
+    await expect(deleteCustomRecord('CUSTOM-1', { confirm: false })).rejects.toThrow();
+    expect(invalidateSearchIndex).not.toHaveBeenCalled();
+  });
 });
 
 describe('getCustomRecord', () => {
@@ -179,10 +257,11 @@ describe('getCustomRecord', () => {
   });
 });
 
-// Not wired to any HTTP route yet, but these functions are the eventual
-// attack surface: an id built from an untrusted source must never reach
-// .doc(id) unvalidated (CLAUDE.md §6) — a "/" would silently address a
-// different, unintended document nested in the collection hierarchy.
+// Wired to /api/admin/custom-records (issue #172) — an id coming straight
+// from an untrusted request body/param must never reach .doc(id) unvalidated
+// (CLAUDE.md §6) — a "/" would silently address a different, unintended
+// document nested in the collection hierarchy. These module-level checks are
+// a defense-in-depth backstop behind the router's own validateEntityIdParam.
 describe('id validation', () => {
   const INVALID_ID = 'CUSTOM-1/../../admins/attacker@example.com';
 

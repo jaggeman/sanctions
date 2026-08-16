@@ -112,7 +112,7 @@ describe('createApiToken', () => {
   it('persists a hash (never the raw token) and returns the raw token once', async () => {
     mockSet.mockResolvedValueOnce(undefined);
 
-    const { token, record } = await createApiToken('CI pipeline', ['read']);
+    const { token, record } = await createApiToken('CI pipeline', ['read'], 'admin@corp.test');
 
     expect(token).toMatch(/^sanc_[0-9a-f]{64}$/);
     expect(mockCollection).toHaveBeenCalledWith('apiTokens');
@@ -125,6 +125,7 @@ describe('createApiToken', () => {
     expect(record).toEqual({
       id: 'generated-id',
       name: 'CI pipeline',
+      ownerEmail: 'admin@corp.test',
       tokenPreview: previewFromRawToken(token),
       scopes: ['read'],
       createdAt: persisted.createdAt,
@@ -133,6 +134,13 @@ describe('createApiToken', () => {
       revokedAt: null,
     });
     expect(record).not.toHaveProperty('tokenHash');
+  });
+
+  it('rejects an empty ownerEmail', async () => {
+    await expect(createApiToken('CI pipeline', ['read'], '')).rejects.toThrow(
+      /ownerEmail/i
+    );
+    expect(mockSet).not.toHaveBeenCalled();
   });
 });
 
@@ -244,8 +252,8 @@ describe('verifyApiToken', () => {
     });
   });
 
-  it('accepts a valid token and records last-used time', async () => {
-    const stored = { id: 'tok-1', scopes: ['read', 'write'], revoked: false };
+  it('accepts a valid token, returns its ownerEmail, and records last-used time', async () => {
+    const stored = { id: 'tok-1', scopes: ['read', 'write'], revoked: false, ownerEmail: 'owner@corp.test' };
     mockDocUpdate.mockResolvedValueOnce(undefined);
     mockWhereLimitGet.mockResolvedValueOnce({
       empty: false,
@@ -254,9 +262,45 @@ describe('verifyApiToken', () => {
 
     const result = await verifyApiToken('sanc_valid', 'read');
 
-    expect(result).toEqual({ valid: true, tokenId: 'tok-1', scopes: ['read', 'write'] });
+    expect(result).toEqual({
+      valid: true,
+      tokenId: 'tok-1',
+      scopes: ['read', 'write'],
+      ownerEmail: 'owner@corp.test',
+    });
     expect(mockDocUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ lastUsedAt: expect.any(String) })
     );
+  });
+
+  it('rejects a write-scope request when the stored record has no ownerEmail (legacy token)', async () => {
+    const stored = { id: 'tok-1', scopes: ['write'], revoked: false };
+    mockWhereLimitGet.mockResolvedValueOnce({
+      empty: false,
+      docs: [{ data: () => stored, ref: { update: mockDocUpdate } }],
+    });
+
+    const result = await verifyApiToken('sanc_legacy', 'write');
+
+    expect(result).toEqual({
+      valid: false,
+      reason: 'no_owner_email',
+      tokenId: 'tok-1',
+      scopes: ['write'],
+    });
+    expect(mockDocUpdate).not.toHaveBeenCalled();
+  });
+
+  it('still allows a read-scope request through when ownerEmail is missing (reads attribute nothing)', async () => {
+    const stored = { id: 'tok-1', scopes: ['read'], revoked: false };
+    mockDocUpdate.mockResolvedValueOnce(undefined);
+    mockWhereLimitGet.mockResolvedValueOnce({
+      empty: false,
+      docs: [{ data: () => stored, ref: { update: mockDocUpdate } }],
+    });
+
+    const result = await verifyApiToken('sanc_legacy_read', 'read');
+
+    expect(result).toEqual({ valid: true, tokenId: 'tok-1', scopes: ['read'], ownerEmail: undefined });
   });
 });

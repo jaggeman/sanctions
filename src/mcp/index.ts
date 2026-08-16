@@ -9,6 +9,8 @@ import {
 import { db } from '../shared/firebase';
 import { runImport } from '../importer';
 import { runSearch } from '../search';
+import { getOverride } from '../overrides';
+import { listDecisionsForEntity } from '../decisions';
 
 // Create the MCP server instance
 const server = new Server(
@@ -93,6 +95,83 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
         },
       },
+      {
+        name: 'get_override',
+        description: 'Hämta den manuella korrigeringen (override) som är sparad för en specifik sanktionspost, om någon finns.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            entityId: {
+              type: 'string',
+              description: 'Det unika ID:t för sanktionsposten, t.ex. "EU-1234".',
+            },
+          },
+          required: ['entityId'],
+        },
+      },
+      {
+        name: 'create_override',
+        description: 'Skapa eller ersätt en manuell korrigering (override) för en sanktionspost. Anropar det riktiga skriv-API:et med en skriv-skopad API-token (MCP_API_TOKEN) — ändringen attribueras alltid till tokenens ägare, aldrig till den anropande agenten.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            entityId: {
+              type: 'string',
+              description: 'Det unika ID:t för sanktionsposten att korrigera.',
+            },
+            fields: {
+              type: 'object',
+              description: 'Fält att overrida, t.ex. {"sanctionReason": "Uppdaterad text"}. Kan INTE innehålla: id, source, type, createdAt, searchNames, status.',
+            },
+            reason: {
+              type: 'string',
+              description: 'Motivering till korrigeringen (obligatorisk, sparas i granskningsloggen).',
+            },
+          },
+          required: ['entityId', 'fields', 'reason'],
+        },
+      },
+      {
+        name: 'record_decision',
+        description: 'Registrera eller skriv över en analytisk bedömning (falskt eller sant positivt fynd) för en sanktionspost och ett kund/subjekt-ID. Kräver en skriv-skopad API-token (MCP_API_TOKEN); bedömningen attribueras till tokenens ägare.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            entityId: {
+              type: 'string',
+              description: 'Det unika ID:t för sanktionsposten.',
+            },
+            subjectId: {
+              type: 'string',
+              description: 'ID för kunden/subjektet bedömningen gäller.',
+            },
+            verdict: {
+              type: 'string',
+              enum: ['false_positive', 'true_positive'],
+              description: 'Bedömningens utfall.',
+            },
+            notes: {
+              type: 'string',
+              description: 'Frivillig kommentar till bedömningen.',
+            },
+          },
+          required: ['entityId', 'subjectId', 'verdict'],
+        },
+      },
+      {
+        name: 'list_decisions_for_entity',
+        description: 'Lista alla registrerade bedömningar för en sanktionspost, över alla kund/subjekt-ID:n.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            entityId: {
+              type: 'string',
+              description: 'Det unika ID:t för sanktionsposten.',
+            },
+          },
+          required: ['entityId'],
+        },
+      },
     ],
   };
 });
@@ -140,6 +219,148 @@ export async function handleSearchSanctions(args: any) {
 
   return {
     content: [{ type: 'text', text: `Hittade ${totalMatches} träffar (visar de första ${results.length}):\n\n${formatted}${truncationNote}` }],
+  };
+}
+
+/**
+ * Calls the real running REST API with a write-scoped bearer token. Used by
+ * every MCP tool that writes (create_override, record_decision) instead of
+ * touching Firestore/internal modules directly — this reuses the server's
+ * own auth, validation (IMMUTABLE_KEYS, entity-existence, etc.) and, above
+ * all, its attribution of overriddenBy/decidedBy to a real authenticated
+ * identity (req.userEmail), which MCP has no session of its own to provide.
+ *
+ * Config is read per-call, not cached at module load, so a long-lived MCP
+ * stdio process picks up a rotated token without a restart — same
+ * "re-read on every call, don't cache at startup" convention as
+ * ALLOWED_EMAIL_DOMAINS. Deliberately no default for MCP_API_BASE_URL: an
+ * agent silently writing real, attributed records to an unintended target
+ * is worse than a clear config error.
+ */
+export async function callSanctionsApi(
+  method: 'PUT' | 'POST' | 'DELETE',
+  path: string,
+  body?: unknown,
+): Promise<{ ok: boolean; status: number; body: any }> {
+  const baseUrl = process.env.MCP_API_BASE_URL;
+  if (!baseUrl) {
+    return { ok: false, status: 0, body: { error: 'MCP_API_BASE_URL saknas — sätt Sanctions-API:ets bas-URL i miljövariabeln MCP_API_BASE_URL.' } };
+  }
+
+  const token = process.env.MCP_API_TOKEN;
+  if (!token) {
+    return { ok: false, status: 0, body: { error: 'MCP_API_TOKEN saknas — sätt en skriv-skopad API-token i miljövariabeln MCP_API_TOKEN.' } };
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (err: any) {
+    return { ok: false, status: 0, body: { error: `Kunde inte nå Sanctions-API:et på ${baseUrl}: ${err.message}` } };
+  }
+
+  let parsed: any;
+  try {
+    parsed = await res.json();
+  } catch {
+    parsed = { error: res.statusText || 'Ogiltigt svar från API:et.' };
+  }
+
+  return { ok: res.ok, status: res.status, body: parsed };
+}
+
+/**
+ * Handles the get_override tool. A read — calls src/overrides directly, same
+ * trust model as handleGetSanctionDetails, since a read attributes nothing
+ * to anyone (unlike create_override/record_decision, which must go through
+ * the real HTTP API — see callSanctionsApi's own comment).
+ */
+export async function handleGetOverride(args: any) {
+  const entityId = String(args?.entityId || '');
+  const override = await getOverride(entityId);
+
+  if (!override) {
+    return {
+      content: [{ type: 'text', text: `Ingen override finns sparad för ${entityId}.` }],
+    };
+  }
+
+  return {
+    content: [{ type: 'text', text: JSON.stringify(override, null, 2) }],
+  };
+}
+
+/**
+ * Handles the create_override tool. Proxies PUT /api/overrides/:id through
+ * the real HTTP API — see callSanctionsApi's own comment for why.
+ */
+export async function handleCreateOverride(args: any) {
+  const entityId = String(args?.entityId || '');
+  const result = await callSanctionsApi('PUT', `/api/overrides/${entityId}`, {
+    fields: args?.fields,
+    reason: args?.reason,
+  });
+
+  if (!result.ok) {
+    return {
+      content: [{ type: 'text', text: result.body?.error || `API-anrop misslyckades (${result.status}).` }],
+      isError: true,
+    };
+  }
+
+  return {
+    content: [{ type: 'text', text: `Override sparad för ${entityId}:\n${JSON.stringify(result.body, null, 2)}` }],
+  };
+}
+
+/**
+ * Handles the record_decision tool. Proxies POST /api/decisions through the
+ * real HTTP API — see callSanctionsApi's own comment for why.
+ */
+export async function handleRecordDecision(args: any) {
+  const result = await callSanctionsApi('POST', '/api/decisions', {
+    entityId: args?.entityId,
+    subjectId: args?.subjectId,
+    verdict: args?.verdict,
+    ...(args?.notes !== undefined ? { notes: args.notes } : {}),
+  });
+
+  if (!result.ok) {
+    return {
+      content: [{ type: 'text', text: result.body?.error || `API-anrop misslyckades (${result.status}).` }],
+      isError: true,
+    };
+  }
+
+  return {
+    content: [{ type: 'text', text: `Bedömning sparad:\n${JSON.stringify(result.body, null, 2)}` }],
+  };
+}
+
+/**
+ * Handles the list_decisions_for_entity tool. A read — calls src/decisions
+ * directly, same trust model as handleGetSanctionDetails.
+ */
+export async function handleListDecisionsForEntity(args: any) {
+  const entityId = String(args?.entityId || '');
+  const decisions = await listDecisionsForEntity(entityId);
+
+  if (decisions.length === 0) {
+    return {
+      content: [{ type: 'text', text: `Inga bedömningar registrerade för ${entityId}.` }],
+    };
+  }
+
+  return {
+    content: [{ type: 'text', text: JSON.stringify(decisions, null, 2) }],
   };
 }
 
@@ -210,6 +431,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     if (name === 'run_database_import') {
       return await handleRunDatabaseImport(args);
+    }
+
+    if (name === 'get_override') {
+      return await handleGetOverride(args);
+    }
+
+    if (name === 'create_override') {
+      return await handleCreateOverride(args);
+    }
+
+    if (name === 'record_decision') {
+      return await handleRecordDecision(args);
+    }
+
+    if (name === 'list_decisions_for_entity') {
+      return await handleListDecisionsForEntity(args);
     }
 
     throw new Error(`Okänt verktyg: ${name}`);

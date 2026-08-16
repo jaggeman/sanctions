@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { soundex, jaroWinkler, scoreNameMatch } from '../../src/search/matcher';
+import {
+  soundex,
+  jaroWinkler,
+  scoreNameMatch,
+  scoreTokenizedNameMatch,
+  buildTokenizedName,
+  buildTokenizedQuery,
+} from '../../src/search/matcher';
 
 /**
  * This is genuinely new code (issue #11), so this is real TDD: these tests
@@ -220,5 +227,90 @@ describe('scoreNameMatch — non-Latin script (issue #40)', () => {
   it('a Cyrillic query does not spuriously match an unrelated Latin name', () => {
     const { score } = scoreNameMatch('Абу Нидал', ['Kim Jong Un']);
     expect(score).toBeLessThan(40);
+  });
+});
+
+// Issue #42: runSearch precomputes each candidate's tokenized form once at
+// index-build time instead of re-tokenizing on every query. This is a "when
+// is it computed" change, not a "what does it compute" change — this suite
+// proves scoreTokenizedNameMatch over precomputed tokens returns exactly the
+// same result as scoreNameMatch over raw strings for every case above that
+// actually exercises the interesting behavior (transliteration, particle
+// weighting, reversed order, typos), so the refactor can't have silently
+// changed matching behavior.
+describe('scoreTokenizedNameMatch — precomputed-index equivalence (issue #42)', () => {
+  const cases: Array<[string, string[]]> = [
+    ['Vladimir Putin', ['Vladimir Putin']],
+    ['Qusay', ['Qoussaï Saddam Hussein Al-Tikriti']],
+    ['Mohammed Al-Amin', ['Muhammad Al-Amin']],
+    ['Saddam Hussein Al-Tikriti', ['Saddam Hussein Al-Tikriti']],
+    ['Hussein Al-Tikriti, Saddam', ['Saddam Hussein Al-Tikriti']],
+    ['Saddam Tikriti', ['Saddam Hussein Al-Tikriti']],
+    ['Vova Putin', ['Vladimir Vladimirovich Putin', 'Vova Putin']],
+    ['Angela Merkel', ['Kim Jong Un']],
+    ['Anyone', []],
+    ['Vladimir Putin', ['Vladmir Putin']],
+    ['Al Hassan', ['Al-Tikriti Hassan Omar']],
+    ['Ali Ali', ['Ali']],
+    ['Al Bin Omar', ['Al Rashid Bin Laden Al-Sayed']],
+    ['Ali Hassan', ['Hassan Ali']],
+    ['Abu Ali', ['Abu Ali']],
+    ['Абу Нидал', ['Абу Нидал']],
+    ['Μαύρος Σεπτέμβρης', ['Μαύρος Σεπτέμβρης']],
+    ['Abu Nidal', ['Организация „Абу Нидал”']],
+    ['Абу Нидал', ['Abu Nidal Organisation']],
+    ['Абу Нидал', ['Kim Jong Un']],
+  ];
+
+  it('produces byte-identical results to scoreNameMatch when candidates are pre-tokenized', () => {
+    for (const [query, candidateNames] of cases) {
+      const direct = scoreNameMatch(query, candidateNames);
+
+      const tokenizedQuery = buildTokenizedQuery(query);
+      const tokenizedCandidates = candidateNames.map(buildTokenizedName);
+      const viaPrecomputedIndex = scoreTokenizedNameMatch(tokenizedQuery, tokenizedCandidates);
+
+      expect(viaPrecomputedIndex, `query="${query}" candidates=${JSON.stringify(candidateNames)}`).toEqual(direct);
+    }
+  });
+});
+
+describe('short-word edit-distance false positives (issue #104)', () => {
+  // The concrete case from the issue: jaroWinkler('qusay','musa') = 0.7833,
+  // well above the old flat EDIT_DISTANCE_MATCH_THRESHOLD (0.75), despite
+  // the two words being phonetically unrelated (soundex 'Q200' vs 'M200')
+  // and semantically unrelated real aliases in the corpus. A raw JW score
+  // on short words is coincidental far more often than the old flat
+  // threshold accounted for — see the real-corpus calibration in this PR's
+  // description for the fuller picture (many other short pairs coincide in
+  // the 0.75-0.88 range with no phonetic or substring relationship at all).
+  it('no longer matches "Qusay" against the unrelated alias "Musa"', () => {
+    const { score } = scoreNameMatch('Qusay', ['Musa']);
+    expect(score).toBe(0);
+  });
+
+  it('still rejects other short coincidental pairs with no phonetic backing', () => {
+    expect(scoreNameMatch('Omar', ['Oman']).score).toBe(0);
+    expect(scoreNameMatch('Angela', ['Jong']).score).toBe(0);
+  });
+
+  // Genuine short-name spelling variants must keep matching — this fix
+  // tightens the threshold, it doesn't replace edit-distance matching with
+  // phonetic-only matching (that would reject these too, since several of
+  // them disagree on soundex despite being real variants).
+  it('still matches genuine short-name spelling variants', () => {
+    expect(scoreNameMatch('Ahmed', ['Ahmad']).score).toBeGreaterThan(0);
+    expect(scoreNameMatch('Nasser', ['Nassar']).score).toBeGreaterThan(0);
+    expect(scoreNameMatch('Hana', ['Hanan']).score).toBeGreaterThan(0);
+    expect(scoreNameMatch('Musa', ['Musab']).score).toBeGreaterThan(0);
+    expect(scoreNameMatch('Musa', ['Mousa']).score).toBeGreaterThan(0);
+    expect(scoreNameMatch('Mahmoud', ['Mahmud']).score).toBeGreaterThan(0);
+  });
+
+  // DWAYNE/DUANE (the published JW reference pair, 0.84) stays a match even
+  // though it's short — its soundex agrees (D500/D500), so it matches via
+  // the phonetic path regardless of the stricter short-word JW bar.
+  it('keeps matching a short pair whose JW score is below the new bar but whose soundex agrees', () => {
+    expect(scoreNameMatch('Dwayne', ['Duane']).score).toBeGreaterThan(0);
   });
 });

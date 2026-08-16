@@ -28,7 +28,8 @@ tokensRouter.post('/', async (req, res): Promise<any> => {
   }
 
   try {
-    const { token, record } = await createApiToken(name.trim(), scopes);
+    const ownerEmail = (req as any).userEmail;
+    const { token, record } = await createApiToken(name.trim(), scopes, ownerEmail);
     res.status(201).json({ token, ...record });
   } catch (error: any) {
     console.error('Create token error:', error);

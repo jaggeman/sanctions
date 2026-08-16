@@ -1,5 +1,5 @@
 import { db } from '../shared/firebase';
-import { Decision } from '../shared/types';
+import { Decision, DecisionChangeType, DecisionHistoryEntry } from '../shared/types';
 
 const COLLECTION = 'decisions';
 const VALID_VERDICTS = new Set(['false_positive', 'true_positive']);
@@ -49,7 +49,21 @@ export async function saveDecision(input: SaveDecisionInput): Promise<Decision> 
     ...(input.notes !== undefined ? { notes: input.notes } : {}),
   };
 
-  await db.collection(COLLECTION).doc(decisionDocId(input.entityId, input.subjectId)).set(decision);
+  const docRef = db.collection(COLLECTION).doc(decisionDocId(input.entityId, input.subjectId));
+  const existing = await docRef.get();
+  const changeType: DecisionChangeType = existing.exists ? 'replaced' : 'created';
+
+  await docRef.set(decision);
+
+  // Append-only history (issue #112) — the current-state doc above is a
+  // plain upsert (re-adjudicating is the normal case, not an error), but
+  // the prior verdict/author/notes must stay recoverable rather than
+  // silently overwritten. Written after the primary doc: if this write
+  // fails, current-state reads are still correct, just missing one
+  // history entry, which is the higher-priority guarantee.
+  const historyEntry: DecisionHistoryEntry = { changeType, changedAt: decision.decidedAt, decision };
+  await docRef.collection('history').doc().set(historyEntry);
+
   return decision;
 }
 
@@ -64,4 +78,19 @@ export async function listDecisionsForEntity(entityId: string): Promise<Decision
   const decisions: Decision[] = [];
   snapshot.forEach((doc: any) => decisions.push(doc.data() as Decision));
   return decisions;
+}
+
+/**
+ * Full change history for an entity+subject pair, most recent first —
+ * every prior adjudication that `saveDecision`'s upsert has since
+ * overwritten in the current-state doc (issue #112).
+ */
+export async function getDecisionHistory(entityId: string, subjectId: string): Promise<DecisionHistoryEntry[]> {
+  const snapshot = await db
+    .collection(COLLECTION)
+    .doc(decisionDocId(entityId, subjectId))
+    .collection('history')
+    .orderBy('changedAt', 'desc')
+    .get();
+  return snapshot.docs.map((doc: any) => doc.data() as DecisionHistoryEntry);
 }

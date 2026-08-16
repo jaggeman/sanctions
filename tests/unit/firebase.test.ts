@@ -26,6 +26,12 @@ beforeEach(() => {
   mockStorage.mockClear();
   process.env = { ...ORIGINAL_ENV };
   delete process.env.FIREBASE_STORAGE_BUCKET;
+  // GCLOUD_PROJECT is real ambient state here, not test pollution: `firebase
+  // emulators:exec` (which `npm test` wraps this suite in) sets it itself to
+  // the project in .firebaserc, so it is already present in ORIGINAL_ENV
+  // before any test runs. Each test that wants it sets it explicitly; the
+  // rest must not silently inherit it from the real environment.
+  delete process.env.GCLOUD_PROJECT;
 });
 
 describe('getBucket', () => {
@@ -36,6 +42,22 @@ describe('getBucket', () => {
     getBucket();
 
     expect(mockBucket).toHaveBeenCalledWith('my-project.appspot.com');
+  });
+
+  it('prefers GCLOUD_PROJECT (the real deployed project) over FIREBASE_PROJECT_ID or the hardcoded fallback', async () => {
+    // A real incident: this deployment's env only had GCLOUD_PROJECT set
+    // (auto-populated by Cloud Functions), not FIREBASE_PROJECT_ID (which
+    // can't even be set as a deployed function's env var — Firebase
+    // Functions v2 rejects any FIREBASE_-prefixed key at deploy time). The
+    // old fallback-to-a-hardcoded-other-project's-id silently pointed every
+    // such deployment at the wrong Firestore project.
+    process.env.GCLOUD_PROJECT = 'sanctions-app-dev-01';
+    process.env.FIREBASE_PROJECT_ID = 'some-other-project';
+    const { getBucket } = await import('../../src/shared/firebase');
+
+    getBucket();
+
+    expect(mockBucket).toHaveBeenCalledWith('sanctions-app-dev-01.appspot.com');
   });
 
   it('uses FIREBASE_STORAGE_BUCKET when explicitly set, instead of the derived default', async () => {

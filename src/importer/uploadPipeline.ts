@@ -13,6 +13,7 @@ import { runImport } from './index';
 import { ImportMode, StreamedDiffResult } from './diff';
 import { getBucket } from '../shared/firebase';
 import { SanctionSource } from '../shared/types';
+import { logger } from '../shared/logger';
 
 export interface ProcessUploadOptions {
   filePath: string;
@@ -113,6 +114,7 @@ export async function processUpload(options: ProcessUploadOptions): Promise<Proc
   try {
     await createPendingImport({
       importId: sha256,
+      trigger: 'upload',
       filename: originalFilename,
       sha256,
       sizeBytes,
@@ -135,26 +137,39 @@ export async function processUpload(options: ProcessUploadOptions): Promise<Proc
     return { outcome: 'unsupported_format', importId: sha256, format };
   }
 
+  let result;
   try {
     await getBucket().file(storagePath).save(await fs.readFile(filePath));
 
-    const result = await runImport({
+    result = await runImport({
       uploadedFile: { path: filePath, format: formatForRunImport(format), source },
       // Diff-engine controls (issue #8) forwarded from the upload request.
       ...importOptions,
     });
-
-    if (!result.success) {
-      const error = result.error || 'Import failed with no further detail.';
-      await markImportFailed(sha256, error);
-      return { outcome: 'failed', importId: sha256, error };
-    }
-
-    const parsed = Object.values(result.importedCounts).reduce((a, b) => a + b, 0);
-    await markImportApplied(sha256, { parsed, uploaded: parsed });
-    return { outcome: 'applied', importId: sha256, counts: { parsed, uploaded: parsed } };
   } catch (err: any) {
+    // Storage or runImport itself failed — nothing durable happened, so
+    // 'failed' is accurate here.
     await markImportFailed(sha256, err.message);
     return { outcome: 'failed', importId: sha256, error: err.message };
   }
+
+  if (!result.success) {
+    const error = result.error || 'Import failed with no further detail.';
+    await markImportFailed(sha256, error);
+    return { outcome: 'failed', importId: sha256, error };
+  }
+
+  const parsed = Object.values(result.importedCounts).reduce((a, b) => a + b, 0);
+  try {
+    await markImportApplied(sha256, { parsed, uploaded: parsed });
+  } catch (err: any) {
+    // issue #60: runImport already succeeded — real sanction records are
+    // written. A failure in this bookkeeping call must never relabel that
+    // success as 'failed' (markImportFailed would be a lie); the import doc
+    // may be left at 'pending', but that's now covered by
+    // createPendingImport's staleness-based retry instead of blocking
+    // forever.
+    logger.error('Import succeeded but markImportApplied bookkeeping failed', { sha256, error: err });
+  }
+  return { outcome: 'applied', importId: sha256, counts: { parsed, uploaded: parsed } };
 }

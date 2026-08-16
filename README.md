@@ -123,6 +123,12 @@ Test files live under `tests/unit`, `tests/rules`, and `tests/integration`, with
 
 If another process on your machine already holds the Firestore emulator port, change `emulators.firestore.port` in `firebase.json` locally and leave the change uncommitted — the suite picks the port up from `FIRESTORE_EMULATOR_HOST`.
 
+## Logging & durability
+
+`src/shared/logger.ts` writes structured JSON lines that Cloud Functions forwards to GCP Cloud Logging automatically — but this repo does not configure a log sink/export or extended retention anywhere, so that output sits in GCP's default `_Default` log bucket (commonly ~30 days) and is only queryable via the GCP Console by someone with project access.
+
+That's a deliberate decision (issue #114), not an oversight: **Firestore audit collections are this project's sole durable record**, not Cloud Logging. If you need to look something up later, it lives in `sanctions`/`versions` (issue #9), `imports` (issue #7), `overrides` (issue #35), or `decisions` (issue #22) — not in a log line. See the comment at the top of `src/shared/logger.ts` for the full reasoning.
+
 ## Configuration
 
 ### `ALLOWED_EMAIL_DOMAINS` — required in production
@@ -154,6 +160,28 @@ Outside production (`NODE_ENV !== 'production'`), an unset list falls back to th
 Membership is re-read on every request, so removing someone from the list revokes their admin access immediately rather than when their session expires.
 
 **Every `ADMIN_EMAILS` address's domain must also appear in `ALLOWED_EMAIL_DOMAINS`.** The two lists are checked independently — `ALLOWED_EMAIL_DOMAINS` gates login before `ADMIN_EMAILS` is ever consulted, so an admin whose domain is missing from the login allow-list is locked out entirely, with no indication of why (it just looks like a normal login rejection). The server logs a `warn`-level entry at startup for any misconfigured admin address, but it is not fatal — double-check both lists together before deploying.
+
+### Model Context Protocol (MCP) server
+
+`src/mcp/index.ts` is a separate stdio process (run via `npm run dev:mcp`, or `node dist/mcp/index.js` after `npm run build`) that lets an AI agent search and manage sanctions data through the MCP protocol — it is not part of the Express app. It exposes read tools (`search_sanctions`, `get_sanction_details`, `get_override`, `list_decisions_for_entity`), a `sanctions://statistics` resource, and write tools (`run_database_import`, `create_override`, `record_decision`).
+
+```
+MCP_API_BASE_URL=http://localhost:3000
+MCP_API_TOKEN=sanc_...
+```
+
+Required only for `create_override`/`record_decision` — the other tools work with neither set. Both write tools proxy through the real running REST API (`PUT /api/overrides/:id`, `POST /api/decisions`) using this bearer token rather than writing to Firestore directly, so the write is always attributed to the token's `ownerEmail` (minted via `POST /api/admin/tokens` with `write` scope), never to anything the calling agent supplies. Missing either variable, or a failed API call, is surfaced back to the calling agent as an error rather than silently no-op'd.
+
+### OTP rate limiting — tuning knobs, not env vars
+
+`POST /api/auth/request-otp` is protected two ways, both hardcoded constants in `src/auth/otp.ts` rather than env vars (no deploy-time configuration needed to get a sane default):
+
+- `OTP_REQUEST_COOLDOWN_MS` (60s) — one address can't be sent a second code until its previous one's cooldown expires (issue #16).
+- `OTP_GLOBAL_SEND_LIMIT` / `OTP_GLOBAL_SEND_WINDOW_MS` (30 sends per 60s, org-wide) — caps total OTP sends regardless of which addresses they're for, so many *distinct* real addresses can't all be emailed a code at once (issue #62). The per-email cooldown alone doesn't stop that: it only blocks repeats against one address.
+
+If a deploy needs a different volume (a genuinely larger user base, or a stricter posture), edit these two constants directly rather than looking for an env var — there isn't one, by design, for a limit that should always be active rather than something an unset config could silently disable.
+
+Per-IP rate limiting is a deliberate gap, not an oversight: this app runs as a single Cloud Function behind Firebase Hosting's proxy, and naively trusting `req.ip`/`X-Forwarded-For` without correctly configuring `trust proxy` would let an attacker spoof any IP, defeating the limiter entirely. Tracked as its own follow-up issue rather than rushed here.
 
 ## 🚀 Hur man deployar (Laddar upp till produktion)
 

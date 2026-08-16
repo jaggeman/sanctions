@@ -73,6 +73,59 @@ describe('parseUNList', () => {
     expect(adf!.addresses?.[0].fullAddress).toBe('Beni, Democratic Republic of the Congo');
   });
 
+  it('issue #34: preserves a leading-zero document number instead of silently truncating it as a number', async () => {
+    // Real record (DATAID 110425) carved from the actual UN Consolidated
+    // List export — its National Identification Number is "0035011785".
+    // fast-xml-parser's default parseTagValue would coerce this all-digit
+    // element text to the number 35011785, losing both leading zeros.
+    const records = await parseUNList(FIXTURE);
+    const naser = records.find((r) => r.id === 'UN-110425');
+
+    expect(naser).toBeDefined();
+    expect(naser!.passports).toContain('National Identification Number 0035011785 (Iran (Islamic Republic of))');
+    // The other document on the same record isn't all-digit, so it was never
+    // at risk — asserting it anyway to pin the full expected shape.
+    expect(naser!.passports).toContain('Passport A0003039 (Iran (Islamic Republic of))');
+  });
+
+  it('reads the issuing country from COUNTRY_OF_ISSUE, not just ISSUING_COUNTRY', async () => {
+    // Found while adding the fixture above: the real Consolidated List
+    // export uses ISSUING_COUNTRY on ~293 INDIVIDUAL_DOCUMENT entries and
+    // COUNTRY_OF_ISSUE on ~102 others. Both documents on DATAID 110425 use
+    // COUNTRY_OF_ISSUE — this pins that the country isn't silently dropped.
+    const records = await parseUNList(FIXTURE);
+    const naser = records.find((r) => r.id === 'UN-110425');
+    expect(naser!.passports?.every((p) => p.includes('Iran (Islamic Republic of)'))).toBe(true);
+  });
+
+  it('issue #168: marks a Good-quality INDIVIDUAL_ALIAS as strong, a Low-quality one as weak', async () => {
+    const records = await parseUNList(FIXTURE);
+    const gaston = records.find((r) => r.id === 'UN-6907995');
+
+    expect(gaston).toBeDefined();
+    const rumuli = gaston!.names?.find((n) => n.wholeName === 'Rumuli');
+    const byiringiro = gaston!.names?.find((n) => n.wholeName === 'Byiringiro Victor Rumuli');
+    expect(rumuli?.strong).toBe(false);
+    expect(byiringiro?.strong).toBe(true);
+  });
+
+  it("issue #168: ENTITY_ALIAS's QUALITY is an alias-type label (a.k.a./f.k.a.), not a reliability marker — must not flip strong", async () => {
+    // Real records: DATAID 6908026 has an "a.k.a." alias, DATAID 6908335 has
+    // an "f.k.a." one. Neither value is ever "Good", so naively reusing the
+    // INDIVIDUAL_ALIAS Good->strong mapping here would mark every entity
+    // alias as weak — a confidence signal the source never actually
+    // asserted. Entities keep the pre-existing default (false) unchanged.
+    const records = await parseUNList(FIXTURE);
+
+    const cagl = records.find((r) => r.id === 'UN-6908026');
+    const caglAlias = cagl!.names?.find((n) => n.wholeName === 'CAGL');
+    expect(caglAlias?.strong).toBe(false);
+
+    const logarcheo = records.find((r) => r.id === 'UN-6908335');
+    const logarcheoAlias = logarcheo!.names?.find((n) => n.wholeName === 'LOGARCHEO AG');
+    expect(logarcheoAlias?.strong).toBe(false);
+  });
+
   it('returns an empty list when CONSOLIDATED_LIST is absent', async () => {
     // Reuse the fixture dir but point at a file with a different root element.
     const emptyXml = '<?xml version="1.0"?><NotTheRightRoot/>';
