@@ -487,6 +487,13 @@ export async function parseEUListStreaming(
     let emitted = 0;
     let settled = false;
     const pending: Promise<void>[] = [];
+    // issue #171: a single read chunk can yield several closetag events
+    // synchronously, so more than one onRecord call can be outstanding at
+    // once. pause()/resume() is a binary switch, not a counter — resuming as
+    // soon as the FIRST of several outstanding promises settles lets the
+    // stream race ahead of a still-in-flight flush. Only resume once every
+    // currently-outstanding promise has settled.
+    let outstanding = 0;
 
     const fail = (err: Error) => {
       if (settled) return;
@@ -546,11 +553,14 @@ export async function parseEUListStreaming(
           }
           if (result && typeof (result as Promise<void>).then === 'function') {
             readStream.pause();
+            outstanding++;
             const awaited = (result as Promise<void>).then(
               () => {
-                readStream.resume();
+                outstanding--;
+                if (outstanding === 0) readStream.resume();
               },
               (err) => {
+                outstanding--;
                 fail(err);
                 throw err;
               },

@@ -78,7 +78,13 @@ async function runUploadedFileImport(
         if (buffer.length === 0) return;
         const chunk = buffer;
         buffer = [];
-        uploaded += await session.addChunk(chunk);
+        // issue #171: reading `uploaded` happens BEFORE evaluating an
+        // awaited right-hand side in a compound assignment, so two
+        // overlapping flushes would both read the same stale value and the
+        // second write would clobber the first's contribution. Splitting
+        // the read of `uploaded` to after the await removes that window.
+        const addedCount = await session.addChunk(chunk);
+        uploaded += addedCount;
       };
       await parseEUListStreaming(file.path, async (record) => {
         parsed++;
@@ -101,7 +107,13 @@ async function runUploadedFileImport(
         if (buffer.length === 0) return;
         const chunk = buffer;
         buffer = [];
-        uploaded += await session.addChunk(chunk);
+        // issue #171: reading `uploaded` happens BEFORE evaluating an
+        // awaited right-hand side in a compound assignment, so two
+        // overlapping flushes would both read the same stale value and the
+        // second write would clobber the first's contribution. Splitting
+        // the read of `uploaded` to after the await removes that window.
+        const addedCount = await session.addChunk(chunk);
+        uploaded += addedCount;
       };
       await parseUSListStreaming(file.path, async (record) => {
         parsed++;
@@ -209,7 +221,13 @@ export async function runImport(options: ImportOptions = {}): Promise<{
         if (buffer.length === 0) return;
         const chunk = buffer;
         buffer = [];
-        uploaded += await session.addChunk(chunk);
+        // issue #171: reading `uploaded` happens BEFORE evaluating an
+        // awaited right-hand side in a compound assignment, so two
+        // overlapping flushes would both read the same stale value and the
+        // second write would clobber the first's contribution. Splitting
+        // the read of `uploaded` to after the await removes that window.
+        const addedCount = await session.addChunk(chunk);
+        uploaded += addedCount;
       };
 
       try {
@@ -277,7 +295,13 @@ export async function runImport(options: ImportOptions = {}): Promise<{
         if (buffer.length === 0) return;
         const chunk = buffer;
         buffer = [];
-        uploaded += await session.addChunk(chunk);
+        // issue #171: reading `uploaded` happens BEFORE evaluating an
+        // awaited right-hand side in a compound assignment, so two
+        // overlapping flushes would both read the same stale value and the
+        // second write would clobber the first's contribution. Splitting
+        // the read of `uploaded` to after the await removes that window.
+        const addedCount = await session.addChunk(chunk);
+        uploaded += addedCount;
       };
 
       try {
