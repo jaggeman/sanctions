@@ -1008,7 +1008,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "sanc_<random>",
-        "description": "API-token skapad via POST /api/admin/tokens, skickad som 'Authorization: Bearer sanc_...'. Ett alternativ till cookieAuth på datavägarna (GET /api/search, GET /api/sanctions/{id} kräver read-scope; POST /api/import, POST /api/upload kräver write-scope) — issue #36. Accepteras INTE av /api/admin/tokens/* själv."
+        "description": "API-token skapad via POST /api/admin/tokens, skickad som 'Authorization: Bearer sanc_...'. Stödjer granulära scopes (sanctions:read, custom:read/write, overrides:read/write, decisions:read/write, imports:read/write, system:read) samt bakåtkompatibla 'read'/'write'-paket (issue #36, #221)."
       }
     },
     "schemas": {
@@ -1020,7 +1020,23 @@
           "tokenPreview": { "type": "string", "example": "sanc_...a91b" },
           "scopes": {
             "type": "array",
-            "items": { "type": "string", "enum": ["read", "write"] }
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "write",
+                "sanctions:read",
+                "custom:read",
+                "custom:write",
+                "overrides:read",
+                "overrides:write",
+                "decisions:read",
+                "decisions:write",
+                "imports:read",
+                "imports:write",
+                "system:read"
+              ]
+            }
           },
           "createdAt": { "type": "string", "format": "date-time" },
           "lastUsedAt": { "type": "string", "format": "date-time", "nullable": true },

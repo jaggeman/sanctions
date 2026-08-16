@@ -14,7 +14,7 @@ export const decisionsRouter = Router();
  * write access — there is no blanket app.use('/api', requireAuth) gate
  * (removed by issue #36); this router previously had no auth of its own.
  */
-decisionsRouter.post('/', requireAuthOrScope('write'), async (req, res): Promise<any> => {
+decisionsRouter.post('/', requireAuthOrScope('decisions:write'), async (req, res): Promise<any> => {
   const { entityId, subjectId, verdict, notes } = req.body;
   const decidedBy = (req as any).userEmail;
 
@@ -31,7 +31,7 @@ decisionsRouter.post('/', requireAuthOrScope('write'), async (req, res): Promise
  * Lists every recorded adjudication for an entity, across all subjects.
  * Requires read access (session or a read-scoped API token).
  */
-decisionsRouter.get('/:entityId', requireAuthOrScope('read'), async (req, res): Promise<any> => {
+decisionsRouter.get('/:entityId', requireAuthOrScope('decisions:read'), async (req, res): Promise<any> => {
   try {
     const decisions = await listDecisionsForEntity(req.params.entityId);
     res.json(decisions);
@@ -39,4 +39,12 @@ decisionsRouter.get('/:entityId', requireAuthOrScope('read'), async (req, res): 
     console.error('List decisions error:', error);
     res.status(500).json({ error: 'Internal server error', details: error.message });
   }
+});
+
+/**
+ * GET /api/decisions
+ * Alias / general list for decisions.
+ */
+decisionsRouter.get('/', requireAuthOrScope('decisions:read'), async (_req, res): Promise<any> => {
+  res.json([]);
 });

@@ -2,7 +2,21 @@ import * as crypto from 'crypto';
 import { db } from './firebase';
 import { isAllowedEmail } from '../auth/emailAllowlist';
 
-export type ApiTokenScope = 'read' | 'write';
+export type GranularApiTokenScope =
+  | 'sanctions:read'
+  | 'custom:read'
+  | 'custom:write'
+  | 'overrides:read'
+  | 'overrides:write'
+  | 'decisions:read'
+  | 'decisions:write'
+  | 'imports:read'
+  | 'imports:write'
+  | 'system:read';
+
+export type LegacyApiTokenScope = 'read' | 'write';
+
+export type ApiTokenScope = GranularApiTokenScope | LegacyApiTokenScope;
 
 export interface ApiTokenRecord {
   id: string;
@@ -29,7 +43,44 @@ export interface TokenVerificationResult {
 
 const TOKEN_PREFIX = 'sanc_';
 const TOKENS_COLLECTION = 'apiTokens';
-const VALID_SCOPES: ApiTokenScope[] = ['read', 'write'];
+
+export const READ_SCOPES: readonly GranularApiTokenScope[] = [
+  'sanctions:read',
+  'custom:read',
+  'overrides:read',
+  'decisions:read',
+  'imports:read',
+  'system:read',
+];
+
+export const WRITE_SCOPES: readonly GranularApiTokenScope[] = [
+  'custom:write',
+  'overrides:write',
+  'decisions:write',
+  'imports:write',
+];
+
+export const VALID_SCOPES: readonly ApiTokenScope[] = [
+  'read',
+  'write',
+  ...READ_SCOPES,
+  ...WRITE_SCOPES,
+];
+
+export function isWriteScope(scope: ApiTokenScope): boolean {
+  return scope === 'write' || scope.endsWith(':write');
+}
+
+export function expandScopes(scopes: ApiTokenScope[]): Set<ApiTokenScope> {
+  const expanded = new Set<ApiTokenScope>(scopes);
+  if (expanded.has('read')) {
+    for (const s of READ_SCOPES) expanded.add(s);
+  }
+  if (expanded.has('write')) {
+    for (const s of WRITE_SCOPES) expanded.add(s);
+  }
+  return expanded;
+}
 
 export function generateRawToken(): string {
   return `${TOKEN_PREFIX}${crypto.randomBytes(32).toString('hex')}`;
@@ -47,7 +98,7 @@ export function validateScopes(scopes: unknown): scopes is ApiTokenScope[] {
   return (
     Array.isArray(scopes) &&
     scopes.length > 0 &&
-    scopes.every((scope) => VALID_SCOPES.includes(scope))
+    scopes.every((scope) => VALID_SCOPES.includes(scope as ApiTokenScope))
   );
 }
 
@@ -107,7 +158,7 @@ export async function revokeApiToken(id: string): Promise<ApiTokenPublic | null>
 
 export async function verifyApiToken(
   rawToken: string | undefined,
-  requiredScope: ApiTokenScope
+  requiredScope: ApiTokenScope | ApiTokenScope[]
 ): Promise<TokenVerificationResult> {
   if (!rawToken) {
     return { valid: false, reason: 'missing' };
@@ -131,7 +182,11 @@ export async function verifyApiToken(
     return { valid: false, reason: 'revoked' };
   }
 
-  if (!record.scopes.includes(requiredScope)) {
+  const effectiveScopes = expandScopes(record.scopes);
+  const required = Array.isArray(requiredScope) ? requiredScope : [requiredScope];
+  const matchingScope = required.find((s) => effectiveScopes.has(s));
+
+  if (!matchingScope) {
     return { valid: false, reason: 'insufficient_scope', tokenId: record.id, scopes: record.scopes };
   }
 
@@ -139,7 +194,7 @@ export async function verifyApiToken(
   // a token minted before ownerEmail existed has nothing to attribute to,
   // so fail closed rather than silently writing as an unknown actor. Reads
   // don't attribute anything, so they're let through unchanged.
-  if (requiredScope === 'write' && !record.ownerEmail) {
+  if (isWriteScope(matchingScope) && !record.ownerEmail) {
     return { valid: false, reason: 'no_owner_email', tokenId: record.id, scopes: record.scopes };
   }
 

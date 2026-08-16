@@ -46,7 +46,7 @@ function requesterIdentity(req: Request): string {
  * "did we ever search for X" question is answerable — never on the response
  * latency path, and a write failure there is logged, not thrown.
  */
-searchRouter.get('/search', requireAuthOrScope('read'), async (req, res): Promise<any> => {
+searchRouter.get('/search', requireAuthOrScope('sanctions:read'), async (req, res): Promise<any> => {
   const { q, source, type, limit, threshold, includeDelisted, dob } = req.query;
 
   if (!q || typeof q !== 'string') {
@@ -123,7 +123,7 @@ searchRouter.get('/search', requireAuthOrScope('read'), async (req, res): Promis
  * override reversible. `overriddenFields` in the response tells the caller
  * which fields are local corrections rather than official source data.
  */
-searchRouter.get('/sanctions/:id', requireAuthOrScope('read'), async (req, res): Promise<any> => {
+searchRouter.get('/sanctions/:id', requireAuthOrScope('sanctions:read'), async (req, res): Promise<any> => {
   const { id } = req.params;
 
   try {
@@ -161,7 +161,7 @@ searchRouter.get('/sanctions/:id', requireAuthOrScope('read'), async (req, res):
  * Version trail for a record, newest first (issue #12), backed by the
  * sanctions/{id}/versions subcollection issue #9 writes to.
  */
-searchRouter.get('/sanctions/:id/versions', requireAuthOrScope('read'), async (req, res): Promise<any> => {
+searchRouter.get('/sanctions/:id/versions', requireAuthOrScope('sanctions:read'), async (req, res): Promise<any> => {
   const { id } = req.params;
   if (!DOC_ID_PATTERN.test(id)) {
     return res.status(400).json({ error: 'Invalid record ID.' });

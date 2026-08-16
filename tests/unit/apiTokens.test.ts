@@ -95,15 +95,26 @@ describe('previewFromRawToken', () => {
 });
 
 describe('validateScopes', () => {
-  it('accepts ["read"], ["write"], and ["read","write"]', () => {
+  it('accepts legacy ["read"], ["write"], and ["read","write"]', () => {
     expect(validateScopes(['read'])).toBe(true);
     expect(validateScopes(['write'])).toBe(true);
     expect(validateScopes(['read', 'write'])).toBe(true);
   });
 
+  it('accepts granular resource scopes (issue #221)', () => {
+    expect(validateScopes(['sanctions:read'])).toBe(true);
+    expect(validateScopes(['custom:read', 'custom:write'])).toBe(true);
+    expect(validateScopes(['overrides:read', 'overrides:write'])).toBe(true);
+    expect(validateScopes(['decisions:read', 'decisions:write'])).toBe(true);
+    expect(validateScopes(['imports:read', 'imports:write'])).toBe(true);
+    expect(validateScopes(['system:read'])).toBe(true);
+    expect(validateScopes(['sanctions:read', 'imports:write'])).toBe(true);
+  });
+
   it('rejects empty arrays, unknown scopes, and non-arrays', () => {
     expect(validateScopes([])).toBe(false);
     expect(validateScopes(['admin'])).toBe(false);
+    expect(validateScopes(['sanctions:write'])).toBe(false); // sanctions collection is not directly writable
     expect(validateScopes('read')).toBe(false);
     expect(validateScopes(undefined)).toBe(false);
   });
@@ -322,5 +333,74 @@ describe('verifyApiToken', () => {
       scopes: ['read', 'write'],
     });
     expect(mockDocUpdate).not.toHaveBeenCalled();
+  });
+
+  describe('granular scope expansion & least privilege (issue #221)', () => {
+    it('legacy "read" token satisfies granular read scopes like "sanctions:read" and "overrides:read"', async () => {
+      const stored = { id: 'tok-1', scopes: ['read'], revoked: false };
+      mockDocUpdate.mockResolvedValueOnce(undefined);
+      mockWhereLimitGet.mockResolvedValueOnce({
+        empty: false,
+        docs: [{ data: () => stored, ref: { update: mockDocUpdate } }],
+      });
+
+      const result = await verifyApiToken('sanc_legacy', 'sanctions:read');
+      expect(result.valid).toBe(true);
+    });
+
+    it('legacy "write" token satisfies granular write scopes like "custom:write" when ownerEmail is present', async () => {
+      const stored = { id: 'tok-1', scopes: ['write'], revoked: false, ownerEmail: 'admin@corp.test' };
+      mockDocUpdate.mockResolvedValueOnce(undefined);
+      mockWhereLimitGet.mockResolvedValueOnce({
+        empty: false,
+        docs: [{ data: () => stored, ref: { update: mockDocUpdate } }],
+      });
+
+      const result = await verifyApiToken('sanc_legacy_write', 'custom:write');
+      expect(result.valid).toBe(true);
+      expect(result.ownerEmail).toBe('admin@corp.test');
+    });
+
+    it('token with specific granular scope "sanctions:read" passes sanctions:read but fails custom:write and overrides:read', async () => {
+      const stored = { id: 'tok-1', scopes: ['sanctions:read'], revoked: false };
+
+      // 1. sanctions:read -> valid
+      mockDocUpdate.mockResolvedValueOnce(undefined);
+      mockWhereLimitGet.mockResolvedValueOnce({
+        empty: false,
+        docs: [{ data: () => stored, ref: { update: mockDocUpdate } }],
+      });
+      expect((await verifyApiToken('sanc_search_only', 'sanctions:read')).valid).toBe(true);
+
+      // 2. overrides:read -> insufficient_scope
+      mockWhereLimitGet.mockResolvedValueOnce({
+        empty: false,
+        docs: [{ data: () => stored, ref: { update: mockDocUpdate } }],
+      });
+      const resOverrides = await verifyApiToken('sanc_search_only', 'overrides:read');
+      expect(resOverrides.valid).toBe(false);
+      expect(resOverrides.reason).toBe('insufficient_scope');
+
+      // 3. custom:write -> insufficient_scope
+      mockWhereLimitGet.mockResolvedValueOnce({
+        empty: false,
+        docs: [{ data: () => stored, ref: { update: mockDocUpdate } }],
+      });
+      const resCustomWrite = await verifyApiToken('sanc_search_only', 'custom:write');
+      expect(resCustomWrite.valid).toBe(false);
+      expect(resCustomWrite.reason).toBe('insufficient_scope');
+    });
+
+    it('token with granular write scope requires ownerEmail for write attribution', async () => {
+      const storedWithoutOwner = { id: 'tok-1', scopes: ['custom:write'], revoked: false };
+      mockWhereLimitGet.mockResolvedValueOnce({
+        empty: false,
+        docs: [{ data: () => storedWithoutOwner, ref: { update: mockDocUpdate } }],
+      });
+
+      const result = await verifyApiToken('sanc_custom_no_owner', 'custom:write');
+      expect(result.valid).toBe(false);
+      expect(result.reason).toBe('no_owner_email');
+    });
   });
 });

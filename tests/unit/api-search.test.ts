@@ -444,7 +444,7 @@ describe('bearer-token (API key) auth on the read routes — issue #36', () => {
     const res = await request(api).get('/api/search').query({ q: 'Vladimir' }).set('Authorization', 'Bearer sanc_good');
 
     expect(res.status).toBe(200);
-    expect(verifyApiToken).toHaveBeenCalledWith('sanc_good', 'read');
+    expect(verifyApiToken).toHaveBeenCalledWith('sanc_good', 'sanctions:read');
     expect(res.body.results).toHaveLength(1);
   });
 
@@ -492,7 +492,7 @@ describe('bearer-token (API key) auth on the read routes — issue #36', () => {
     const res = await request(api).post('/api/import').set('Authorization', 'Bearer sanc_writer').send({ sources: ['EU'] });
 
     expect(res.status).toBe(202);
-    expect(verifyApiToken).toHaveBeenCalledWith('sanc_writer', 'write');
+    expect(verifyApiToken).toHaveBeenCalledWith('sanc_writer', 'imports:write');
   });
 
   it('rejects a read-only-scoped token on POST /api/import with 403', async () => {

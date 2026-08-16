@@ -1,25 +1,21 @@
 import { Router } from 'express';
 import { createCustomRecord, updateCustomRecord, deleteCustomRecord, getCustomRecord } from '../../customRecords';
-import { requireAdmin } from '../middleware/requireAdmin';
+import { requireAdminOrScope } from '../middleware/requireAdminOrScope';
 import { validateEntityIdParam } from '../middleware/validateEntityIdParam';
 import { isValidEntityId } from '../../shared/entityId';
 
 export const customRecordsRouter = Router();
-
-// Internal watchlist entries bypass every official source's own validation
-// and provenance — admin-only, per issue #172's own recommendation.
-customRecordsRouter.use(requireAdmin);
 
 // Param callbacks are local to the router they're registered on — this
 // router's own :id param needs its own copy (see validateEntityIdParam.ts).
 customRecordsRouter.param('id', validateEntityIdParam);
 
 /**
- * POST /api/admin/custom-records
+ * POST /api/custom-records (or /api/admin/custom-records)
  * Creates a source: 'CUSTOM' record — an internal watchlist entry or local
  * PEP the official lists don't cover.
  */
-customRecordsRouter.post('/', async (req, res): Promise<any> => {
+customRecordsRouter.post('/', requireAdminOrScope('custom:write'), async (req, res): Promise<any> => {
   const { id, type, primaryName } = req.body || {};
 
   if (!id || typeof id !== 'string') {
@@ -51,11 +47,12 @@ customRecordsRouter.post('/', async (req, res): Promise<any> => {
 });
 
 /**
- * PUT /api/admin/custom-records/:id
+/**
+ * PUT /api/custom-records/:id (or /api/admin/custom-records/:id)
  * Patches an existing custom record. Refuses to touch a non-CUSTOM record
  * (see src/customRecords/index.ts) — use the overrides path for those.
  */
-customRecordsRouter.put('/:id', async (req, res): Promise<any> => {
+customRecordsRouter.put('/:id', requireAdminOrScope('custom:write'), async (req, res): Promise<any> => {
   try {
     const record = await updateCustomRecord(req.params.id, req.body || {});
     res.json(record);
@@ -72,11 +69,11 @@ customRecordsRouter.put('/:id', async (req, res): Promise<any> => {
 });
 
 /**
- * DELETE /api/admin/custom-records/:id
+ * DELETE /api/custom-records/:id (or /api/admin/custom-records/:id)
  * Requires an explicit {confirm: true} body, matching
  * src/customRecords/index.ts's own guard against an accidental delete.
  */
-customRecordsRouter.delete('/:id', async (req, res): Promise<any> => {
+customRecordsRouter.delete('/:id', requireAdminOrScope('custom:write'), async (req, res): Promise<any> => {
   if (req.body?.confirm !== true) {
     return res.status(400).json({ error: 'Deleting a custom record requires explicit confirm: true in the request body.' });
   }
@@ -97,9 +94,9 @@ customRecordsRouter.delete('/:id', async (req, res): Promise<any> => {
 });
 
 /**
- * GET /api/admin/custom-records/:id
+ * GET /api/custom-records/:id (or /api/admin/custom-records/:id)
  */
-customRecordsRouter.get('/:id', async (req, res): Promise<any> => {
+customRecordsRouter.get('/:id', requireAdminOrScope('custom:read'), async (req, res): Promise<any> => {
   try {
     const record = await getCustomRecord(req.params.id);
     if (!record) {

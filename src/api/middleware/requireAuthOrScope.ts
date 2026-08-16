@@ -17,7 +17,7 @@ import { ApiTokenScope } from '../../shared/apiTokens';
  * means "authenticate via session cookie," same as before. Neither
  * `requireAuth` nor `requireScope` changes contract.
  */
-export function requireAuthOrScope(scope: ApiTokenScope): RequestHandler {
+export function requireAuthOrScope(scope: ApiTokenScope | ApiTokenScope[]): RequestHandler {
   return (req: Request, res: Response, next: NextFunction): void => {
     if (req.header('authorization') !== undefined) {
       requireScope(scope)(req, res, next);
