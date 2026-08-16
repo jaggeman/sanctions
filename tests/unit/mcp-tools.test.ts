@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const runImport = vi.fn();
+const runFetchTriggeredImport = vi.fn();
 const processUpload = vi.fn();
 const docGet = vi.fn();
 const countGet = vi.fn();
@@ -21,8 +21,7 @@ const fakeDb = {
 
 vi.mock('../../src/search', () => ({ runSearch: vi.fn(), invalidateSearchIndex: vi.fn() }));
 vi.mock('../../src/shared/firebase', () => ({ db: fakeDb }));
-vi.mock('../../src/importer', () => ({ runImport }));
-vi.mock('../../src/importer/uploadPipeline', () => ({ processUpload }));
+vi.mock('../../src/importer/uploadPipeline', () => ({ processUpload, runFetchTriggeredImport }));
 vi.mock('@modelcontextprotocol/sdk/server/index.js', () => ({
   Server: class {
     setRequestHandler() {}
@@ -67,17 +66,17 @@ describe('handleGetSanctionDetails — MCP get_sanction_details tool', () => {
 });
 
 describe('handleRunDatabaseImport — MCP run_database_import tool', () => {
-  it('with only sources: delegates to runImport and never calls processUpload', async () => {
-    runImport.mockResolvedValue({ success: true, importedCounts: { EU: 5 } });
+  it('with only sources: delegates to runFetchTriggeredImport and never calls processUpload', async () => {
+    runFetchTriggeredImport.mockResolvedValue({ success: true, importedCounts: { EU: 5 } });
 
     await handleRunDatabaseImport({ sources: ['EU'] });
 
-    expect(runImport).toHaveBeenCalledWith({ sources: ['EU'] });
+    expect(runFetchTriggeredImport).toHaveBeenCalledWith({ sources: ['EU'], uploadedBy: null });
     expect(processUpload).not.toHaveBeenCalled();
   });
 
   it('surfaces success with the imported counts to the caller', async () => {
-    runImport.mockResolvedValue({ success: true, importedCounts: { EU: 5, UN: 3 } });
+    runFetchTriggeredImport.mockResolvedValue({ success: true, importedCounts: { EU: 5, UN: 3 } });
 
     const result = await handleRunDatabaseImport({});
 
@@ -87,7 +86,7 @@ describe('handleRunDatabaseImport — MCP run_database_import tool', () => {
   });
 
   it('surfaces failure with the error message and marks it as an error', async () => {
-    runImport.mockResolvedValue({ success: false, error: 'download failed' });
+    runFetchTriggeredImport.mockResolvedValue({ success: false, error: 'download failed' });
 
     const result = await handleRunDatabaseImport({ sources: ['US'] });
 
@@ -115,16 +114,16 @@ describe('handleRunDatabaseImport — MCP run_database_import tool', () => {
         uploadedBy: null,
         importOptions: {},
       });
-      expect(runImport).not.toHaveBeenCalled();
+      expect(runFetchTriggeredImport).not.toHaveBeenCalled();
     });
 
-    it('with both sources and csvPath: calls both runImport and processUpload', async () => {
-      runImport.mockResolvedValue({ success: true, importedCounts: { EU: 5 } });
+    it('with both sources and csvPath: calls both runFetchTriggeredImport and processUpload', async () => {
+      runFetchTriggeredImport.mockResolvedValue({ success: true, importedCounts: { EU: 5 } });
       processUpload.mockResolvedValue({ outcome: 'applied', importId: 'imp_1', counts: { parsed: 2, uploaded: 2 } });
 
       await handleRunDatabaseImport({ sources: ['EU'], csvPath: '/tmp/pep.csv' });
 
-      expect(runImport).toHaveBeenCalledWith({ sources: ['EU'] });
+      expect(runFetchTriggeredImport).toHaveBeenCalledWith({ sources: ['EU'], uploadedBy: null });
       expect(processUpload).toHaveBeenCalledWith(expect.objectContaining({ filePath: '/tmp/pep.csv' }));
     });
 

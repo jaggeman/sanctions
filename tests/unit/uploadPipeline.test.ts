@@ -11,16 +11,21 @@ vi.mock('../../src/importer/formatDetection', () => ({ detectFormat }));
 
 const findAppliedImportBySha256 = vi.fn();
 const createPendingImport = vi.fn();
+const createFetchImportRecord = vi.fn();
 const markImportApplied = vi.fn();
 const markImportFailed = vi.fn();
 class ImportAlreadyInFlightError extends Error {}
 vi.mock('../../src/importer/importRecord', () => ({
   findAppliedImportBySha256,
   createPendingImport,
+  createFetchImportRecord,
   markImportApplied,
   markImportFailed,
   ImportAlreadyInFlightError,
 }));
+
+const generateImportId = vi.fn();
+vi.mock('../../src/importer/uploader', () => ({ generateImportId }));
 
 const runImport = vi.fn();
 vi.mock('../../src/importer', () => ({ runImport }));
@@ -30,7 +35,7 @@ vi.mock('../../src/shared/firebase', () => ({
   getBucket: () => ({ file: vi.fn(() => ({ save: bucketFileSave })) }),
 }));
 
-const { processUpload } = await import('../../src/importer/uploadPipeline');
+const { processUpload, runFetchTriggeredImport } = await import('../../src/importer/uploadPipeline');
 
 let tmpFile: string;
 
@@ -40,6 +45,8 @@ beforeEach(async () => {
   detectFormat.mockReturnValue({ format: 'csv', fileGenerationDate: null });
   findAppliedImportBySha256.mockResolvedValue(null);
   createPendingImport.mockResolvedValue(undefined);
+  createFetchImportRecord.mockResolvedValue(undefined);
+  generateImportId.mockReturnValue('import_fetch_1');
   runImport.mockResolvedValue({ success: true, importedCounts: { PEP: 5 } });
 
   tmpFile = path.join(os.tmpdir(), `upload-pipeline-test-${Date.now()}.csv`);
@@ -230,5 +237,72 @@ describe('processUpload — failure handling', () => {
 
     expect(result.outcome).toBe('applied');
     expect(markImportFailed).not.toHaveBeenCalled();
+  });
+});
+
+// issue #256 (followup to #192): the official-sources fetch path has no
+// local file to sha256-dedup on before the download runs, so it reuses
+// POST /api/import's own solution to that exact problem (issue #111) — a
+// durable `imports` audit doc keyed by a fresh importId, created before the
+// fetch runs and marked applied/failed once it resolves — instead of
+// inventing a new mechanism. Synchronous rather than that route's
+// fire-and-forget Cloud Task, since a CLI/MCP caller already IS a
+// long-running process that wants the real result back directly.
+describe('runFetchTriggeredImport — durable audit trail for official-source imports (issue #256)', () => {
+  it('creates a fetch-triggered audit record before running the import, and marks it applied on success', async () => {
+    runImport.mockResolvedValue({ success: true, importedCounts: { EU: 12 } });
+
+    const result = await runFetchTriggeredImport({ sources: ['EU'], mode: 'append', uploadedBy: 'cli' });
+
+    expect(createFetchImportRecord).toHaveBeenCalledWith(expect.objectContaining({
+      importId: 'import_fetch_1',
+      sources: ['EU'],
+      mode: 'append',
+      uploadedBy: 'cli',
+    }));
+    expect(runImport).toHaveBeenCalledWith(expect.objectContaining({
+      sources: ['EU'],
+      mode: 'append',
+      importId: 'import_fetch_1',
+    }));
+    expect(markImportApplied).toHaveBeenCalledWith('import_fetch_1', { parsed: 12, uploaded: 12 });
+    expect(result).toEqual({ success: true, importedCounts: { EU: 12 } });
+  });
+
+  it('marks the audit record failed when runImport reports failure, without throwing', async () => {
+    runImport.mockResolvedValue({ success: false, importedCounts: {}, error: 'download failed' });
+
+    const result = await runFetchTriggeredImport({ sources: ['UN'], uploadedBy: null });
+
+    expect(markImportFailed).toHaveBeenCalledWith('import_fetch_1', 'download failed');
+    expect(result.success).toBe(false);
+  });
+
+  it('marks the audit record failed and rethrows when runImport itself throws', async () => {
+    runImport.mockRejectedValue(new Error('network down'));
+
+    await expect(runFetchTriggeredImport({ sources: ['US'], uploadedBy: null })).rejects.toThrow('network down');
+
+    expect(markImportFailed).toHaveBeenCalledWith('import_fetch_1', 'network down');
+  });
+
+  it('does not mark a genuinely successful import as failed when only the bookkeeping markImportApplied call throws', async () => {
+    runImport.mockResolvedValue({ success: true, importedCounts: { EU: 3 } });
+    markImportApplied.mockRejectedValueOnce(new Error('Firestore write blip'));
+
+    const result = await runFetchTriggeredImport({ sources: ['EU'], uploadedBy: null });
+
+    expect(result.success).toBe(true);
+    expect(markImportFailed).not.toHaveBeenCalled();
+  });
+
+  it('dry-run leaves no trace: creates no audit record, calls runImport with dryRun: true', async () => {
+    runImport.mockResolvedValue({ success: true, importedCounts: { EU: 3 }, diffs: [] });
+
+    await runFetchTriggeredImport({ sources: ['EU'], dryRun: true, uploadedBy: 'cli' });
+
+    expect(createFetchImportRecord).not.toHaveBeenCalled();
+    expect(runImport).toHaveBeenCalledWith(expect.objectContaining({ sources: ['EU'], dryRun: true }));
+    expect(markImportApplied).not.toHaveBeenCalled();
   });
 });

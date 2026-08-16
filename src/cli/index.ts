@@ -2,8 +2,7 @@ import * as path from 'path';
 import * as fs from 'fs-extra';
 import { Command } from 'commander';
 import { db } from '../shared/firebase';
-import { runImport } from '../importer';
-import { processUpload } from '../importer/uploadPipeline';
+import { processUpload, runFetchTriggeredImport } from '../importer/uploadPipeline';
 import { runSearch } from '../search';
 import { primaryNameOf, aliasNamesOf, formatBirthDates, formatIdentifications, SanctionRecord } from '../shared/types';
 import { recordsToCsv } from '../shared/csvSerializer';
@@ -187,14 +186,15 @@ program
 
       // issue #192: --csv is a genuine local file, so it goes through
       // processUpload() — sha256 dedup, the in-flight lock, and a durable
-      // `imports` audit record — instead of being bundled into the
-      // official-sources runImport() call below, which has none of that.
-      // A bare --csv (no --sources) means "just import this file": skip the
-      // official-sources download entirely rather than silently triggering
-      // it too.
+      // `imports` audit record. The official-sources download below has no
+      // local file to dedup on, so it goes through runFetchTriggeredImport()
+      // instead (issue #256) — same durable audit record, keyed by a fresh
+      // importId rather than a file hash. A bare --csv (no --sources) means
+      // "just import this file": skip the official-sources download
+      // entirely rather than silently triggering it too.
       let sourcesFailed = false;
       if (options.sources || !options.csv) {
-        const result = await runImport({ sources });
+        const result = await runFetchTriggeredImport({ sources, uploadedBy: 'cli' });
         if (result.success) {
           console.log('\n✅ Importen slutfördes utan fel!');
           console.log('Statistik över importerade rader:');
