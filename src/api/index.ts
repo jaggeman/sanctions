@@ -121,13 +121,19 @@ app.use((req, res, next) => {
   applyHeaders(req, res, next);
 });
 
+// requestLogger must run before express.json()/cookieParser() (issue #66):
+// Express treats it as regular (3-arg) middleware, so if either of those
+// throws (a malformed JSON body, a bad cookie), Express skips every
+// remaining regular middleware — including requestLogger — and jumps
+// straight to errorLogger, which then had no requestId to attach at all.
+app.use(requestLogger);
+
 // Enable CORS and JSON parsing.
 // Cookie-based sessions mean credentialed CORS must not reflect an arbitrary origin —
 // only an explicitly configured frontend origin is allowed to send/receive the session cookie.
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN || false, credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
-app.use(requestLogger);
 
 // Rejects any :id route param before it can reach a Firestore .doc(id) call
 // (CLAUDE.md §6) — param callbacks are local to the router they're
