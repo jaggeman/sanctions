@@ -178,10 +178,9 @@ Required only for `create_override`/`record_decision` — the other tools work w
 
 - `OTP_REQUEST_COOLDOWN_MS` (60s) — one address can't be sent a second code until its previous one's cooldown expires (issue #16).
 - `OTP_GLOBAL_SEND_LIMIT` / `OTP_GLOBAL_SEND_WINDOW_MS` (30 sends per 60s, org-wide) — caps total OTP sends regardless of which addresses they're for, so many *distinct* real addresses can't all be emailed a code at once (issue #62). The per-email cooldown alone doesn't stop that: it only blocks repeats against one address.
+- `OTP_IP_SEND_LIMIT` / `OTP_IP_SEND_WINDOW_MS` (5 sends per 60s per IP) — per-IP rate limit configured with `trust proxy: 1` to prevent a single IP from spamming OTP requests (issue #144).
 
-If a deploy needs a different volume (a genuinely larger user base, or a stricter posture), edit these two constants directly rather than looking for an env var — there isn't one, by design, for a limit that should always be active rather than something an unset config could silently disable.
-
-Per-IP rate limiting is a deliberate gap, not an oversight: this app runs as a single Cloud Function behind Firebase Hosting's proxy, and naively trusting `req.ip`/`X-Forwarded-For` without correctly configuring `trust proxy` would let an attacker spoof any IP, defeating the limiter entirely. Tracked as its own follow-up issue rather than rushed here.
+If a deploy needs a different volume (a genuinely larger user base, or a stricter posture), edit these constants directly rather than looking for an env var — there isn't one, by design, for a limit that should always be active rather than something an unset config could silently disable.
 
 ## 🚀 Hur man deployar (Laddar upp till produktion)
 

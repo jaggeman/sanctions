@@ -70,17 +70,50 @@ describe('POST /api/auth/request-otp', () => {
     expect(sendOtpEmail).toHaveBeenCalledTimes(1); // no second email sent
   });
 
+  it('issue #144: enforces per-IP rate limiting on request-otp', async () => {
+    vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'example.com');
+    const { OTP_IP_SEND_LIMIT } = await import('../../src/auth/otp');
+
+    for (let i = 0; i < OTP_IP_SEND_LIMIT; i++) {
+      const res = await request(api)
+        .post('/api/auth/request-otp')
+        .set('X-Forwarded-For', '203.0.113.50')
+        .send({ email: `user${i}@example.com` });
+      expect(res.status).toBe(200);
+    }
+
+    const overLimit = await request(api)
+      .post('/api/auth/request-otp')
+      .set('X-Forwarded-For', '203.0.113.50')
+      .send({ email: 'blocked@example.com' });
+    expect(overLimit.status).toBe(429);
+    expect(overLimit.body.error).toMatch(/Too many login codes have been requested from this IP address/i);
+
+    // A request from a different IP still succeeds
+    const differentIp = await request(api)
+      .post('/api/auth/request-otp')
+      .set('X-Forwarded-For', '203.0.113.99')
+      .send({ email: 'fresh@example.com' });
+    expect(differentIp.status).toBe(200);
+  });
+
   it('issue #62: rejects with 429 once the global send budget is exhausted, across distinct addresses', async () => {
     vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'example.com');
     const { OTP_GLOBAL_SEND_LIMIT } = await import('../../src/auth/otp');
 
     for (let i = 0; i < OTP_GLOBAL_SEND_LIMIT; i++) {
-      const res = await request(api).post('/api/auth/request-otp').send({ email: `user${i}@example.com` });
+      const res = await request(api)
+        .post('/api/auth/request-otp')
+        .set('X-Forwarded-For', `198.51.100.${i + 1}`)
+        .send({ email: `user${i}@example.com` });
       expect(res.status).toBe(200);
     }
     expect(sendOtpEmail).toHaveBeenCalledTimes(OTP_GLOBAL_SEND_LIMIT);
 
-    const overBudget = await request(api).post('/api/auth/request-otp').send({ email: 'one-too-many@example.com' });
+    const overBudget = await request(api)
+      .post('/api/auth/request-otp')
+      .set('X-Forwarded-For', '198.51.100.254')
+      .send({ email: 'one-too-many@example.com' });
     expect(overBudget.status).toBe(429);
     expect(sendOtpEmail).toHaveBeenCalledTimes(OTP_GLOBAL_SEND_LIMIT); // no (limit+1)th email sent
   });
