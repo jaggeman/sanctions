@@ -70,6 +70,45 @@ describe('POST /api/auth/request-otp', () => {
     expect(sendOtpEmail).toHaveBeenCalledTimes(1); // no second email sent
   });
 
+  it('issue #62: rejects with 429 once the global send budget is exhausted, across distinct addresses', async () => {
+    vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'example.com');
+    const { OTP_GLOBAL_SEND_LIMIT } = await import('../../src/auth/otp');
+
+    for (let i = 0; i < OTP_GLOBAL_SEND_LIMIT; i++) {
+      const res = await request(api).post('/api/auth/request-otp').send({ email: `user${i}@example.com` });
+      expect(res.status).toBe(200);
+    }
+    expect(sendOtpEmail).toHaveBeenCalledTimes(OTP_GLOBAL_SEND_LIMIT);
+
+    const overBudget = await request(api).post('/api/auth/request-otp').send({ email: 'one-too-many@example.com' });
+    expect(overBudget.status).toBe(429);
+    expect(sendOtpEmail).toHaveBeenCalledTimes(OTP_GLOBAL_SEND_LIMIT); // no (limit+1)th email sent
+  });
+
+  it('issue #62: a flood of repeats against ONE already-cooling-down email never touches the global budget', async () => {
+    // The per-email cooldown (issue #16) already rejects these — they must
+    // not also burn through the global send budget, or a single attacker
+    // spamming one address could exhaust it and deny service to everyone
+    // else requesting a code for a genuinely different address.
+    vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'example.com');
+    const { OTP_GLOBAL_SEND_LIMIT } = await import('../../src/auth/otp');
+
+    const first = await request(api).post('/api/auth/request-otp').send({ email: 'user@example.com' });
+    expect(first.status).toBe(200);
+
+    // Hammer the same, already-cooling-down email far more times than the
+    // global budget would allow if each one were (wrongly) charged against it.
+    for (let i = 0; i < OTP_GLOBAL_SEND_LIMIT + 5; i++) {
+      const res = await request(api).post('/api/auth/request-otp').send({ email: 'user@example.com' });
+      expect(res.status).toBe(429);
+    }
+
+    // The budget is still intact — a fresh, different address can still get a code.
+    const stillWorks = await request(api).post('/api/auth/request-otp').send({ email: 'different@example.com' });
+    expect(stillWorks.status).toBe(200);
+    expect(sendOtpEmail).toHaveBeenCalledTimes(2); // user@ once, different@ once
+  });
+
   it('issue #33: rejects a domain not on the allow-list with the SAME response as an allowed address, sending no email', async () => {
     vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'example.com');
 
