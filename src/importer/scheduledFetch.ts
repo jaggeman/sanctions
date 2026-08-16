@@ -2,15 +2,16 @@ import { downloadFile, SOURCE_URLS } from './fetcher';
 import { processUpload, ProcessUploadResult } from './uploadPipeline';
 import { SanctionSource } from '../shared/types';
 
-interface ScheduledSource {
-  source: Extract<SanctionSource, 'EU' | 'UN' | 'US'>;
+export interface ScheduledSource {
+  source: Extract<SanctionSource, 'EU' | 'UN' | 'US' | 'UK'>;
   filename: string;
 }
 
-const SCHEDULED_SOURCES: ScheduledSource[] = [
+export const SCHEDULED_SOURCES: ScheduledSource[] = [
   { source: 'EU', filename: 'eu_sanctions.xml' },
   { source: 'UN', filename: 'un_sanctions.xml' },
   { source: 'US', filename: 'us_sdn.xml' },
+  { source: 'UK', filename: 'uk_sanctions.xml' },
 ];
 
 export interface ScheduledFetchOutcome {
