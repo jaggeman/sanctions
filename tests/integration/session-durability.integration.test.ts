@@ -15,6 +15,15 @@ import * as admin from 'firebase-admin';
 
 process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || 'localhost:8080';
 process.env.FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'sanctions-integration-test';
+// `firebase emulators:exec` (this suite's own runner) sets GCLOUD_PROJECT to
+// whatever project .firebaserc names, and src/shared/firebase.ts now prefers
+// GCLOUD_PROJECT over FIREBASE_PROJECT_ID (the fix this test file exists
+// alongside). Without pinning it here too, `db` below would resolve to that
+// real project while `secondaryDb` explicitly uses FIREBASE_PROJECT_ID —
+// two different logical databases in the same emulator, which partitions
+// storage per project id, so nothing either side wrote would ever be visible
+// to the other.
+process.env.GCLOUD_PROJECT = process.env.FIREBASE_PROJECT_ID;
 
 const { db } = await import('../../src/shared/firebase');
 const { createOtp, verifyOtp } = await import('../../src/auth/otpStore');
