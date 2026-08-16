@@ -18,6 +18,8 @@ import {
   Alert,
   Tooltip,
   Divider,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -68,6 +70,14 @@ interface SystemLogEntry {
 }
 
 export default function DriftStatusTab() {
+  const theme = useTheme();
+  // issue #264 item 1: the log table's Timestamp/Level/Module columns had
+  // hardcoded pixel widths (180+100+180=460px) that forced horizontal scroll
+  // under ~460px viewports before the Message column got any room at all.
+  // Below `sm`, drop Timestamp and Module/Function entirely rather than
+  // trying to squeeze fixed widths further — their values are folded into
+  // the Message cell instead of being silently lost.
+  const isNarrowScreen = useMediaQuery(theme.breakpoints.down('sm'));
   const [statusData, setStatusData] = useState<SystemStatusResponse | null>(null);
   const [logs, setLogs] = useState<SystemLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -319,25 +329,27 @@ export default function DriftStatusTab() {
           <Table size="small">
             <TableHead sx={{ bgcolor: 'action.hover' }}>
               <TableRow>
-                <TableCell sx={{ fontWeight: 700, width: '180px' }}>Timestamp</TableCell>
+                {!isNarrowScreen && <TableCell sx={{ fontWeight: 700, width: '180px' }}>Timestamp</TableCell>}
                 <TableCell sx={{ fontWeight: 700, width: '100px' }}>Level</TableCell>
-                <TableCell sx={{ fontWeight: 700, width: '180px' }}>Module / Function</TableCell>
+                {!isNarrowScreen && <TableCell sx={{ fontWeight: 700, width: '180px' }}>Module / Function</TableCell>}
                 <TableCell sx={{ fontWeight: 700 }}>Event / Message</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {filteredLogs.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} align="center" sx={{ py: 3, color: 'text.secondary' }}>
+                  <TableCell colSpan={isNarrowScreen ? 2 : 4} align="center" sx={{ py: 3, color: 'text.secondary' }}>
                     No logs match the selected filter.
                   </TableCell>
                 </TableRow>
               ) : (
                 filteredLogs.map((log) => (
                   <TableRow key={log.id} hover>
-                    <TableCell sx={{ fontSize: '0.8rem', color: 'text.secondary', fontFamily: 'monospace' }}>
-                      {new Date(log.timestamp).toLocaleString('en-US')}
-                    </TableCell>
+                    {!isNarrowScreen && (
+                      <TableCell sx={{ fontSize: '0.8rem', color: 'text.secondary', fontFamily: 'monospace' }}>
+                        {new Date(log.timestamp).toLocaleString('en-US')}
+                      </TableCell>
+                    )}
                     <TableCell>
                       <Chip
                         label={log.level.toUpperCase()}
@@ -346,10 +358,23 @@ export default function DriftStatusTab() {
                         sx={{ fontSize: '0.7rem', fontWeight: 700, height: '20px' }}
                       />
                     </TableCell>
-                    <TableCell sx={{ fontSize: '0.85rem', fontFamily: 'monospace', fontWeight: 600 }}>
-                      {log.module}
+                    {!isNarrowScreen && (
+                      <TableCell sx={{ fontSize: '0.85rem', fontFamily: 'monospace', fontWeight: 600 }}>
+                        {log.module}
+                      </TableCell>
+                    )}
+                    <TableCell sx={{ fontSize: '0.85rem' }}>
+                      {isNarrowScreen && (
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ display: 'block', fontFamily: 'monospace' }}
+                        >
+                          {new Date(log.timestamp).toLocaleString('en-US')} · {log.module}
+                        </Typography>
+                      )}
+                      {log.message}
                     </TableCell>
-                    <TableCell sx={{ fontSize: '0.85rem' }}>{log.message}</TableCell>
                   </TableRow>
                 ))
               )}
