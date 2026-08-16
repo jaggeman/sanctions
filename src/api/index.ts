@@ -21,7 +21,8 @@ import { SanctionSource, SanctionRecord } from '../shared/types';
 import { applyOverride, getOverride } from '../overrides';
 import { overridesRouter } from './routes/overrides';
 import { validateEntityIdParam } from './middleware/validateEntityIdParam';
-import { createOtp, verifyOtp } from '../auth/otpStore';
+import { createOtp, verifyOtp, isInCooldown } from '../auth/otpStore';
+import { consumeGlobalOtpBudget } from '../auth/otpBudget';
 import { sendOtpEmail } from '../auth/mailer';
 import { createSession, destroySession } from '../auth/session';
 import { requireAuth, SESSION_COOKIE_NAME } from '../auth/middleware';
@@ -167,6 +168,23 @@ app.post('/api/auth/request-otp', async (req, res): Promise<any> => {
     return res.json({ ok: true });
   }
 
+  // issue #62: the per-email cooldown below stops one address being spammed
+  // repeatedly, but does nothing against many DISTINCT real addresses each
+  // being sent one code at once. Only charge the org-wide budget for a
+  // request that will actually cause a new send — a request already blocked
+  // by the per-email cooldown must not also burn a global-budget slot, or a
+  // single attacker flooding one address could exhaust it for everyone else.
+  if (!(await isInCooldown(email)) && !(await consumeGlobalOtpBudget())) {
+    return res.status(429).json({ error: 'Too many login codes have been requested. Please try again shortly.' });
+  }
+
+  // Narrow, accepted race: two concurrent first-ever requests for the same
+  // brand-new email can both pass isInCooldown (neither sees the other's
+  // write yet), each consuming a global-budget slot. createOtp itself has
+  // the same pre-existing non-atomic read-then-write shape for its own
+  // cooldown check, so this doesn't introduce a new class of gap — just
+  // inherits the existing one, and is low-probability/low-impact enough
+  // not to warrant a cross-document transaction here.
   const code = await createOtp(email);
   if (!code) {
     return res.status(429).json({ error: 'A code was already sent recently. Please wait before requesting another.' });

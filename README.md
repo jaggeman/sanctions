@@ -164,6 +164,17 @@ MCP_API_TOKEN=sanc_...
 
 Required only for `create_override`/`record_decision` — the other tools work with neither set. Both write tools proxy through the real running REST API (`PUT /api/overrides/:id`, `POST /api/decisions`) using this bearer token rather than writing to Firestore directly, so the write is always attributed to the token's `ownerEmail` (minted via `POST /api/admin/tokens` with `write` scope), never to anything the calling agent supplies. Missing either variable, or a failed API call, is surfaced back to the calling agent as an error rather than silently no-op'd.
 
+### OTP rate limiting — tuning knobs, not env vars
+
+`POST /api/auth/request-otp` is protected two ways, both hardcoded constants in `src/auth/otp.ts` rather than env vars (no deploy-time configuration needed to get a sane default):
+
+- `OTP_REQUEST_COOLDOWN_MS` (60s) — one address can't be sent a second code until its previous one's cooldown expires (issue #16).
+- `OTP_GLOBAL_SEND_LIMIT` / `OTP_GLOBAL_SEND_WINDOW_MS` (30 sends per 60s, org-wide) — caps total OTP sends regardless of which addresses they're for, so many *distinct* real addresses can't all be emailed a code at once (issue #62). The per-email cooldown alone doesn't stop that: it only blocks repeats against one address.
+
+If a deploy needs a different volume (a genuinely larger user base, or a stricter posture), edit these two constants directly rather than looking for an env var — there isn't one, by design, for a limit that should always be active rather than something an unset config could silently disable.
+
+Per-IP rate limiting is a deliberate gap, not an oversight: this app runs as a single Cloud Function behind Firebase Hosting's proxy, and naively trusting `req.ip`/`X-Forwarded-For` without correctly configuring `trust proxy` would let an attacker spoof any IP, defeating the limiter entirely. Tracked as its own follow-up issue rather than rushed here.
+
 ## 🚀 Hur man deployar (Laddar upp till produktion)
 
 För att ladda upp dina ändringar så att de syns live på webben följer du dessa exakta steg. 

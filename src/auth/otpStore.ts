@@ -46,6 +46,26 @@ export async function createOtp(email: string): Promise<string | null> {
   return code;
 }
 
+/**
+ * Read-only check of whether `email` is currently within its request
+ * cooldown window — unlike `createOtp`, never writes anything.
+ *
+ * Used by the request-otp handler (issue #62) to decide whether a request
+ * will actually cause a new send *before* touching the global OTP-send
+ * budget: a request that's going to be rejected by the per-email cooldown
+ * anyway must not also consume a global-budget slot, or a single attacker
+ * flooding requests for ONE already-cooling-down address could exhaust the
+ * org-wide budget and deny service to everyone requesting a code for a
+ * genuinely different address.
+ */
+export async function isInCooldown(email: string): Promise<boolean> {
+  const ref = db.collection(COLLECTION).doc(emailKey(email));
+  const doc = await ref.get();
+  if (!doc.exists) return false;
+  const existing = doc.data()!;
+  return Date.now() - new Date(existing.issuedAt).getTime() < OTP_REQUEST_COOLDOWN_MS;
+}
+
 export async function verifyOtp(email: string, code: string): Promise<boolean> {
   const ref = db.collection(COLLECTION).doc(emailKey(email));
   const doc = await ref.get();
