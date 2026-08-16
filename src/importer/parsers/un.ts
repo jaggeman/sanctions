@@ -39,6 +39,12 @@ export async function parseUNList(filePath: string): Promise<SanctionRecord[]> {
     ignoreAttributes: false,
     parseAttributeValue: true,
     trimValues: true,
+    // Issue #34: fast-xml-parser's default parseTagValue coerces any
+    // all-digit element text to a JS number, silently dropping leading
+    // zeros (a passport/national-ID number like "0035011785" becomes
+    // 35011785). Nothing here relies on numeric auto-parsing — every field
+    // consumed below is already wrapped in String(...).
+    parseTagValue: false,
   });
 
   const parsed = parser.parse(xmlContent);
@@ -131,7 +137,12 @@ export async function parseUNList(filePath: string): Promise<SanctionRecord[]> {
     for (const doc of rawDocs) {
       const docType = String(doc.TYPE_OF_DOCUMENT || '').trim();
       const num = String(doc.NUMBER || '').trim();
-      const country = String(doc.ISSUING_COUNTRY || '').trim();
+      // Found while adding real-data fixture coverage for issue #34: the
+      // real Consolidated List export uses ISSUING_COUNTRY on ~293
+      // INDIVIDUAL_DOCUMENT entries and COUNTRY_OF_ISSUE on ~102 others —
+      // reading only the first silently dropped the issuing country for
+      // every document using the second name.
+      const country = String(doc.ISSUING_COUNTRY || doc.COUNTRY_OF_ISSUE || '').trim();
       if (num) {
         const detail = docType ? `${docType} ${num}${country ? ` (${country})` : ''}` : num;
         passports.push(detail);
