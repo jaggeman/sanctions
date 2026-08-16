@@ -15,13 +15,15 @@ function isAlreadyExistsError(err: any): boolean {
 }
 
 /**
- * Atomically creates the pending import doc, keyed by sha256. Firestore's
- * .create() fails atomically (ALREADY_EXISTS) if the ID is already taken —
- * that failure IS the race-safety mechanism issue #7 asks for: two
- * concurrent uploads of byte-identical content can't both "win" and both
- * proceed to parse/upload.
+ * Atomically creates the pending import doc for an upload, keyed by sha256.
+ * Firestore's .create() fails atomically (ALREADY_EXISTS) if the ID is
+ * already taken — that failure IS the race-safety mechanism issue #7 asks
+ * for: two concurrent uploads of byte-identical content can't both "win"
+ * and both proceed to parse/upload.
  */
-export async function createPendingImport(record: Omit<ImportRecord, 'status'>): Promise<void> {
+export async function createPendingImport(
+  record: Omit<ImportRecord, 'status'> & { sha256: string },
+): Promise<void> {
   const docRef = db.collection(COLLECTION).doc(record.sha256);
   try {
     await docRef.create({ ...record, status: 'pending' });
@@ -31,6 +33,24 @@ export async function createPendingImport(record: Omit<ImportRecord, 'status'>):
     }
     throw err;
   }
+}
+
+/**
+ * Creates the pending import doc for a fetch-triggered import (issue #111
+ * — POST /api/import, which downloads and parses the EU/UN/US sources
+ * directly, unlike an upload which has a file to hash-dedup on). Keyed by
+ * `record.importId`, which the caller must have already generated (or
+ * accepted from the client and validated against a safe id pattern, per
+ * CLAUDE.md §6) — there's no natural dedup key here, so no retry/staleness
+ * handling like createPendingImport's: every call gets its own fresh id, and
+ * a collision (e.g. a client-supplied importId reused) is a genuine error,
+ * not an in-flight race to recover from.
+ */
+export async function createFetchImportRecord(
+  record: Omit<ImportRecord, 'status' | 'trigger'>,
+): Promise<void> {
+  const docRef = db.collection(COLLECTION).doc(record.importId);
+  await docRef.create({ ...record, trigger: 'fetch', status: 'pending' });
 }
 
 export async function findImportBySha256(sha256: string): Promise<ImportRecord | null> {

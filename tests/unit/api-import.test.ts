@@ -12,6 +12,19 @@ vi.mock('../../src/importer/taskQueue', () => ({ enqueueImportTask }));
 const runImportMock = vi.fn();
 vi.mock('../../src/importer', () => ({ runImport: runImportMock }));
 vi.mock('../../src/importer/uploadPipeline', () => ({ processUpload: vi.fn() }));
+
+// issue #111: POST /api/import creates its own durable audit doc (fetch
+// imports have no file to hash-dedup on, unlike uploads) before enqueueing
+// the Cloud Task — mocked here the same way enqueueImportTask/runImport are,
+// rather than exercising the real Firestore-shaped importRecord internals.
+const createFetchImportRecord = vi.fn(async () => {});
+const markImportFailed = vi.fn(async () => {});
+vi.mock('../../src/importer/importRecord', () => ({
+  createFetchImportRecord,
+  markImportFailed,
+  listImports: vi.fn(),
+  findImportBySha256: vi.fn(),
+}));
 // session.ts (issue #63) reads/writes db.collection('sessions').doc(id) — a
 // tiny in-memory store behind the mock so verify-otp's set() is actually
 // visible to the requireAuth check's later get(), instead of every doc
@@ -78,5 +91,61 @@ describe('POST /api/import', () => {
 
     expect(res.status).toBe(500);
     expect(res.body.error).toBeDefined();
+  });
+
+  // issue #111: this endpoint had no durable audit trail at all — no record
+  // of who triggered a fetch import, what was requested, or the outcome.
+  describe('audit record (issue #111)', () => {
+    it('creates a durable pending audit record, attributed to the caller, before enqueueing', async () => {
+      await agent.post('/api/import').send({ sources: ['EU', 'UN'], mode: 'sync' });
+
+      expect(createFetchImportRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          uploadedBy: 'admin@sanctions.com',
+          sources: ['EU', 'UN'],
+          mode: 'sync',
+          force: false,
+        }),
+      );
+      // The audit record must exist before the task is handed off, not after.
+      const auditCallOrder = createFetchImportRecord.mock.invocationCallOrder[0];
+      const enqueueCallOrder = enqueueImportTask.mock.invocationCallOrder[0];
+      expect(auditCallOrder).toBeLessThan(enqueueCallOrder);
+    });
+
+    it('threads the same importId used for the audit record through to the enqueued task', async () => {
+      await agent.post('/api/import').send({ sources: ['EU'] });
+
+      const auditImportId = createFetchImportRecord.mock.calls[0][0].importId;
+      expect(auditImportId).toMatch(/^import_/);
+      expect(enqueueImportTask).toHaveBeenCalledWith(
+        expect.objectContaining({ importId: auditImportId }),
+      );
+    });
+
+    it('reuses a valid client-supplied importId instead of generating a new one', async () => {
+      await agent.post('/api/import').send({ sources: ['EU'], importId: 'import_client_abc123' });
+
+      expect(createFetchImportRecord).toHaveBeenCalledWith(
+        expect.objectContaining({ importId: 'import_client_abc123' }),
+      );
+    });
+
+    it('marks the audit record failed (not left dangling pending) when enqueueing itself fails', async () => {
+      enqueueImportTask.mockRejectedValueOnce(new Error('Cloud Tasks unavailable'));
+
+      await agent.post('/api/import').send({ sources: ['EU'] });
+
+      const auditImportId = createFetchImportRecord.mock.calls[0][0].importId;
+      expect(markImportFailed).toHaveBeenCalledWith(auditImportId, 'Cloud Tasks unavailable');
+    });
+
+    it('does not create an audit record for a dry run — it must leave no trace, same as an upload dry run', async () => {
+      runImportMock.mockResolvedValue({ success: true, importedCounts: { EU: 2 }, diffs: [] });
+
+      await agent.post('/api/import').send({ sources: ['EU'], dryRun: true });
+
+      expect(createFetchImportRecord).not.toHaveBeenCalled();
+    });
   });
 });

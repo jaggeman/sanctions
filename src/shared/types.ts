@@ -107,23 +107,34 @@ export interface Decision {
 export type ImportStatus = 'pending' | 'parsing' | 'applied' | 'failed' | 'rejected';
 export type ImportFormat = 'eu-xml-1.1' | 'eu-csv-1.1' | 'eu-csv-1.0' | 'un-xml' | 'us-xml' | 'csv';
 
-// Audit trail for POST /api/upload (issue #7). Document ID == sha256, which
-// is the concurrency-safety mechanism: Firestore's doc.create() fails
-// atomically if the ID already exists, so two concurrent uploads of the
-// identical file can't both "win" the pending-creation race — see
-// src/importer/importRecord.ts. `status` stops at 'applied' rather than
-// including a 'diffing' state, since the reconciliation/diff engine (issue
-// #8) doesn't exist yet; this pipeline still runs the existing
+// Audit trail for POST /api/upload (issue #7) AND POST /api/import (issue
+// #111) — one collection, two triggers, discriminated by `trigger`. For an
+// upload, document ID == sha256, which is the concurrency-safety mechanism:
+// Firestore's doc.create() fails atomically if the ID already exists, so two
+// concurrent uploads of the identical file can't both "win" the
+// pending-creation race — see src/importer/importRecord.ts. For a
+// fetch-triggered import there's no file/hash to dedup on, so the ID is a
+// freshly generated importId per call instead. `status` stops at 'applied'
+// rather than including a 'diffing' state, since the reconciliation/diff
+// engine (issue #8) doesn't exist yet; this pipeline still runs the existing
 // parse-everything upload path under the hood.
 export interface ImportRecord {
-  importId: string; // == sha256
-  filename: string;
-  sha256: string;
-  sizeBytes: number;
-  storagePath: string;
-  source: SanctionSource;
-  format: ImportFormat;
-  fileGenerationDate: string | null; // parsed from the file's own content, not the upload time
+  importId: string; // == sha256 for an upload; a generated id for a fetch
+  trigger: 'upload' | 'fetch';
+  // Upload-only fields (issue #7) — undefined for a fetch-triggered import.
+  filename?: string;
+  sha256?: string;
+  sizeBytes?: number;
+  storagePath?: string;
+  source?: SanctionSource;
+  format?: ImportFormat;
+  fileGenerationDate?: string | null; // parsed from the file's own content, not the upload time
+  // Fetch-triggered-only fields (issue #111) — undefined for an upload. A
+  // fetch can span multiple sources in one call (POST /api/import's
+  // `sources` array), unlike an upload which is always exactly one file/source.
+  sources?: SanctionSource[];
+  mode?: 'sync' | 'append'; // issue #8 — plain literal here, not importer/diff's ImportMode, to avoid a shared-types -> importer dependency
+  force?: boolean;
   uploadedBy: string | null; // null until issue #3's auth lands on this endpoint
   uploadedAt: string; // ISO string
   status: ImportStatus;
