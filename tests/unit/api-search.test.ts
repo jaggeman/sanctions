@@ -224,6 +224,16 @@ describe('GET /api/search', () => {
     );
   });
 
+  it('issue #189: logs requestedBy as the session email for a session-authenticated search', async () => {
+    runSearch.mockResolvedValue({ results: [scoredRecord()], totalMatches: 1, truncated: false });
+
+    await agent.get('/api/search').query({ q: 'Vladimir Putin' });
+
+    expect(logSearchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ requestedBy: 'admin@sanctions.com' }),
+    );
+  });
+
   it('does not fire a searchLog entry when the search engine throws', async () => {
     runSearch.mockRejectedValue(new Error('boom'));
     await agent.get('/api/search').query({ q: 'Vladimir' });
@@ -446,6 +456,25 @@ describe('bearer-token (API key) auth on the read routes — issue #36', () => {
     expect(res.status).toBe(200);
     expect(verifyApiToken).toHaveBeenCalledWith('sanc_good', 'sanctions:read');
     expect(res.body.results).toHaveLength(1);
+  });
+
+  it('issue #189: logs requestedBy as token:<id>, not the owner email, even though requireScope sets both', async () => {
+    // Every current API token has a mandatory ownerEmail (issue #123) — requireScope
+    // sets req.userEmail = result.ownerEmail unconditionally alongside req.apiTokenId,
+    // so a token-authenticated request must not be misattributed to that email.
+    verifyApiToken.mockResolvedValue({
+      valid: true,
+      tokenId: 'tok-1',
+      scopes: ['read'],
+      ownerEmail: 'owner@example.com',
+    });
+    runSearch.mockResolvedValue({ results: [scoredRecord()], totalMatches: 1, truncated: false });
+
+    await request(api).get('/api/search').query({ q: 'Vladimir' }).set('Authorization', 'Bearer sanc_good');
+
+    expect(logSearchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ requestedBy: 'token:tok-1' }),
+    );
   });
 
   it('GET /api/sanctions/:id accepts a valid read-scoped token with no session cookie at all', async () => {
