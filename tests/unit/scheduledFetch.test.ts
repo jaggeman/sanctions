@@ -8,6 +8,7 @@ vi.mock('../../src/importer/fetcher', () => ({
     UN: 'https://example.test/un.xml',
     US: 'https://example.test/us.xml',
     UK: 'https://example.test/uk.xml',
+    CH: 'https://example.test/ch.xml',
   },
 }));
 
@@ -29,11 +30,11 @@ beforeEach(() => {
 });
 
 describe('runScheduledFetch — happy path', () => {
-  it('downloads and processes all four sources (EU, UN, US, UK) with mode "sync" and no uploader', async () => {
+  it('downloads and processes all five sources (EU, UN, US, UK, CH) with mode "sync" and no uploader', async () => {
     const outcomes = await runScheduledFetch();
 
-    expect(downloadFile).toHaveBeenCalledTimes(4);
-    expect(processUpload).toHaveBeenCalledTimes(4);
+    expect(downloadFile).toHaveBeenCalledTimes(5);
+    expect(processUpload).toHaveBeenCalledTimes(5);
 
     for (const call of processUpload.mock.calls) {
       expect(call[0]).toEqual(
@@ -44,8 +45,8 @@ describe('runScheduledFetch — happy path', () => {
       );
     }
 
-    expect(outcomes).toHaveLength(4);
-    expect(outcomes.map((o: any) => o.source).sort()).toEqual(['EU', 'UK', 'UN', 'US']);
+    expect(outcomes).toHaveLength(5);
+    expect(outcomes.map((o: any) => o.source).sort()).toEqual(['CH', 'EU', 'UK', 'UN', 'US']);
     expect(outcomes.every((o: any) => o.status === 'ok')).toBe(true);
   });
 
@@ -63,6 +64,9 @@ describe('runScheduledFetch — happy path', () => {
 
     const ukCall = processUpload.mock.calls.find((c: any) => c[0].sourceHint === 'UK');
     expect(ukCall[0]).toEqual(expect.objectContaining({ filePath: '/tmp/uk_sanctions.xml' }));
+
+    const chCall = processUpload.mock.calls.find((c: any) => c[0].sourceHint === 'CH');
+    expect(chCall[0]).toEqual(expect.objectContaining({ filePath: '/tmp/ch_sanctions.xml' }));
   });
 });
 
@@ -91,14 +95,14 @@ describe('runScheduledFetch — per-source failure isolation', () => {
 
     const outcomes = await runScheduledFetch();
 
-    expect(outcomes).toHaveLength(4);
+    expect(outcomes).toHaveLength(5);
     const un = outcomes.find((o: any) => o.source === 'UN');
     expect(un.status).toBe('error');
     expect(un.error).toMatch(/delist/i);
 
     const others = outcomes.filter((o: any) => o.source !== 'UN');
     expect(others.every((o: any) => o.status === 'ok')).toBe(true);
-    expect(processUpload).toHaveBeenCalledTimes(4);
+    expect(processUpload).toHaveBeenCalledTimes(5);
   });
 
   it('reports a download failure as an error for that source only, and still processes the rest', async () => {
@@ -109,13 +113,13 @@ describe('runScheduledFetch — per-source failure isolation', () => {
 
     const outcomes = await runScheduledFetch();
 
-    expect(outcomes).toHaveLength(4);
+    expect(outcomes).toHaveLength(5);
     const us = outcomes.find((o: any) => o.source === 'US');
     expect(us.status).toBe('error');
     expect(us.error).toMatch(/ECONNRESET/);
 
-    // US never reached processUpload since its download failed (4 - 1 = 3 reached).
-    expect(processUpload).toHaveBeenCalledTimes(3);
+    // US never reached processUpload since its download failed (5 - 1 = 4 reached).
+    expect(processUpload).toHaveBeenCalledTimes(4);
 
     const others = outcomes.filter((o: any) => o.source !== 'US');
     expect(others.every((o: any) => o.status === 'ok')).toBe(true);
