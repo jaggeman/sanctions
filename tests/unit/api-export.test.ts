@@ -111,12 +111,33 @@ describe('GET /api/export', () => {
     expect(res.text).not.toContain('EU-1');
   });
 
-  it('filters by importId', async () => {
+  it('filters by importId and formats filename safely', async () => {
     const res = await agent.get('/api/export?importId=imp-1&status=all');
 
     expect(res.status).toBe(200);
+    expect(res.headers['content-disposition']).toMatch(/attachment; filename="sanctions-import-imp-1-\d{4}-\d{2}-\d{2}\.csv"/);
     expect(res.text).toContain('EU-1');
     expect(res.text).not.toContain('US-2');
+  });
+
+  describe('importId validation & Content-Disposition header safety (issue #299)', () => {
+    it('rejects invalid importId with path separators with 400', async () => {
+      const res = await agent.get('/api/export?importId=../bad/id');
+      expect(res.status).toBe(400);
+      expect(res.body).toHaveProperty('error');
+    });
+
+    it('rejects importId with header injection characters with 400', async () => {
+      const res = await agent.get('/api/export?importId=foo;filename*=UTF-8\'\'evil.csv');
+      expect(res.status).toBe(400);
+      expect(res.body).toHaveProperty('error');
+    });
+
+    it('rejects importId with quotes or whitespace with 400', async () => {
+      const res = await agent.get('/api/export?importId="malicious"');
+      expect(res.status).toBe(400);
+      expect(res.body).toHaveProperty('error');
+    });
   });
 
   it('issue #260: returns 500 instead of crashing when Firestore read fails', async () => {
