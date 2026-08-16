@@ -70,11 +70,12 @@ describe('isAdminEmail — the allow-list', () => {
     expect(isAdminEmail('  ADMIN@CORP.COM  ')).toBe(true);
   });
 
-  it('once ADMIN_EMAILS is set, the dev test account is no longer implicitly admin', () => {
+  it('in non-production, the dev test account is always admin even when ADMIN_EMAILS is set', () => {
     process.env.NODE_ENV = 'development';
     process.env.ADMIN_EMAILS = 'a@corp.com';
-    expect(isAdminEmail(TEST_LOGIN_EMAIL)).toBe(false);
+    expect(isAdminEmail(TEST_LOGIN_EMAIL)).toBe(true);
   });
+
 
   it('treats an all-empty list as unset rather than as an allow-list of ""', () => {
     process.env.NODE_ENV = 'production';

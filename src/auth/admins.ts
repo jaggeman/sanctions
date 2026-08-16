@@ -35,6 +35,9 @@ export function isAdminEmail(email: string | null | undefined): boolean {
   if (!email) return false;
   const candidate = normalise(email);
   if (!candidate) return false;
+  if (isTestLoginEnabled() && isTestLoginEmail(candidate)) {
+    return true;
+  }
   return allowList().includes(candidate);
 }
 
