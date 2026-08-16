@@ -114,6 +114,7 @@ export async function processUpload(options: ProcessUploadOptions): Promise<Proc
   try {
     await createPendingImport({
       importId: sha256,
+      trigger: 'upload',
       filename: originalFilename,
       sha256,
       sizeBytes,

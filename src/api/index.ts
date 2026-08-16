@@ -12,8 +12,8 @@ import { db } from '../shared/firebase';
 import { enqueueImportTask } from '../importer/taskQueue';
 import { runImport } from '../importer';
 import { processUpload } from '../importer/uploadPipeline';
-import { listImports, findImportBySha256 } from '../importer/importRecord';
-import { listRecordVersions } from '../importer/uploader';
+import { listImports, findImportBySha256, createFetchImportRecord, markImportFailed } from '../importer/importRecord';
+import { listRecordVersions, generateImportId } from '../importer/uploader';
 import { tokensRouter } from './routes/tokens';
 import { decisionsRouter } from './routes/decisions';
 import { customRecordsRouter } from './routes/customRecords';
@@ -573,6 +573,14 @@ app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<a
   }
   if (!assertForceAllowed(req, res, !!force)) return;
 
+  // A dry run must leave no trace (same precedent as uploadPipeline.ts's
+  // dry-run path) — no audit doc, since it never actually applies anything.
+  // Resolve the real importId here, before dryRun's early return, so the
+  // dry-run's own DiffResults (which get stamped with importId internally
+  // for record versioning) and a real apply of the same request use a
+  // consistent id if the caller re-sends the same importId for both.
+  const resolvedImportId = importId || generateImportId();
+
   const importOptions = {
     sources,
     csvPath,
@@ -581,7 +589,7 @@ app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<a
     mode,
     dryRun: !!dryRun,
     force: !!force,
-    importId,
+    importId: resolvedImportId,
   };
 
   // Dry-run is a preview (issue #8): the caller needs the counts back to
@@ -598,6 +606,19 @@ app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<a
     }
   }
 
+  // issue #111: a fetch-triggered import has no file to hash-dedup on like
+  // an upload does, so this is its own durable audit record — created
+  // before enqueueing so "who triggered this and what was requested" is
+  // captured even if the Cloud Task itself never runs.
+  await createFetchImportRecord({
+    importId: resolvedImportId,
+    sources,
+    mode,
+    force: !!force,
+    uploadedBy: (req as any).userEmail || null,
+    uploadedAt: new Date().toISOString(),
+  });
+
   try {
     // importOptions already carries mode/dryRun/force/importId — building a
     // fresh object here (as an earlier version of this route did) silently
@@ -607,11 +628,13 @@ app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<a
     await enqueueImportTask(importOptions);
   } catch (error: any) {
     console.error('Failed to queue import task:', error);
+    await markImportFailed(resolvedImportId, error.message);
     return res.status(500).json({ error: 'Failed to start import', details: error.message });
   }
 
   res.status(202).json({
     status: 'import_started',
+    importId: resolvedImportId,
     message: 'The import has been queued and will run independently of this request.',
   });
 });

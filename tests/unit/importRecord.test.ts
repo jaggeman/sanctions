@@ -78,6 +78,7 @@ vi.mock('../../src/shared/firebase', () => ({ db: fakeDb }));
 
 const {
   createPendingImport,
+  createFetchImportRecord,
   markImportApplied,
   markImportFailed,
   markImportRejected,
@@ -87,9 +88,10 @@ const {
   ImportAlreadyInFlightError,
 } = await import('../../src/importer/importRecord');
 
-function baseRecord(overrides: Partial<Omit<ImportRecord, 'status'>> = {}): Omit<ImportRecord, 'status'> {
+function baseRecord(overrides: Partial<Omit<ImportRecord, 'status'>> = {}): Omit<ImportRecord, 'status'> & { sha256: string } {
   return {
     importId: 'abc123',
+    trigger: 'upload',
     filename: 'test.csv',
     sha256: 'abc123',
     sizeBytes: 1024,
@@ -181,6 +183,43 @@ describe('createPendingImport', () => {
     const doc = await findImportBySha256('abc123');
     expect(doc?.status).toBe('pending');
     expect(doc?.uploadedAt).not.toBe(longAgo);
+  });
+});
+
+describe('createFetchImportRecord (issue #111 — POST /api/import audit trail)', () => {
+  it('creates a pending doc keyed by importId, tagged as a fetch trigger', async () => {
+    await createFetchImportRecord({
+      importId: 'import_xyz',
+      sources: ['EU', 'UN'],
+      mode: 'sync',
+      force: false,
+      uploadedBy: 'analyst@example.com',
+      uploadedAt: '2026-08-16T00:00:00.000Z',
+    });
+
+    const doc = await findImportBySha256('import_xyz');
+    expect(doc?.status).toBe('pending');
+    expect(doc?.trigger).toBe('fetch');
+    expect(doc?.sources).toEqual(['EU', 'UN']);
+    expect(doc?.uploadedBy).toBe('analyst@example.com');
+  });
+
+  it('throws if the importId collides with an existing record (a genuine conflict, not a race to recover from)', async () => {
+    await createFetchImportRecord({
+      importId: 'import_dup',
+      sources: ['EU'],
+      uploadedBy: 'analyst@example.com',
+      uploadedAt: '2026-08-16T00:00:00.000Z',
+    });
+
+    await expect(
+      createFetchImportRecord({
+        importId: 'import_dup',
+        sources: ['UN'],
+        uploadedBy: 'other@example.com',
+        uploadedAt: '2026-08-16T00:01:00.000Z',
+      }),
+    ).rejects.toThrow();
   });
 });
 
