@@ -89,20 +89,23 @@ function collectNames(designation: any): NameCandidate[] {
 }
 
 /**
- * Real `<DOB>` values are one of two shapes: a placeholder like
- * "dd/mm/1945" (day/month genuinely unknown, only the year is real) or a
- * full "DD/MM/YYYY" date. Never US MM/DD — this is a UK source.
+ * Real `<DOB>` values are one of four shapes (issue #187):
+ * - Full date: "DD/MM/YYYY" (day, month, year all known).
+ * - Day-unknown / month-known: "dd/MM/YYYY" (literal "dd", real digit month, real year).
+ * - Placeholder: "dd/mm/YYYY" (literal "dd/mm", day/month genuinely unknown, only year real).
+ * - Bare year: "YYYY" (4 digits, no slashes).
+ *
+ * Never US MM/DD — this is a UK source.
  */
-const DOB_PLACEHOLDER = /^dd\/mm\/(\d{4})$/i;
 const DOB_FULL = /^(\d{2})\/(\d{2})\/(\d{4})$/;
+const DOB_DAY_UNKNOWN = /^dd\/(\d{2})\/(\d{4})$/i;
+const DOB_PLACEHOLDER = /^dd\/mm\/(\d{4})$/i;
+const DOB_BARE_YEAR = /^(\d{4})$/;
 
 function parseDob(raw: string): BirthDate | null {
-  const placeholder = DOB_PLACEHOLDER.exec(raw);
-  if (placeholder) {
-    return { year: parseInt(placeholder[1], 10) };
-  }
+  const trimmed = raw.trim();
 
-  const full = DOB_FULL.exec(raw);
+  const full = DOB_FULL.exec(trimmed);
   if (full) {
     const [, dd, mm, yyyy] = full;
     return {
@@ -113,6 +116,26 @@ function parseDob(raw: string): BirthDate | null {
     };
   }
 
+  const dayUnknown = DOB_DAY_UNKNOWN.exec(trimmed);
+  if (dayUnknown) {
+    const [, mm, yyyy] = dayUnknown;
+    return {
+      month: parseInt(mm, 10),
+      year: parseInt(yyyy, 10),
+    };
+  }
+
+  const placeholder = DOB_PLACEHOLDER.exec(trimmed);
+  if (placeholder) {
+    return { year: parseInt(placeholder[1], 10) };
+  }
+
+  const bareYear = DOB_BARE_YEAR.exec(trimmed);
+  if (bareYear) {
+    return { year: parseInt(bareYear[1], 10) };
+  }
+
+  log.warn('UK parser: unrecognized DOB shape', { raw: trimmed });
   return null;
 }
 
@@ -125,7 +148,7 @@ function parseBirthDates(individual: any): BirthDate[] {
     if (!raw) continue;
     const parsed = parseDob(raw);
     if (!parsed) continue;
-    const key = parsed.raw ?? `year:${parsed.year}`;
+    const key = parsed.raw ?? (parsed.month ? `month:${parsed.year}-${parsed.month}` : `year:${parsed.year}`);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(parsed);
