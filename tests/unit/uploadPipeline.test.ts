@@ -181,4 +181,16 @@ describe('processUpload — failure handling', () => {
     expect(result.outcome).toBe('failed');
     expect(markImportFailed).toHaveBeenCalledWith('abc123', 'storage quota exceeded');
   });
+
+  // issue #60: a bookkeeping failure AFTER a real success must never get
+  // mislabeled as a failed import — the sanction records were already
+  // written by runImport by this point.
+  it('does not mark a genuinely successful import as failed when only the bookkeeping markImportApplied call throws', async () => {
+    markImportApplied.mockRejectedValueOnce(new Error('Firestore write blip'));
+
+    const result = await processUpload(baseOptions());
+
+    expect(result.outcome).toBe('applied');
+    expect(markImportFailed).not.toHaveBeenCalled();
+  });
 });

@@ -1,5 +1,5 @@
 import { db } from '../shared/firebase';
-import { ImportRecord } from '../shared/types';
+import { ImportRecord, ImportStatus } from '../shared/types';
 
 const COLLECTION = 'imports';
 
@@ -10,27 +10,58 @@ const COLLECTION = 'imports';
  */
 export class ImportAlreadyInFlightError extends Error {}
 
-function isAlreadyExistsError(err: any): boolean {
-  return err?.code === 6 || /already exists/i.test(err?.message || '');
+// issue #60: a failed or rejected prior attempt for the same content must
+// not block this exact file from ever being uploaded again — retrying is
+// always safe for these statuses.
+const RETRYABLE_STATUSES: ReadonlySet<ImportStatus> = new Set(['failed', 'rejected']);
+
+// issue #60: a pending import stuck past this long has clearly died with
+// its Cloud Function instance (crash, timeout, cold-start eviction) — real
+// imports finish in seconds even for the largest source (~25 MB EU export),
+// not minutes, so this is a generous margin, not a tight timeout.
+const STALE_PENDING_THRESHOLD_MS = 15 * 60 * 1000;
+
+function isStalePending(existing: ImportRecord): boolean {
+  return existing.status === 'pending' && Date.now() - new Date(existing.uploadedAt).getTime() > STALE_PENDING_THRESHOLD_MS;
 }
 
 /**
- * Atomically creates the pending import doc, keyed by sha256. Firestore's
- * .create() fails atomically (ALREADY_EXISTS) if the ID is already taken —
- * that failure IS the race-safety mechanism issue #7 asks for: two
- * concurrent uploads of byte-identical content can't both "win" and both
- * proceed to parse/upload.
+ * Atomically creates the pending import doc, keyed by sha256, inside a
+ * transaction — the "is a prior attempt retryable" decision and the write
+ * itself have to happen as one atomic step, or two concurrent retries of the
+ * same failed import could both pass the status check and both proceed to
+ * re-run the pipeline, exactly the race issue #7's dedup mechanism exists to
+ * prevent. If no doc exists yet, Firestore's own transaction-conflict
+ * detection on `tx.create()` still provides the original first-write-wins
+ * race safety (concurrent attempts that all see "not exists" get retried by
+ * the SDK; only one actually commits).
+ *
+ * A prior attempt that's still genuinely in flight (pending and fresh) or
+ * already applied blocks a new attempt, same as before. A prior attempt that
+ * failed, was rejected, or has been pending long enough to have clearly died
+ * (issue #60) is retryable — the new attempt replaces it instead of being
+ * turned away forever.
  */
 export async function createPendingImport(record: Omit<ImportRecord, 'status'>): Promise<void> {
   const docRef = db.collection(COLLECTION).doc(record.sha256);
-  try {
-    await docRef.create({ ...record, status: 'pending' });
-  } catch (err: any) {
-    if (isAlreadyExistsError(err)) {
-      throw new ImportAlreadyInFlightError(`Import ${record.sha256} is already pending or in progress`);
+
+  await db.runTransaction(async (tx: FirebaseFirestore.Transaction) => {
+    const snap = await tx.get(docRef);
+
+    if (!snap.exists) {
+      tx.create(docRef, { ...record, status: 'pending' });
+      return;
     }
-    throw err;
-  }
+
+    const existing = snap.data() as ImportRecord;
+
+    if (RETRYABLE_STATUSES.has(existing.status) || isStalePending(existing)) {
+      tx.set(docRef, { ...record, status: 'pending' });
+      return;
+    }
+
+    throw new ImportAlreadyInFlightError(`Import ${record.sha256} is already pending or in progress`);
+  });
 }
 
 export async function findImportBySha256(sha256: string): Promise<ImportRecord | null> {

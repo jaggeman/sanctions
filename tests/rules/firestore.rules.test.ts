@@ -451,3 +451,33 @@ describe('firestore.rules — searchLog collection (issue #109)', () => {
     });
   });
 });
+
+describe('firestore.rules — otpGlobalBudget/{windowId} collection (issue #62)', () => {
+  const SAMPLE_BUDGET = { count: 5 };
+
+  it('denies an unauthenticated client writing a budget counter', async () => {
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('otpGlobalBudget').doc('123456').set(SAMPLE_BUDGET));
+  });
+
+  it('denies an unauthenticated client reading a budget counter', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().collection('otpGlobalBudget').doc('123456').set(SAMPLE_BUDGET);
+    });
+
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('otpGlobalBudget').doc('123456').get());
+  });
+
+  it('denies even an authenticated client — no token is privileged without a real auth system', async () => {
+    const authedDb = testEnv.authenticatedContext('some-user-id').firestore();
+    await assertFails(authedDb.collection('otpGlobalBudget').doc('123456').set(SAMPLE_BUDGET));
+  });
+
+  it('still allows the trusted server path (Admin SDK) to read and write the counter freely', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await assertSucceeds(ctx.firestore().collection('otpGlobalBudget').doc('123456').set(SAMPLE_BUDGET));
+      await assertSucceeds(ctx.firestore().collection('otpGlobalBudget').doc('123456').get());
+    });
+  });
+});

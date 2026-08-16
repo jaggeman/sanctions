@@ -22,7 +22,8 @@ import { SanctionSource, SanctionRecord } from '../shared/types';
 import { applyOverride, getOverride } from '../overrides';
 import { overridesRouter } from './routes/overrides';
 import { validateEntityIdParam } from './middleware/validateEntityIdParam';
-import { createOtp, verifyOtp } from '../auth/otpStore';
+import { createOtp, verifyOtp, isInCooldown } from '../auth/otpStore';
+import { consumeGlobalOtpBudget } from '../auth/otpBudget';
 import { sendOtpEmail } from '../auth/mailer';
 import { createSession, destroySession } from '../auth/session';
 import { requireAuth, SESSION_COOKIE_NAME } from '../auth/middleware';
@@ -122,13 +123,19 @@ app.use((req, res, next) => {
   applyHeaders(req, res, next);
 });
 
+// requestLogger must run before express.json()/cookieParser() (issue #66):
+// Express treats it as regular (3-arg) middleware, so if either of those
+// throws (a malformed JSON body, a bad cookie), Express skips every
+// remaining regular middleware — including requestLogger — and jumps
+// straight to errorLogger, which then had no requestId to attach at all.
+app.use(requestLogger);
+
 // Enable CORS and JSON parsing.
 // Cookie-based sessions mean credentialed CORS must not reflect an arbitrary origin —
 // only an explicitly configured frontend origin is allowed to send/receive the session cookie.
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN || false, credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
-app.use(requestLogger);
 
 // Rejects any :id route param before it can reach a Firestore .doc(id) call
 // (CLAUDE.md §6) — param callbacks are local to the router they're
@@ -162,6 +169,23 @@ app.post('/api/auth/request-otp', async (req, res): Promise<any> => {
     return res.json({ ok: true });
   }
 
+  // issue #62: the per-email cooldown below stops one address being spammed
+  // repeatedly, but does nothing against many DISTINCT real addresses each
+  // being sent one code at once. Only charge the org-wide budget for a
+  // request that will actually cause a new send — a request already blocked
+  // by the per-email cooldown must not also burn a global-budget slot, or a
+  // single attacker flooding one address could exhaust it for everyone else.
+  if (!(await isInCooldown(email)) && !(await consumeGlobalOtpBudget())) {
+    return res.status(429).json({ error: 'Too many login codes have been requested. Please try again shortly.' });
+  }
+
+  // Narrow, accepted race: two concurrent first-ever requests for the same
+  // brand-new email can both pass isInCooldown (neither sees the other's
+  // write yet), each consuming a global-budget slot. createOtp itself has
+  // the same pre-existing non-atomic read-then-write shape for its own
+  // cooldown check, so this doesn't introduce a new class of gap — just
+  // inherits the existing one, and is low-probability/low-impact enough
+  // not to warrant a cross-document transaction here.
   const code = await createOtp(email);
   if (!code) {
     return res.status(429).json({ error: 'A code was already sent recently. Please wait before requesting another.' });
@@ -464,13 +488,12 @@ app.get('/api/imports/:id', requireAuthOrScope('read'), async (req, res): Promis
  * POST /api/import
  * Queue a full import (issue #43). Handed off to `runImportTask`, a Cloud
  * Tasks-dispatched function with its own instance/timeout budget, instead of
- * running in-process here: `api` is pinned to maxInstances: 1 (issue #16),
- * so a multi-minute import awaited in this same function would freeze
- * login/search for everyone, and a bare fire-and-forget call is not
- * guaranteed to run to completion if this instance freezes/recycles right
- * after the response is sent. Cloud Tasks durably persists and retries the
- * job independent of this request's own fate, so the 202 below is now
- * actually true rather than merely optimistic.
+ * running in-process here: a multi-minute import awaited in this same
+ * function would tie up a request-serving instance for the duration, and a
+ * bare fire-and-forget call is not guaranteed to run to completion if this
+ * instance freezes/recycles right after the response is sent. Cloud Tasks
+ * durably persists and retries the job independent of this request's own
+ * fate, so the 202 below is now actually true rather than merely optimistic.
  *
  * Accepts either a logged-in session or a `write`-scoped API token (issue #36).
  */
@@ -644,17 +667,19 @@ if (require.main === module) {
 // sessions lived in an in-memory Map, which fragmented across concurrent
 // instances. Issue #63 moved that storage to Firestore
 // (src/auth/otpStore.ts, src/auth/session.ts), shared across every instance
-// and durable across a cold start — that half of the reason is gone.
+// and durable across a cold start.
 //
-// The pin stays for now regardless: src/search/index.ts's `cachedRecords` is
-// its own separate in-memory, per-instance cache, invalidated only within
-// the process that ran the import. With a single instance that's trivially
-// consistent; with maxInstances > 1, a search served by a different
-// instance than the one that just imported would silently return stale
-// results. Issue #43 is adding a Firestore-backed invalidation marker for
-// exactly that — this pin should come out once #43 lands, in a follow-up
-// PR that removes it explicitly rather than as a side effect of this one.
-export const api = functions.https.onRequest({ maxInstances: 1 }, app);
+// The pin then stayed for a second reason: src/search/index.ts's
+// `cachedRecords` was its own separate in-memory, per-instance cache,
+// invalidated only within the process that ran the import — with more than
+// one instance, a search served by an instance that didn't just import
+// would silently return stale results. Issue #43 added a Firestore-backed
+// `meta/searchIndex.version` counter that `getRecords()` checks against its
+// local cache on every call, so every instance now picks up an invalidation
+// regardless of which one ran the import.
+//
+// Both reasons are gone — no longer pinned (issue #101).
+export const api = functions.https.onRequest(app);
 
 // Both re-exported so their deployable Cloud Functions are discovered:
 // `dist/api/index.js` (package.json's `main`) is the sole file Firebase
