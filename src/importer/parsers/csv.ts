@@ -1,8 +1,11 @@
 import * as fs from 'fs-extra';
 import { SanctionRecord, SanctionType, SanctionSource, Address, NameAlias, BirthDate, Identification } from '../../shared/types';
 import { logger } from '../../shared/logger';
+import { isValidEntityId } from '../../shared/entityId';
 
 const log = logger.child({ module: 'importer.parsers.csv' });
+
+const ALLOWED_SOURCES = new Set<SanctionSource>(['EU', 'UN', 'US', 'UK', 'PEP', 'CUSTOM']);
 
 /** Issue #6: CSV rows have no strong/language/precision markers — derived from the already-parsed row fields. */
 function deriveNames(primaryName: string, aliases: string[]): NameAlias[] {
@@ -61,7 +64,10 @@ export async function parseCSVList(
   } = {}
 ): Promise<SanctionRecord[]> {
   const separator = options.separator || ';'; // default to semicolon which is common in Europe/Sweden
-  const defaultSource = options.defaultSource || 'PEP';
+  const defaultSource: SanctionSource =
+    options.defaultSource && ALLOWED_SOURCES.has(options.defaultSource)
+      ? options.defaultSource
+      : 'PEP';
 
   log.info('parse.start', { filePath, defaultSource });
   const content = await fs.readFile(filePath, 'utf-8');
@@ -73,11 +79,20 @@ export async function parseCSVList(
 
   // Parse header line to dynamically map fields
   const headers = parseCSVLine(lines[0], separator).map(h => h.toLowerCase());
+  const hasIdHeader = headers.some(h => ['id', 'key', 'uid'].includes(h));
+  const hasSourceHeader = headers.includes('source');
   const records: SanctionRecord[] = [];
+  let skippedCount = 0;
+  const skipReasons: Record<string, number> = {};
 
   for (let i = 1; i < lines.length; i++) {
     const values = parseCSVLine(lines[i], separator);
-    if (values.length < headers.length) continue;
+    if (values.length < headers.length) {
+      skippedCount++;
+      skipReasons.malformedColumns = (skipReasons.malformedColumns || 0) + 1;
+      log.warn('parse.row_skipped_malformed_columns', { rowNumber: i, expected: headers.length, received: values.length });
+      continue;
+    }
 
     const row: Record<string, string> = {};
     headers.forEach((header, index) => {
@@ -85,16 +100,41 @@ export async function parseCSVList(
     });
 
     // Extract fields using aliases
-    const rawId = row.id || row.key || row.uid || `row-${i}`;
-    const name = row.name || row.primaryname || row.fullname || row.wholename || '';
-    if (!name) continue; // Primary name is required
+    const name = (row.name || row.primaryname || row.fullname || row.wholename || '').trim();
+    if (!name) {
+      skippedCount++;
+      skipReasons.missingName = (skipReasons.missingName || 0) + 1;
+      log.warn('parse.row_skipped_missing_name', { rowNumber: i });
+      continue; // Primary name is required
+    }
+
+    // issue #167: Validate source. The file's own source column must not override
+    // the source the import was invoked with (preventing cross-source overwrite of EU/US/etc. records).
+    // If a source column is provided, it must match defaultSource.
+    const rawSource = (row.source || '').trim().toUpperCase();
+    if (hasSourceHeader && rawSource && rawSource !== defaultSource) {
+      skippedCount++;
+      skipReasons.sourceMismatch = (skipReasons.sourceMismatch || 0) + 1;
+      log.warn('parse.row_skipped_source_mismatch', { rowNumber: i, rowSource: row.source, expectedSource: defaultSource });
+      continue;
+    }
+    const source: SanctionSource = defaultSource;
+
+    // issue #167: Validate entity ID against path injection and reserved words.
+    // If an ID column is present in the CSV, empty or invalid IDs must be rejected.
+    // If no ID column is present, synthesize a safe row-based ID (`row-${i}`).
+    const rawId = (row.id || row.key || row.uid || (hasIdHeader ? '' : `row-${i}`)).trim();
+    if (!rawId || !isValidEntityId(rawId)) {
+      skippedCount++;
+      skipReasons.invalidId = (skipReasons.invalidId || 0) + 1;
+      log.warn('parse.row_skipped_invalid_id', { rowNumber: i, rawId });
+      continue;
+    }
 
     const typeStr = (row.type || row.category || 'individual').toLowerCase();
     const type: SanctionType = (typeStr.includes('entity') || typeStr.includes('organisation') || typeStr.includes('bolag'))
       ? 'entity'
       : (typeStr.includes('vessel') ? 'vessel' : (typeStr.includes('aircraft') ? 'aircraft' : 'individual'));
-
-    const source: SanctionSource = (row.source as SanctionSource) || defaultSource;
 
     const rawAliases = row.aliases || row.alias || '';
     const aliases = rawAliases ? rawAliases.split('|').map(s => s.trim()).filter(Boolean) : [];
@@ -148,6 +188,11 @@ export async function parseCSVList(
     });
   }
 
-  log.info('parse.complete', { filePath, recordCount: records.length });
+  log.info('parse.complete', {
+    filePath,
+    recordCount: records.length,
+    skippedCount,
+    skipReasons,
+  });
   return records;
 }
