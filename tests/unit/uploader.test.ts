@@ -257,7 +257,7 @@ describe('uploadRecords — soft delete fields + version trail', () => {
     await uploadRecords([record()], 'import-2');
 
     expect(store.get('PEP-1')!.data.addresses).toBeUndefined();
-    expect(store.get('PEP-1')!.data.primaryName).toBe('Vladimir Putin');
+    expect(store.get('PEP-1')!.data.names[0].wholeName).toBe('Vladimir Putin');
   });
 
   it('clears a removed field across a relist too, not just a plain update', async () => {

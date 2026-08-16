@@ -20,8 +20,7 @@ function record(overrides: Record<string, any> = {}) {
     id: 'EU-diff-1',
     source: 'EU',
     type: 'individual',
-    primaryName: 'Diff Person',
-    aliases: [] as string[],
+    names: [{ wholeName: 'Diff Person', strong: true }] as { wholeName: string; strong: boolean }[],
     searchNames: [] as string[],
     createdAt: '2024-01-01T00:00:00.000Z',
     updatedAt: '2024-01-01T00:00:00.000Z',
@@ -55,7 +54,7 @@ describe('diff engine — real Firestore write path (issue #8)', () => {
   it('importing the same file twice: second run is 100% unchanged and writes nothing', async () => {
     const records = [
       record({ id: 'EU-a' }),
-      record({ id: 'EU-b', primaryName: 'Second Person' }),
+      record({ id: 'EU-b', names: [{ wholeName: 'Second Person', strong: true }] }),
     ];
 
     await runDiffForSource('EU', records, { mode: 'sync', importId: 'import-1' });
@@ -98,7 +97,7 @@ describe('diff engine — real Firestore write path (issue #8)', () => {
 
     const diff = await runDiffForSource(
       'EU',
-      [record({ id: 'EU-a', primaryName: 'Changed Name' }), record({ id: 'EU-b' })],
+      [record({ id: 'EU-a', names: [{ wholeName: 'Changed Name', strong: true }] }), record({ id: 'EU-b' })],
       { mode: 'sync', importId: 'import-2' },
     );
 

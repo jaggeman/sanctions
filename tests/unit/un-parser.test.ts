@@ -85,10 +85,18 @@ describe('parseUNList', () => {
     const naser = records.find((r) => r.id === 'UN-110425');
 
     expect(naser).toBeDefined();
-    expect(naser!.passports).toContain('National Identification Number 0035011785 (Iran (Islamic Republic of))');
+    expect(naser!.identifications).toContainEqual({
+      number: '0035011785',
+      typeDescription: 'National Identification Number',
+      countryIso2: 'Iran (Islamic Republic of)',
+    });
     // The other document on the same record isn't all-digit, so it was never
     // at risk — asserting it anyway to pin the full expected shape.
-    expect(naser!.passports).toContain('Passport A0003039 (Iran (Islamic Republic of))');
+    expect(naser!.identifications).toContainEqual({
+      number: 'A0003039',
+      typeDescription: 'Passport',
+      countryIso2: 'Iran (Islamic Republic of)',
+    });
   });
 
   it('reads the issuing country from COUNTRY_OF_ISSUE, not just ISSUING_COUNTRY', async () => {
@@ -98,7 +106,7 @@ describe('parseUNList', () => {
     // COUNTRY_OF_ISSUE — this pins that the country isn't silently dropped.
     const records = await parseUNList(FIXTURE);
     const naser = records.find((r) => r.id === 'UN-110425');
-    expect(naser!.passports?.every((p) => p.includes('Iran (Islamic Republic of)'))).toBe(true);
+    expect(naser!.identifications?.every((id) => id.countryIso2 === 'Iran (Islamic Republic of)')).toBe(true);
   });
 
   it('returns an empty list when CONSOLIDATED_LIST is absent', async () => {
