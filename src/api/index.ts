@@ -16,6 +16,7 @@ import { listImports, findImportBySha256 } from '../importer/importRecord';
 import { listRecordVersions } from '../importer/uploader';
 import { tokensRouter } from './routes/tokens';
 import { decisionsRouter } from './routes/decisions';
+import { customRecordsRouter } from './routes/customRecords';
 import { runSearch } from '../search';
 import { logSearchEvent } from '../search/searchLog';
 import { SanctionSource, SanctionRecord } from '../shared/types';
@@ -285,6 +286,15 @@ app.get('/openapi.json', (req, res) => {
 // API token would be circular, so this route does not accept a bearer token
 // (issue #36 is about the *data* routes below, not this one).
 app.use('/api/admin/tokens', requireAuth, tokensRouter);
+
+/**
+ * POST/PUT/DELETE/GET /api/admin/custom-records
+ * Internal watchlist entries (source: 'CUSTOM') the official lists don't
+ * cover (issue #172). Auth is enforced inside customRecordsRouter itself
+ * (requireAdmin) — no middleware needed at this mount site. See
+ * src/api/routes/customRecords.ts.
+ */
+app.use('/api/admin/custom-records', customRecordsRouter);
 
 /**
  * PUT/DELETE /api/overrides/:id
