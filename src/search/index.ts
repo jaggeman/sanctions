@@ -194,6 +194,15 @@ async function getRecords(): Promise<IndexedRecord[]> {
                   addIndexKey(`ng3:${text.slice(i, i + 3)}`, position);
                 }
               }
+              if (text.length > 6) {
+                // 2-gram index for long-word transliteration variants (issue #294).
+                // Words of length > 6 match at JW >= 0.75 even when Soundex,
+                // 3-grams, and 2-char prefixes all differ (e.g. sultani/souleiman,
+                // ibrahim/irhayyim, kakolele/khaleel, emmanuel/esmaeli).
+                for (let i = 0; i <= text.length - 2; i++) {
+                  addIndexKey(`ng2:${text.slice(i, i + 2)}`, position);
+                }
+              }
             }
             if (w.soundex) {
               addIndexKey(`sx:${w.soundex}`, position);
@@ -233,11 +242,6 @@ async function getRecords(): Promise<IndexedRecord[]> {
 
 function normalizeForExactMatch(s: string): string {
   return s.toLowerCase().replace(/[\s-]/g, '');
-}
-
-function matchesPassportQuery(record: SanctionRecord, normalizedQuery: string): boolean {
-  if (normalizedQuery.length < MIN_PASSPORT_QUERY_LENGTH) return false;
-  return (record.identifications || []).some((id) => normalizeForExactMatch(id.number) === normalizedQuery);
 }
 
 function matchesDob(record: SanctionRecord, dobQuery: string): boolean {
@@ -380,6 +384,13 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
         // cross-script support #40 deliberately added. A `p1:` key built at
         // index time is script-agnostic, and one lookup replaces twenty-six.
         collect(`p1:${text}`);
+      }
+
+      // 2-gram lookups for long words (issue #294)
+      if (text.length > 6) {
+        for (let i = 0; i <= text.length - 2; i++) {
+          collect(`ng2:${text.slice(i, i + 2)}`);
+        }
       }
     }
   }
