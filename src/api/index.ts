@@ -17,6 +17,7 @@ import { listRecordVersions } from '../importer/uploader';
 import { tokensRouter } from './routes/tokens';
 import { decisionsRouter } from './routes/decisions';
 import { runSearch } from '../search';
+import { logSearchEvent } from '../search/searchLog';
 import { SanctionSource, SanctionRecord } from '../shared/types';
 import { applyOverride, getOverride } from '../overrides';
 import { overridesRouter } from './routes/overrides';
@@ -275,6 +276,19 @@ app.use('/api/overrides', overridesRouter);
 app.use('/api/decisions', decisionsRouter);
 
 /**
+ * Requester identity for the search audit log (issue #109) — a session
+ * carries `userEmail` (set by requireAuth), a bearer-token request carries
+ * `apiTokenId` instead (set by requireScope). Exactly one is ever present,
+ * since requireAuthOrScope delegates to one or the other, never both.
+ */
+function requesterIdentity(req: express.Request): string {
+  const userEmail = (req as any).userEmail;
+  if (userEmail) return userEmail;
+  if (req.apiTokenId) return `token:${req.apiTokenId}`;
+  return 'unknown';
+}
+
+/**
  * GET /api/search
  * Fuzzy name search (phonetic + edit-distance + token-set matching), plus an
  * exact passport/ID fast path. See src/search/matcher.ts — the same matcher
@@ -282,6 +296,10 @@ app.use('/api/decisions', decisionsRouter);
  *
  * Accepts either a logged-in session or a `read`-scoped API token (issue #36)
  * — this is the exact route external, session-less integrations need.
+ *
+ * Fires (does not await) a durable searchLog entry (issue #109) so a later
+ * "did we ever search for X" question is answerable — never on the response
+ * latency path, and a write failure there is logged, not thrown.
  */
 app.get('/api/search', requireAuthOrScope('read'), async (req, res): Promise<any> => {
   const { q, source, type, limit, threshold, includeDelisted, dob } = req.query;
@@ -312,6 +330,21 @@ app.get('/api/search', requireAuthOrScope('read'), async (req, res): Promise<any
 
     res.json({ results, totalMatches, truncated });
 
+    logSearchEvent({
+      action: 'search',
+      requestedBy: requesterIdentity(req),
+      query: q,
+      filters: {
+        source: typeof source === 'string' ? source : undefined,
+        type: typeof type === 'string' ? type : undefined,
+        threshold: threshold !== undefined ? parseInt(threshold as string) : undefined,
+        includeDelisted: includeDelisted === 'true',
+        dob: typeof dob === 'string' ? dob : undefined,
+      },
+      resultCount: totalMatches,
+      timestamp: new Date().toISOString(),
+    });
+
   } catch (error: any) {
     console.error('Search error:', error);
     res.status(500).json({ error: 'Internal server error', details: error.message });
@@ -338,12 +371,27 @@ app.get('/api/sanctions/:id', requireAuthOrScope('read'), async (req, res): Prom
   try {
     const doc = await db.collection('sanctions').doc(id).get();
     if (!doc.exists) {
+      logSearchEvent({
+        action: 'lookup',
+        requestedBy: requesterIdentity(req),
+        entityId: id,
+        resultCount: 0,
+        timestamp: new Date().toISOString(),
+      });
       return res.status(404).json({ error: `Sanction record with ID ${id} not found.` });
     }
 
     const override = await getOverride(id);
     const { record, overriddenFields } = applyOverride(doc.data() as SanctionRecord, override);
     res.json({ ...record, overriddenFields });
+
+    logSearchEvent({
+      action: 'lookup',
+      requestedBy: requesterIdentity(req),
+      entityId: id,
+      resultCount: 1,
+      timestamp: new Date().toISOString(),
+    });
   } catch (error: any) {
     console.error('Get details error:', error);
     res.status(500).json({ error: 'Internal server error', details: error.message });

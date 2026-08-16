@@ -411,3 +411,43 @@ describe('firestore.rules — meta/searchIndex collection (issue #43)', () => {
     });
   });
 });
+
+// Issue #109: the search audit log has no legitimate direct-client access
+// path at all (it exists purely so a compliance question can be answered
+// server-side later) — covered by the blanket deny-all backstop above, given
+// its own proof here for the same explicitness reason as imports/{importId}.
+describe('firestore.rules — searchLog collection (issue #109)', () => {
+  const SAMPLE_ENTRY = {
+    action: 'search',
+    requestedBy: 'analyst@example.com',
+    query: 'Vladimir Putin',
+    resultCount: 1,
+    timestamp: '2026-08-16T00:00:00.000Z',
+  };
+
+  it('denies an unauthenticated client writing a search log entry', async () => {
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('searchLog').doc('entry-1').set(SAMPLE_ENTRY));
+  });
+
+  it('denies an unauthenticated client reading a search log entry', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().collection('searchLog').doc('entry-1').set(SAMPLE_ENTRY);
+    });
+
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('searchLog').doc('entry-1').get());
+  });
+
+  it('denies even an authenticated client — no token is privileged without a real auth system', async () => {
+    const authedDb = testEnv.authenticatedContext('some-user-id').firestore();
+    await assertFails(authedDb.collection('searchLog').doc('entry-1').set(SAMPLE_ENTRY));
+  });
+
+  it('still allows the trusted server path (Admin SDK) to read and write search log entries freely', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await assertSucceeds(ctx.firestore().collection('searchLog').doc('entry-1').set(SAMPLE_ENTRY));
+      await assertSucceeds(ctx.firestore().collection('searchLog').doc('entry-1').get());
+    });
+  });
+});
