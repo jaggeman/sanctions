@@ -85,11 +85,12 @@ systemRouter.get('/status', async (req: Request, res: Response) => {
     
     // Check Firestore connection & get imports overview
     let dbConnected = true;
-    let counts: Record<string, number> = {
+    const counts: Record<string, number> = {
       UN: 0,
       UK: 0,
       EU: 0,
       US: 0,
+      CH: 0,
       PEP: 0,
       CUSTOM: 0,
       total: 0,
@@ -99,9 +100,12 @@ systemRouter.get('/status', async (req: Request, res: Response) => {
       const importsSnap = await db.collection('imports').get();
       importsSnap.forEach((doc) => {
         const data = doc.data();
-        if (data.source && data.recordCount && data.status === 'success') {
-          const src = data.source as string;
-          counts[src] = Math.max(counts[src] || 0, Number(data.recordCount) || 0);
+        if (data && data.status === 'applied') {
+          const count = Number(data.counts?.uploaded ?? data.counts?.parsed ?? 0);
+          if (data.source) {
+            const src = data.source as string;
+            counts[src] = Math.max(counts[src] || 0, count);
+          }
         }
       });
       counts.total = Object.entries(counts)

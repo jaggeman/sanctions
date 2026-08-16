@@ -51,6 +51,47 @@ describe('systemRouter', () => {
       expect(res.body.releases.length).toBeGreaterThanOrEqual(1);
     });
 
+    it('correctly aggregates counts from applied imports per source and computes total', async () => {
+      await fakeDb.collection('imports').doc('imp-1').set({
+        importId: 'imp-1',
+        source: 'EU',
+        status: 'applied',
+        counts: { parsed: 3500, uploaded: 3500 },
+      });
+      await fakeDb.collection('imports').doc('imp-2').set({
+        importId: 'imp-2',
+        source: 'UN',
+        status: 'applied',
+        counts: { parsed: 1200, uploaded: 1200 },
+      });
+      await fakeDb.collection('imports').doc('imp-3').set({
+        importId: 'imp-3',
+        source: 'CH',
+        status: 'applied',
+        counts: { parsed: 800, uploaded: 800 },
+      });
+      await fakeDb.collection('imports').doc('imp-4').set({
+        importId: 'imp-4',
+        source: 'PEP',
+        status: 'failed',
+        counts: { parsed: 50, uploaded: 0 },
+      });
+
+      const app = buildApp();
+      const cookie = await adminCookie();
+
+      const res = await request(app)
+        .get('/api/system/status')
+        .set('Cookie', cookie);
+
+      expect(res.status).toBe(200);
+      expect(res.body.database.counts.EU).toBe(3500);
+      expect(res.body.database.counts.UN).toBe(1200);
+      expect(res.body.database.counts.CH).toBe(800);
+      expect(res.body.database.counts.PEP).toBe(0);
+      expect(res.body.database.counts.total).toBe(5500);
+    });
+
     it('rejects unauthenticated requests with 401', async () => {
       const app = buildApp();
 
