@@ -71,12 +71,13 @@ describe('regression: known name-variant pairs against the real EU corpus', () =
   // issue exists to fix, without corpus-wide name-frequency data this
   // codebase doesn't have) — a conscious, user-approved trade-off, not an
   // oversight. This test documents what actually happens now, rather than
-  // silently dropping the coverage: the true entity's score drops sharply,
-  // and at full-corpus scale it can now be out-ranked by an unrelated
-  // short alias that happens to cross the edit-distance threshold by pure
-  // chance (a pre-existing weakness of EDIT_DISTANCE_MATCH_THRESHOLD on
-  // short strings, which this fix didn't create but does make newly
-  // decisive) — filed as a separate follow-up issue, not fixed here.
+  // silently dropping the coverage: the true entity's score drops sharply.
+  // It USED to also note that, at full-corpus scale, an unrelated short
+  // alias (EU-121867, "Musa") could win by crossing the old flat
+  // EDIT_DISTANCE_MATCH_THRESHOLD by pure chance — that specific mechanism
+  // is fixed by issue #104 (see the next test), but the underlying #41
+  // trade-off (the true entity's own score dropping) remains and is what
+  // this test documents.
   it('KNOWN TRADE-OFF (issue #41): a bare first name alone no longer reliably out-ranks the whole corpus', () => {
     const trueEntity = corpus.find((c) => c.id === 'EU-20')!;
     const { score: trueScore } = scoreNameMatch('Qusay', [trueEntity.primaryName, ...trueEntity.aliases]);
@@ -89,6 +90,20 @@ describe('regression: known name-variant pairs against the real EU corpus', () =
     // lock in which unrelated entity wins — that's corpus-order-sensitive
     // noise, not a property worth pinning down.
     expect(best).not.toBeNull();
+  });
+
+  // issue #104's actual fix, pinned against the real corpus rather than just
+  // the two words in isolation: "Musa" (a genuine alias of EU-121867, "SEKA
+  // BALUKU" — completely unrelated to EU-20/Qusay) no longer scores high
+  // enough via coincidental edit distance to beat the match threshold, let
+  // alone win outright.
+  it('issue #104 fix: the specific coincidental "Qusay"/"Musa" cross-match no longer happens', () => {
+    const musaEntity = corpus.find((c) => c.id === 'EU-121867')!;
+    expect(musaEntity).toBeDefined();
+    expect(musaEntity.aliases).toContain('Musa');
+
+    const { score } = scoreNameMatch('Qusay', [musaEntity.primaryName, ...musaEntity.aliases]);
+    expect(score).toBe(0);
   });
 });
 
