@@ -114,7 +114,7 @@ function normalizeForExactMatch(s: string): string {
 
 function matchesPassportQuery(record: SanctionRecord, normalizedQuery: string): boolean {
   if (normalizedQuery.length < MIN_PASSPORT_QUERY_LENGTH) return false;
-  return (record.identifications || []).some((id) => normalizeForExactMatch(id.number).includes(normalizedQuery));
+  return (record.identifications || []).some((id) => normalizeForExactMatch(id.number) === normalizedQuery);
 }
 
 function matchesDob(record: SanctionRecord, dobQuery: string): boolean {

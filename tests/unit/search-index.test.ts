@@ -185,12 +185,42 @@ describe('runSearch — limit and truncation reporting', () => {
 describe('runSearch — exact passport/ID fast path', () => {
   it('returns a passport match with a perfect score regardless of name similarity', async () => {
     allRecords = [
-      record({ id: 'PEP-1', names: namesOverride('Totally Unrelated Name'), identifications: [{ number: 'Passport SE1234567' }] }),
+      record({ id: 'PEP-1', names: namesOverride('Totally Unrelated Name'), identifications: [{ number: 'SE1234567', typeDescription: 'Passport' }] }),
     ];
     const { results } = await runSearch('SE1234567');
     expect(results).toHaveLength(1);
     expect(results[0].id).toBe('PEP-1');
     expect(results[0].score).toBe(100);
+  });
+
+  it('issue #152: matches normalized ID number exactly, ignoring hyphens, spaces and case', async () => {
+    allRecords = [
+      record({ id: 'PEP-1', names: namesOverride('Some Person'), identifications: [{ number: 'SE-1234-567' }] }),
+    ];
+    const { results } = await runSearch('se 1234 567');
+    expect(results).toHaveLength(1);
+    expect(results[0].id).toBe('PEP-1');
+    expect(results[0].score).toBe(100);
+    expect(results[0].matchedAlias).toBe('Passport/ID match');
+  });
+
+  it('issue #152: partial / substring match on ID number does NOT trigger fast path score 100', async () => {
+    allRecords = [
+      record({ id: 'PEP-1', names: namesOverride('Totally Unrelated Name'), identifications: [{ number: 'SE1234567' }] }),
+    ];
+    const { results } = await runSearch('1234');
+    // Partial ID match must not match via passport fast path
+    expect(results).toHaveLength(0);
+  });
+
+  it('issue #152: searching common metadata terms (Male, Female, 13224, Secondary) returns no fast-path hits', async () => {
+    allRecords = [
+      record({ id: 'PEP-1', names: namesOverride('Totally Unrelated Name'), identifications: [{ number: 'A1084010' }] }),
+    ];
+    for (const term of ['Male', 'Female', '13224', 'Secondary']) {
+      const { results } = await runSearch(term);
+      expect(results.filter((r) => r.matchedAlias === 'Passport/ID match')).toHaveLength(0);
+    }
   });
 
   it('does not double-count a record matched by both passport and name', async () => {
