@@ -225,6 +225,51 @@ describe('firestore.rules — overrides/{entityId} collection (issue #10)', () =
   });
 });
 
+// Issue #112 acceptance criterion: append-only history so a corrected
+// override's prior fields/author/reason (and a deletion's who/when) aren't
+// silently lost. Already covered by the blanket deny-all backstop above,
+// but named explicitly, same pattern as the sanctions "versions" subcollection.
+describe('firestore.rules — overrides/{entityId}/history subcollection (issue #112)', () => {
+  const SAMPLE_HISTORY_ENTRY = {
+    changeType: 'created',
+    changedAt: '2026-08-15T00:00:00.000Z',
+    changedBy: 'analyst@example.com',
+    override: {
+      entityId: 'EU-1',
+      fields: { sanctionReason: 'Corrected reason' },
+      overriddenBy: 'analyst@example.com',
+      overriddenAt: '2026-08-15T00:00:00.000Z',
+      reason: 'Corrected transliteration',
+    },
+  };
+
+  it('denies an unauthenticated client reading a history entry', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().collection('overrides').doc('EU-1').collection('history').doc('h1').set(SAMPLE_HISTORY_ENTRY);
+    });
+
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(
+      unauthedDb.collection('overrides').doc('EU-1').collection('history').doc('h1').get(),
+    );
+  });
+
+  it('denies an unauthenticated client writing a history entry', async () => {
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(
+      unauthedDb.collection('overrides').doc('EU-1').collection('history').doc('h1').set(SAMPLE_HISTORY_ENTRY),
+    );
+  });
+
+  it('still allows the trusted server path (Admin SDK) to read and write history entries freely', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const ref = ctx.firestore().collection('overrides').doc('EU-1').collection('history').doc('h1');
+      await assertSucceeds(ref.set(SAMPLE_HISTORY_ENTRY));
+      await assertSucceeds(ref.get());
+    });
+  });
+});
+
 // Issue #7 acceptance criterion: "Rules tests: a client cannot write to
 // `imports` directly" — already covered by the blanket deny-all backstop
 // above, but named explicitly in the acceptance criteria, so it gets its own
@@ -307,6 +352,61 @@ describe('firestore.rules — decisions/{entityId__subjectId} collection (issue 
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       await assertSucceeds(ctx.firestore().collection('decisions').doc('EU-1__customer-acme').set(SAMPLE_DECISION));
       await assertSucceeds(ctx.firestore().collection('decisions').doc('EU-1__customer-acme').get());
+    });
+  });
+});
+
+// Issue #112 acceptance criterion: append-only history so a re-adjudication's
+// prior verdict/author/notes aren't silently lost. Already covered by the
+// blanket deny-all backstop above, but named explicitly, same pattern as the
+// sanctions "versions" subcollection.
+describe('firestore.rules — decisions/{entityId__subjectId}/history subcollection (issue #112)', () => {
+  const SAMPLE_HISTORY_ENTRY = {
+    changeType: 'created',
+    changedAt: '2026-08-15T00:00:00.000Z',
+    decision: {
+      entityId: 'EU-1',
+      subjectId: 'customer-acme',
+      verdict: 'false_positive',
+      decidedBy: 'analyst@example.com',
+      decidedAt: '2026-08-15T00:00:00.000Z',
+    },
+  };
+
+  it('denies an unauthenticated client reading a history entry', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx
+        .firestore()
+        .collection('decisions')
+        .doc('EU-1__customer-acme')
+        .collection('history')
+        .doc('h1')
+        .set(SAMPLE_HISTORY_ENTRY);
+    });
+
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(
+      unauthedDb.collection('decisions').doc('EU-1__customer-acme').collection('history').doc('h1').get(),
+    );
+  });
+
+  it('denies an unauthenticated client writing a history entry', async () => {
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(
+      unauthedDb
+        .collection('decisions')
+        .doc('EU-1__customer-acme')
+        .collection('history')
+        .doc('h1')
+        .set(SAMPLE_HISTORY_ENTRY),
+    );
+  });
+
+  it('still allows the trusted server path (Admin SDK) to read and write history entries freely', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const ref = ctx.firestore().collection('decisions').doc('EU-1__customer-acme').collection('history').doc('h1');
+      await assertSucceeds(ref.set(SAMPLE_HISTORY_ENTRY));
+      await assertSucceeds(ref.get());
     });
   });
 });
@@ -408,6 +508,76 @@ describe('firestore.rules — meta/searchIndex collection (issue #43)', () => {
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       await assertSucceeds(ctx.firestore().collection('meta').doc('searchIndex').set({ version: 1 }));
       await assertSucceeds(ctx.firestore().collection('meta').doc('searchIndex').get());
+    });
+  });
+});
+
+// Issue #109: the search audit log has no legitimate direct-client access
+// path at all (it exists purely so a compliance question can be answered
+// server-side later) — covered by the blanket deny-all backstop above, given
+// its own proof here for the same explicitness reason as imports/{importId}.
+describe('firestore.rules — searchLog collection (issue #109)', () => {
+  const SAMPLE_ENTRY = {
+    action: 'search',
+    requestedBy: 'analyst@example.com',
+    query: 'Vladimir Putin',
+    resultCount: 1,
+    timestamp: '2026-08-16T00:00:00.000Z',
+  };
+
+  it('denies an unauthenticated client writing a search log entry', async () => {
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('searchLog').doc('entry-1').set(SAMPLE_ENTRY));
+  });
+
+  it('denies an unauthenticated client reading a search log entry', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().collection('searchLog').doc('entry-1').set(SAMPLE_ENTRY);
+    });
+
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('searchLog').doc('entry-1').get());
+  });
+
+  it('denies even an authenticated client — no token is privileged without a real auth system', async () => {
+    const authedDb = testEnv.authenticatedContext('some-user-id').firestore();
+    await assertFails(authedDb.collection('searchLog').doc('entry-1').set(SAMPLE_ENTRY));
+  });
+
+  it('still allows the trusted server path (Admin SDK) to read and write search log entries freely', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await assertSucceeds(ctx.firestore().collection('searchLog').doc('entry-1').set(SAMPLE_ENTRY));
+      await assertSucceeds(ctx.firestore().collection('searchLog').doc('entry-1').get());
+    });
+  });
+});
+
+describe('firestore.rules — otpGlobalBudget/{windowId} collection (issue #62)', () => {
+  const SAMPLE_BUDGET = { count: 5 };
+
+  it('denies an unauthenticated client writing a budget counter', async () => {
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('otpGlobalBudget').doc('123456').set(SAMPLE_BUDGET));
+  });
+
+  it('denies an unauthenticated client reading a budget counter', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().collection('otpGlobalBudget').doc('123456').set(SAMPLE_BUDGET);
+    });
+
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(unauthedDb.collection('otpGlobalBudget').doc('123456').get());
+  });
+
+  it('denies even an authenticated client — no token is privileged without a real auth system', async () => {
+    const authedDb = testEnv.authenticatedContext('some-user-id').firestore();
+    await assertFails(authedDb.collection('otpGlobalBudget').doc('123456').set(SAMPLE_BUDGET));
+  });
+
+  it('still allows the trusted server path (Admin SDK) to read and write the counter freely', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await assertSucceeds(ctx.firestore().collection('otpGlobalBudget').doc('123456').set(SAMPLE_BUDGET));
+      await assertSucceeds(ctx.firestore().collection('otpGlobalBudget').doc('123456').get());
     });
   });
 });

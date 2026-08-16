@@ -111,6 +111,22 @@ const PHONETIC_MATCH_SCORE = 0.85;
 const MIN_LENGTH_FOR_EDIT_DISTANCE = 3;
 const EDIT_DISTANCE_MATCH_THRESHOLD = 0.75;
 
+// issue #104: 0.75 was not a high enough bar for genuinely SHORT words
+// specifically — e.g. jaroWinkler('qusay','musa') = 0.7833, two real,
+// phonetically-unrelated (soundex 'Q200' vs 'M200') aliases in the corpus
+// that happen to share enough characters by pure chance. A corpus-wide
+// calibration (see this fix's PR description) found coincidental short-word
+// pairs scoring as high as ~0.88-0.89 with no phonetic or substring
+// relationship at all, while genuine short-name spelling variants
+// (ahmed/ahmad, nasser/nassar, musa/musab, hana/hanan...) mostly score
+// >= 0.90 even when their soundex codes disagree too. A stricter bar for
+// short words (rather than raising MIN_LENGTH_FOR_EDIT_DISTANCE, which
+// would drop genuine short variants to phonetic-only matching and miss the
+// ones whose soundex also disagrees) keeps both effects: it rejects the
+// reported coincidence and its siblings while still matching real variants.
+const SHORT_WORD_MAX_LENGTH = 6;
+const EDIT_DISTANCE_MATCH_THRESHOLD_SHORT_WORD = 0.9;
+
 /**
  * Generic name particles (issue #41, decision (b)): these carry far less
  * identifying information than an actual name part, so a match on one alone
@@ -152,8 +168,11 @@ function pairScore(token: TokenizedWord, candidate: TokenizedWord): number {
   const minLen = Math.min(token.text.length, candidate.text.length);
   let editScore = 0;
   if (minLen >= MIN_LENGTH_FOR_EDIT_DISTANCE) {
+    const threshold = minLen <= SHORT_WORD_MAX_LENGTH
+      ? EDIT_DISTANCE_MATCH_THRESHOLD_SHORT_WORD
+      : EDIT_DISTANCE_MATCH_THRESHOLD;
     const jw = jaroWinkler(token.text, candidate.text);
-    editScore = jw >= EDIT_DISTANCE_MATCH_THRESHOLD ? jw : 0;
+    editScore = jw >= threshold ? jw : 0;
   }
   return Math.max(phoneticScore, editScore);
 }

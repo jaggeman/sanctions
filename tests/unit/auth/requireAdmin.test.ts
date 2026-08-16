@@ -12,6 +12,11 @@ const { isAdminEmail } = await import('../../../src/auth/admins');
 const { createSession, destroySession } = await import('../../../src/auth/session');
 const { SESSION_COOKIE_NAME } = await import('../../../src/auth/middleware');
 const { TEST_LOGIN_EMAIL } = await import('../../../src/auth/testAccount');
+const { requestLogger } = await import('../../../src/api/middleware/requestLogger');
+
+function readJsonLines(spy: ReturnType<typeof vi.spyOn>): any[] {
+  return spy.mock.calls.map((call) => JSON.parse(call[0] as string));
+}
 
 function buildApp() {
   const app = express();
@@ -154,5 +159,25 @@ describe('requireAdmin middleware', () => {
       .set('X-User-Email', 'a@corp.com')
       .set('userEmail', 'a@corp.com');
     expect(res.status).toBe(401);
+  });
+
+  it('binds the admin email into req.log, so request.finish includes it (issue #110)', async () => {
+    process.env.ADMIN_EMAILS = 'a@corp.com';
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const app = express();
+      app.use(requestLogger);
+      app.use(cookieParser());
+      app.get('/admin', requireAdmin, (req, res) => res.json({ ok: true }));
+
+      const cookie = `${SESSION_COOKIE_NAME}=${await createSession('a@corp.com')}`;
+      await request(app).get('/admin').set('Cookie', cookie);
+
+      const entries = readJsonLines(logSpy);
+      const finish = entries.find((e) => e.message === 'request.finish');
+      expect(finish.userEmail).toBe('a***@corp.com');
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 });

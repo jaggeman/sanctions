@@ -24,6 +24,23 @@ function makeDoc(id: string) {
       if (!store.has(id)) throw new Error('NOT_FOUND');
       store.set(id, { ...store.get(id), ...data });
     }),
+    // Synchronous-enough helpers for the fake runTransaction below — a real
+    // Firestore transaction batches writes and commits them atomically, but
+    // for this in-memory fake, applying them immediately against the shared
+    // `store` is faithful enough for unit-level intent; the real atomic
+    // guarantee under contention is only provable against the real emulator
+    // (see tests/integration).
+    __create: (data: any) => {
+      if (store.has(id)) {
+        const err: any = new Error(`6 ALREADY_EXISTS: Document already exists: ${id}`);
+        err.code = 6;
+        throw err;
+      }
+      store.set(id, { ...data });
+    },
+    __set: (data: any) => {
+      store.set(id, { ...data });
+    },
   };
 }
 
@@ -47,12 +64,21 @@ const fakeDb = {
       })),
     };
   }),
+  runTransaction: vi.fn(async (updateFn: (tx: any) => Promise<void>) => {
+    const tx = {
+      get: async (docRef: any) => docRef.get(),
+      create: (docRef: any, data: any) => docRef.__create(data),
+      set: (docRef: any, data: any) => docRef.__set(data),
+    };
+    return updateFn(tx);
+  }),
 };
 
 vi.mock('../../src/shared/firebase', () => ({ db: fakeDb }));
 
 const {
   createPendingImport,
+  createFetchImportRecord,
   markImportApplied,
   markImportFailed,
   markImportRejected,
@@ -62,9 +88,10 @@ const {
   ImportAlreadyInFlightError,
 } = await import('../../src/importer/importRecord');
 
-function baseRecord(overrides: Partial<Omit<ImportRecord, 'status'>> = {}): Omit<ImportRecord, 'status'> {
+function baseRecord(overrides: Partial<Omit<ImportRecord, 'status'>> = {}): Omit<ImportRecord, 'status'> & { sha256: string } {
   return {
     importId: 'abc123',
+    trigger: 'upload',
     filename: 'test.csv',
     sha256: 'abc123',
     sizeBytes: 1024,
@@ -73,7 +100,9 @@ function baseRecord(overrides: Partial<Omit<ImportRecord, 'status'>> = {}): Omit
     format: 'csv',
     fileGenerationDate: null,
     uploadedBy: 'user@example.com',
-    uploadedAt: '2026-08-15T00:00:00.000Z',
+    // "Fresh" by default (issue #60's staleness check is relative to now) —
+    // tests that need a stale or specific timestamp override this explicitly.
+    uploadedAt: new Date().toISOString(),
     ...overrides,
   };
 }
@@ -97,11 +126,9 @@ describe('createPendingImport', () => {
   });
 
   it('re-throws an unrelated Firestore error rather than misclassifying it', async () => {
-    fakeDb.collection.mockImplementationOnce(() => ({
-      doc: vi.fn(() => ({
-        create: vi.fn(async () => { throw new Error('UNAVAILABLE: network blip'); }),
-      })),
-    }));
+    fakeDb.runTransaction.mockImplementationOnce(async () => {
+      throw new Error('UNAVAILABLE: network blip');
+    });
     let caught: any;
     try {
       await createPendingImport(baseRecord());
@@ -111,6 +138,88 @@ describe('createPendingImport', () => {
     expect(caught).toBeInstanceOf(Error);
     expect(caught.message).toContain('UNAVAILABLE');
     expect(caught).not.toBeInstanceOf(ImportAlreadyInFlightError);
+  });
+
+  // issue #60: a failed/rejected prior attempt (or one stuck pending long
+  // enough to have clearly died) must not block this exact file from ever
+  // being uploaded again.
+  it('allows retrying after the prior attempt for the same content failed', async () => {
+    await createPendingImport(baseRecord());
+    await markImportFailed('abc123', 'transient network blip');
+
+    await createPendingImport(baseRecord({ uploadedAt: '2026-08-16T00:00:00.000Z' }));
+
+    const doc = await findImportBySha256('abc123');
+    expect(doc?.status).toBe('pending');
+    expect(doc?.uploadedAt).toBe('2026-08-16T00:00:00.000Z');
+  });
+
+  it('allows retrying after the prior attempt for the same content was rejected', async () => {
+    await createPendingImport(baseRecord());
+    await markImportRejected('abc123', 'some-other-import');
+
+    await expect(createPendingImport(baseRecord())).resolves.toBeUndefined();
+    const doc = await findImportBySha256('abc123');
+    expect(doc?.status).toBe('pending');
+  });
+
+  it('still blocks a retry while the prior attempt is genuinely pending and fresh', async () => {
+    await createPendingImport(baseRecord({ uploadedAt: new Date().toISOString() }));
+    await expect(createPendingImport(baseRecord())).rejects.toBeInstanceOf(ImportAlreadyInFlightError);
+  });
+
+  it('still blocks a retry when the prior attempt already applied', async () => {
+    await createPendingImport(baseRecord());
+    await markImportApplied('abc123', { parsed: 1, uploaded: 1 });
+    await expect(createPendingImport(baseRecord())).rejects.toBeInstanceOf(ImportAlreadyInFlightError);
+  });
+
+  it('allows retrying when a pending import has been stuck long enough to have clearly died', async () => {
+    const longAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString(); // 1 hour ago
+    await createPendingImport(baseRecord({ uploadedAt: longAgo }));
+
+    await createPendingImport(baseRecord({ uploadedAt: new Date().toISOString() }));
+
+    const doc = await findImportBySha256('abc123');
+    expect(doc?.status).toBe('pending');
+    expect(doc?.uploadedAt).not.toBe(longAgo);
+  });
+});
+
+describe('createFetchImportRecord (issue #111 — POST /api/import audit trail)', () => {
+  it('creates a pending doc keyed by importId, tagged as a fetch trigger', async () => {
+    await createFetchImportRecord({
+      importId: 'import_xyz',
+      sources: ['EU', 'UN'],
+      mode: 'sync',
+      force: false,
+      uploadedBy: 'analyst@example.com',
+      uploadedAt: '2026-08-16T00:00:00.000Z',
+    });
+
+    const doc = await findImportBySha256('import_xyz');
+    expect(doc?.status).toBe('pending');
+    expect(doc?.trigger).toBe('fetch');
+    expect(doc?.sources).toEqual(['EU', 'UN']);
+    expect(doc?.uploadedBy).toBe('analyst@example.com');
+  });
+
+  it('throws if the importId collides with an existing record (a genuine conflict, not a race to recover from)', async () => {
+    await createFetchImportRecord({
+      importId: 'import_dup',
+      sources: ['EU'],
+      uploadedBy: 'analyst@example.com',
+      uploadedAt: '2026-08-16T00:00:00.000Z',
+    });
+
+    await expect(
+      createFetchImportRecord({
+        importId: 'import_dup',
+        sources: ['UN'],
+        uploadedBy: 'other@example.com',
+        uploadedAt: '2026-08-16T00:01:00.000Z',
+      }),
+    ).rejects.toThrow();
   });
 });
 

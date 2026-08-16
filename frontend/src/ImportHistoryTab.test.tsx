@@ -1,6 +1,7 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import ImportHistoryTab from './ImportHistoryTab';
+import { setOnSessionExpired } from './apiFetch';
 
 /**
  * ImportHistoryTab lists past imports (GET /api/imports, issue #12) newest
@@ -54,6 +55,7 @@ const REJECTED = {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  setOnSessionExpired(null);
 });
 
 describe('ImportHistoryTab', () => {
@@ -116,5 +118,18 @@ describe('ImportHistoryTab', () => {
     render(<ImportHistoryTab focusImportId="abc123" />);
 
     await waitFor(() => expect(screen.getByText(/parsed/i)).toBeInTheDocument());
+  });
+
+  it('a 401 fires the app-wide session-expiry handler instead of just showing a generic error (issue #59 gap)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 401, json: async () => ({ error: 'Authentication required' }) }) as Response),
+    );
+    const sessionExpired = vi.fn();
+    setOnSessionExpired(sessionExpired);
+
+    render(<ImportHistoryTab />);
+
+    await waitFor(() => expect(sessionExpired).toHaveBeenCalledTimes(1));
   });
 });

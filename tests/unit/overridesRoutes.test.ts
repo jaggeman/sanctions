@@ -187,7 +187,7 @@ describe('DELETE /api/overrides/:id', () => {
       .set('Cookie', await authedCookie());
 
     expect(res.status).toBe(200);
-    expect(mockDeleteOverride).toHaveBeenCalledWith('EU-1');
+    expect(mockDeleteOverride).toHaveBeenCalledWith('EU-1', CALLER_EMAIL);
     expect(mockInvalidateSearchIndex).toHaveBeenCalledTimes(1);
   });
 });
@@ -212,6 +212,46 @@ describe('write-scoped bearer token attribution', () => {
       { sanctionReason: 'Corrected' },
       { overriddenBy: 'svc-agent@corp.test', reason: 'Fix' },
     );
+  });
+});
+
+describe('invalidateSearchIndex ordering (issue #170)', () => {
+  // A controlled delayed promise stands in for real Firestore commit
+  // latency — the point of these tests is that the HANDLER awaits it, not
+  // that any particular timing occurs. Order is recorded rather than timed.
+  function deferredInvalidate() {
+    const order: string[] = [];
+    mockInvalidateSearchIndex.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          setTimeout(() => {
+            order.push('invalidated');
+            resolve();
+          }, 10);
+        }),
+    );
+    return order;
+  }
+
+  it('PUT /:id waits for invalidateSearchIndex to resolve before responding', async () => {
+    const order = deferredInvalidate();
+
+    await request(buildApp())
+      .put('/api/overrides/EU-1')
+      .set('Cookie', await authedCookie())
+      .send({ fields: { sanctionReason: 'Corrected' }, reason: 'Fix' });
+
+    order.push('responded');
+    expect(order).toEqual(['invalidated', 'responded']);
+  });
+
+  it('DELETE /:id waits for invalidateSearchIndex to resolve before responding', async () => {
+    const order = deferredInvalidate();
+
+    await request(buildApp()).delete('/api/overrides/EU-1').set('Cookie', await authedCookie());
+
+    order.push('responded');
+    expect(order).toEqual(['invalidated', 'responded']);
   });
 });
 

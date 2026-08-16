@@ -2,6 +2,11 @@ import { db } from '../shared/firebase';
 import { SanctionRecord } from '../shared/types';
 import { generateSearchTokens } from '../importer/uploader';
 import { isValidEntityId } from '../shared/entityId';
+import { invalidateSearchIndex } from '../search';
+
+// gRPC status code for ALREADY_EXISTS — what Firestore's DocumentReference.create()
+// throws when the document is already present. Any other error rethrows as-is.
+const FIRESTORE_ALREADY_EXISTS = 6;
 
 function assertValidId(id: string): void {
   if (!isValidEntityId(id)) {
@@ -36,10 +41,6 @@ const COLLECTION = 'sanctions';
 export async function createCustomRecord(input: CustomRecordInput): Promise<SanctionRecord> {
   assertValidId(input.id);
   const docRef = db.collection(COLLECTION).doc(input.id);
-  const existing = await docRef.get();
-  if (existing.exists) {
-    throw new Error(`A record with id "${input.id}" already exists — cannot create a duplicate custom record.`);
-  }
 
   const now = new Date().toISOString();
   const aliases = input.aliases || [];
@@ -52,7 +53,21 @@ export async function createCustomRecord(input: CustomRecordInput): Promise<Sanc
     updatedAt: now,
   };
 
-  await docRef.set(record);
+  // docRef.create() is Firestore's own atomic "insert if absent" — the
+  // existence check and the write happen as one server-side operation, so
+  // two concurrent creates for the same id can no longer both pass a
+  // separate get() check and both write (TOCTOU, issue #172). Only the
+  // ALREADY_EXISTS case gets the friendly message; anything else rethrows.
+  try {
+    await docRef.create(record);
+  } catch (error: any) {
+    if (error?.code === FIRESTORE_ALREADY_EXISTS) {
+      throw new Error(`A record with id "${input.id}" already exists — cannot create a duplicate custom record.`);
+    }
+    throw error;
+  }
+
+  await invalidateSearchIndex();
   return record;
 }
 
@@ -75,21 +90,22 @@ export async function updateCustomRecord(
   const merged: SanctionRecord = {
     ...current,
     ...patch,
-    // Re-pinned after the patch spread: `patch` may originate from an
-    // untrusted HTTP body once this is wired into the API (deferred, see PR
-    // description), and CustomRecordInput's TS type is not enforced at
-    // runtime — a payload could still smuggle these keys in.
+    // Re-pinned after the patch spread: `patch` originates from an
+    // untrusted HTTP body (wired into the API, issue #172), and
+    // CustomRecordInput's TS type is not enforced at runtime — a payload
+    // could still smuggle these keys in. searchNames is always regenerated
+    // from the merged record's own primaryName/aliases rather than left
+    // re-pinned only conditionally, so a patch can never set it directly
+    // and control what the record matches on.
     id,
     source: 'CUSTOM',
     createdAt: current.createdAt,
     updatedAt: new Date().toISOString(),
   };
-
-  if (patch.primaryName !== undefined || patch.aliases !== undefined) {
-    merged.searchNames = generateSearchTokens(merged.primaryName, merged.aliases);
-  }
+  merged.searchNames = generateSearchTokens(merged.primaryName, merged.aliases);
 
   await docRef.set(merged);
+  await invalidateSearchIndex();
   return merged;
 }
 
@@ -111,6 +127,7 @@ export async function deleteCustomRecord(id: string, options: { confirm: boolean
   }
 
   await docRef.delete();
+  await invalidateSearchIndex();
 }
 
 export async function getCustomRecord(id: string): Promise<SanctionRecord | null> {

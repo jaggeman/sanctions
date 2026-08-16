@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction, RequestHandler } from 'express';
 import { verifyApiToken, ApiTokenScope, TokenVerificationResult } from '../../shared/apiTokens';
+import { bindLogIdentity } from './requestLogger';
 
 declare module 'express-serve-static-core' {
   interface Request {
@@ -46,6 +47,7 @@ export function requireScope(scope: ApiTokenScope): RequestHandler {
 
     req.apiTokenId = result.tokenId;
     req.userEmail = result.ownerEmail;
+    bindLogIdentity(req, { tokenId: result.tokenId, userEmail: result.ownerEmail });
     next();
   };
 }
