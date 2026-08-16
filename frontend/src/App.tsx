@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, Suspense, lazy } from 'react';
+import React, { useState, useMemo, useEffect, Suspense } from 'react';
 import {
   ThemeProvider,
   createTheme,
@@ -19,17 +19,19 @@ import Brightness7Icon from '@mui/icons-material/Brightness7';
 import ShieldOutlinedIcon from '@mui/icons-material/ShieldOutlined';
 import LogoutIcon from '@mui/icons-material/Logout';
 import Login from './components/Login';
+import TabErrorBoundary from './components/TabErrorBoundary';
 import { setOnSessionExpired } from './apiFetch';
+import { lazyWithRetry } from './utils/lazyWithRetry';
 
-// Issue #228: Code splitting & lazy loading of tab components to reduce initial bundle size
-const SearchTab = lazy(() => import('./SearchTab'));
-const UploadTab = lazy(() => import('./UploadTab'));
-const ImportHistoryTab = lazy(() => import('./ImportHistoryTab'));
-const OfficialSourcesTab = lazy(() => import('./OfficialSourcesTab'));
-const ApiTokensTab = lazy(() => import('./ApiTokensTab'));
-const HelpManualTab = lazy(() => import('./HelpManualTab'));
-const DriftStatusTab = lazy(() => import('./DriftStatusTab'));
-const RecordDetail = lazy(() => import('./RecordDetail'));
+// Issue #228 & Issue #238: Code splitting & lazy loading of tab components with auto-recovery on chunk failure
+const SearchTab = lazyWithRetry(() => import('./SearchTab'), 'SearchTab');
+const UploadTab = lazyWithRetry(() => import('./UploadTab'), 'UploadTab');
+const ImportHistoryTab = lazyWithRetry(() => import('./ImportHistoryTab'), 'ImportHistoryTab');
+const OfficialSourcesTab = lazyWithRetry(() => import('./OfficialSourcesTab'), 'OfficialSourcesTab');
+const ApiTokensTab = lazyWithRetry(() => import('./ApiTokensTab'), 'ApiTokensTab');
+const HelpManualTab = lazyWithRetry(() => import('./HelpManualTab'), 'HelpManualTab');
+const DriftStatusTab = lazyWithRetry(() => import('./DriftStatusTab'), 'DriftStatusTab');
+const RecordDetail = lazyWithRetry(() => import('./RecordDetail'), 'RecordDetail');
 
 // Brand bar stays a consistent deep navy in both light and dark mode —
 // a fixed identity color reads as more "product" than a bar that changes
@@ -213,35 +215,39 @@ function App() {
           </Tabs>
         </Box>
 
-        <Suspense fallback={<TabLoadingFallback />}>
-          <Box sx={{ display: tabValue === 0 ? 'block' : 'none' }}>
-            <SearchTab onSelectRecord={setSelectedRecordId} />
-          </Box>
+        <TabErrorBoundary>
+          <Suspense fallback={<TabLoadingFallback />}>
+            <Box sx={{ display: tabValue === 0 ? 'block' : 'none' }}>
+              <SearchTab onSelectRecord={setSelectedRecordId} />
+            </Box>
 
-          {tabValue === 1 && (
-            <UploadTab
-              onViewImport={(importId) => {
-                setHistoryFocusId(importId);
-                setTabValue(2);
-              }}
-            />
-          )}
+            {tabValue === 1 && (
+              <UploadTab
+                onViewImport={(importId) => {
+                  setHistoryFocusId(importId);
+                  setTabValue(2);
+                }}
+              />
+            )}
 
-          {tabValue === 2 && <ImportHistoryTab focusImportId={historyFocusId} />}
+            {tabValue === 2 && <ImportHistoryTab focusImportId={historyFocusId} />}
 
-          {tabValue === 3 && <OfficialSourcesTab />}
+            {tabValue === 3 && <OfficialSourcesTab />}
 
-          {tabValue === 4 && <ApiTokensTab />}
+            {tabValue === 4 && <ApiTokensTab />}
 
-          {tabValue === 5 && <HelpManualTab />}
+            {tabValue === 5 && <HelpManualTab />}
 
-          {tabValue === 6 && <DriftStatusTab />}
-        </Suspense>
+            {tabValue === 6 && <DriftStatusTab />}
+          </Suspense>
+        </TabErrorBoundary>
       </Container>
 
-      <Suspense fallback={null}>
-        <RecordDetail recordId={selectedRecordId} onClose={() => setSelectedRecordId(null)} />
-      </Suspense>
+      <TabErrorBoundary>
+        <Suspense fallback={null}>
+          <RecordDetail recordId={selectedRecordId} onClose={() => setSelectedRecordId(null)} />
+        </Suspense>
+      </TabErrorBoundary>
     </ThemeProvider>
   );
 }
