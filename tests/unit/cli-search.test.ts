@@ -98,4 +98,54 @@ describe('CLI search command', () => {
     await runCli(['search', 'X']);
     expect(logs.join('\n')).toMatch(/42/);
   });
+
+  it('issue #115: supports multiple search queries in a single invocation (batch mode with warm cache)', async () => {
+    runSearch
+      .mockResolvedValueOnce({
+        results: [{ id: 'PEP-1', names: [{ wholeName: 'Vladimir Putin', strong: true }], source: 'PEP', type: 'individual', score: 92, matchedAlias: 'Vladimir Putin' }],
+        totalMatches: 1,
+        truncated: false,
+      })
+      .mockResolvedValueOnce({
+        results: [{ id: 'PEP-2', names: [{ wholeName: 'Sergey Lavrov', strong: true }], source: 'PEP', type: 'individual', score: 88, matchedAlias: 'Sergey Lavrov' }],
+        totalMatches: 1,
+        truncated: false,
+      });
+
+    await runCli(['search', 'Vladimir Putin', 'Sergey Lavrov']);
+
+    expect(runSearch).toHaveBeenCalledTimes(2);
+    expect(runSearch).toHaveBeenNthCalledWith(1, 'Vladimir Putin', expect.objectContaining({ limit: 10 }));
+    expect(runSearch).toHaveBeenNthCalledWith(2, 'Sergey Lavrov', expect.objectContaining({ limit: 10 }));
+    expect(logs.join('\n')).toContain('Vladimir Putin');
+    expect(logs.join('\n')).toContain('Sergey Lavrov');
+    expect(exitCode).toBe(0);
+  });
+
+  it('issue #115: reads queries from --file in batch mode', async () => {
+    const fs = await import('fs-extra');
+    const os = await import('os');
+    const path = await import('path');
+    const tempFile = path.join(os.tmpdir(), `queries-${Date.now()}.txt`);
+    await fs.writeFile(tempFile, '# Comments are ignored\nName One\n\nName Two\n');
+
+    runSearch
+      .mockResolvedValueOnce({ results: [], totalMatches: 0, truncated: false })
+      .mockResolvedValueOnce({ results: [], totalMatches: 0, truncated: false });
+
+    await runCli(['search', '--file', tempFile]);
+
+    expect(runSearch).toHaveBeenCalledTimes(2);
+    expect(runSearch).toHaveBeenNthCalledWith(1, 'Name One', expect.anything());
+    expect(runSearch).toHaveBeenNthCalledWith(2, 'Name Two', expect.anything());
+    expect(exitCode).toBe(0);
+
+    await fs.remove(tempFile);
+  });
+
+  it('issue #115: exits with error if no query and no --file is provided', async () => {
+    await runCli(['search']);
+    expect(exitCode).toBe(1);
+    expect(errors.join('\n')).toMatch(/minst ett sökord|fil/i);
+  });
 });

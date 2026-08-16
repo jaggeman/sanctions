@@ -14,19 +14,81 @@ program
   .description('CLI för sökning och administration av sanktionsdatabasen')
   .version('1.0.0');
 
+function printScoredResults(results: any[]) {
+  results.forEach(r => {
+    console.log(`--------------------------------------------------`);
+    console.log(`🆔 ID:      ${r.id}`);
+    console.log(`👤 Namn:    \x1b[1m\x1b[32m${primaryNameOf(r.names)}\x1b[0m`);
+    console.log(`🎯 Träff:   ${r.score}% (matchade "${r.matchedAlias}")`);
+    const aliases = aliasNamesOf(r.names);
+    if (aliases.length > 0) {
+      console.log(`🗣️ Alias:   ${aliases.join(', ')}`);
+    }
+    console.log(`🌍 Källa:   ${r.source} (${r.type})`);
+    const birthDates = formatBirthDates(r.birthDates);
+    if (birthDates.length > 0) {
+      console.log(`📅 Född:    ${birthDates.join(', ')}`);
+    }
+    if (r.placesOfBirth) {
+      console.log(`📍 Födelseort: ${r.placesOfBirth.join(', ')}`);
+    }
+    if (r.citizenships) {
+      console.log(`🏳️ Medborgarskap: ${r.citizenships.join(', ')}`);
+    }
+    const identifications = formatIdentifications(r.identifications);
+    if (identifications.length > 0) {
+      console.log(`📇 ID/Pass: ${identifications.join(', ')}`);
+    }
+    if (r.sanctionReason) {
+      console.log(`📝 Orsak:   ${r.sanctionReason.substring(0, 150)}${r.sanctionReason.length > 150 ? '...' : ''}`);
+    }
+  });
+  console.log(`--------------------------------------------------`);
+}
+
 /**
  * CLI Command: search
+ *
+ * Issue #115: While the API and MCP server run as persistent daemon processes that amortize
+ * the in-memory search index cache (`cachedRecords` in `src/search/index.ts`), single CLI
+ * invocations run in their own short-lived OS process. To benefit from the warm in-memory
+ * index during batch or script lookups without paying repeated full database scans,
+ * the CLI supports multi-query searches in a single invocation (`sanctions search q1 q2 ...`
+ * or `--file <path>`). The first query warms the cache, and all subsequent queries in the
+ * batch execute against the warm in-memory index with 0 database reads.
  */
 program
   .command('search')
   .description('Sök efter personer eller organisationer i databasen')
-  .argument('<query>', 'Sökord, t.ex. namn, alias eller passnummer')
+  .argument('[queries...]', 'Sökord, t.ex. namn, alias eller passnummer (ett eller flera sökord)')
   .option('-s, --sources <sources>', 'Filtrera på källor (kommatecken-separerad, t.ex. EU,UN,US)')
   .option('-t, --type <type>', 'Filtrera på typ (individual, entity, vessel, aircraft)')
-  .option('-l, --limit <limit>', 'Max antal träffar att visa', '10')
-  .action(async (queryStr, options) => {
+  .option('-l, --limit <limit>', 'Max antal träffar att visa per sökning', '10')
+  .option('--file <path>', 'Läs sökord från en textfil (ett per rad)')
+  .action(async (queryArgs: string[], options) => {
     try {
-      console.log(`Söker efter "${queryStr}"...`);
+      let searchQueries: string[] = [...(queryArgs || [])];
+
+      if (options.file) {
+        const filePath = path.resolve(process.cwd(), options.file);
+        if (!fs.existsSync(filePath)) {
+          console.error(`❌ Filen hittades inte: ${filePath}`);
+          process.exit(1);
+          return;
+        }
+        const content = await fs.readFile(filePath, 'utf-8');
+        const fileQueries = content
+          .split(/\r?\n/)
+          .map(line => line.trim())
+          .filter(line => line.length > 0 && !line.startsWith('#'));
+        searchQueries = [...searchQueries, ...fileQueries];
+      }
+
+      if (searchQueries.length === 0) {
+        console.error('❌ Ange minst ett sökord eller använd --file <sökväg>.');
+        process.exit(1);
+        return;
+      }
 
       // issue #37 & issue #161: `|| 10` treats an explicit --limit 0 the same as "not
       // provided". Check for NaN and negative values explicitly — negative or NaN falls back to default 10,
@@ -34,56 +96,43 @@ program
       const parsedLimit = parseInt(options.limit, 10);
       const limit = Number.isNaN(parsedLimit) || parsedLimit < 0 ? 10 : parsedLimit;
 
-      const { results, totalMatches, truncated } = await runSearch(queryStr, {
+      const searchOptions = {
         source: options.sources,
         type: options.type ? options.type.toLowerCase() : undefined,
         limit,
-      });
+      };
 
-      if (results.length === 0) {
-        console.log('ℹ️ Inga träffar hittades.');
-        process.exit(0);
-        return; // process.exit never returns; this guards a stubbed exit in tests
+      const isBatch = searchQueries.length > 1;
+      if (isBatch) {
+        console.log(`🚀 Startar batch-sökning för ${searchQueries.length} sökord i samma process (återanvänder uppvärmt sökindex)...\n`);
       }
 
-      console.log(`\nHittade ${totalMatches} träffar (visar första ${results.length}):\n`);
+      for (let i = 0; i < searchQueries.length; i++) {
+        const queryStr = searchQueries[i];
+        if (isBatch) {
+          console.log(`==================================================`);
+          console.log(`🔎 [${i + 1}/${searchQueries.length}] Söker efter "${queryStr}"...`);
+          console.log(`==================================================`);
+        } else {
+          console.log(`Söker efter "${queryStr}"...`);
+        }
 
-      results.forEach(r => {
-        console.log(`--------------------------------------------------`);
-        console.log(`🆔 ID:      ${r.id}`);
-        console.log(`👤 Namn:    \x1b[1m\x1b[32m${primaryNameOf(r.names)}\x1b[0m`);
-        console.log(`🎯 Träff:   ${r.score}% (matchade "${r.matchedAlias}")`);
-        const aliases = aliasNamesOf(r.names);
-        if (aliases.length > 0) {
-          console.log(`🗣️ Alias:   ${aliases.join(', ')}`);
+        const { results, totalMatches, truncated } = await runSearch(queryStr, searchOptions);
+
+        if (results.length === 0) {
+          console.log('ℹ️ Inga träffar hittades.');
+        } else {
+          console.log(`\nHittade ${totalMatches} träffar (visar första ${results.length}):\n`);
+          printScoredResults(results);
+          if (truncated) {
+            console.log(`ℹ️ Visar ${results.length} av ${totalMatches} totala träffar. Höj --limit eller skärp sökningen för fler.`);
+          }
         }
-        console.log(`🌍 Källa:   ${r.source} (${r.type})`);
-        const birthDates = formatBirthDates(r.birthDates);
-        if (birthDates.length > 0) {
-          console.log(`📅 Född:    ${birthDates.join(', ')}`);
-        }
-        if (r.placesOfBirth) {
-          console.log(`📍 Födelseort: ${r.placesOfBirth.join(', ')}`);
-        }
-        if (r.citizenships) {
-          console.log(`🏳️ Medborgarskap: ${r.citizenships.join(', ')}`);
-        }
-        const identifications = formatIdentifications(r.identifications);
-        if (identifications.length > 0) {
-          console.log(`📇 ID/Pass: ${identifications.join(', ')}`);
-        }
-        if (r.sanctionReason) {
-          console.log(`📝 Orsak:   ${r.sanctionReason.substring(0, 150)}${r.sanctionReason.length > 150 ? '...' : ''}`);
-        }
-      });
-      console.log(`--------------------------------------------------`);
-      if (truncated) {
-        console.log(`ℹ️ Visar ${results.length} av ${totalMatches} totala träffar. Höj --limit eller skärp sökningen för fler.`);
+        console.log();
       }
-      console.log();
+
       process.exit(0);
       return;
-
     } catch (error: any) {
       console.error('❌ Ett fel uppstod vid sökning:', error.message);
       process.exit(1);

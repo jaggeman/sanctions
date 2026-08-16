@@ -32,10 +32,19 @@ const DOB_MATCH_BOOST = 10;
 const MIN_PASSPORT_QUERY_LENGTH = 4; // avoids matching every ID on a 1-2 char query
 
 /**
- * In-memory index shared by the API, MCP server and CLI — one matcher, not
- * three copies (issue #11's explicit requirement). Loaded once and cached;
- * `invalidateSearchIndex` should be called after a successful import so the
- * next search picks up new/changed records rather than serving a stale set.
+ * In-memory index shared across search consumers (API, MCP server, and CLI batch runs) —
+ * one matcher, not three copies (issue #11's explicit requirement). Loaded once and cached;
+ * `invalidateSearchIndex` should be called after a successful import so the next search
+ * picks up new/changed records rather than serving a stale set.
+ *
+ * Process lifecycle note (issue #115):
+ * - API & MCP server are persistent daemon processes; they pay the initial build cost once
+ *   and reuse `cachedRecords` across thousands of incoming requests.
+ * - Single-shot CLI invocations (`sanctions search <query>`) run as isolated OS processes
+ *   that exit immediately, so they naturally pay the cold-start build per invocation.
+ * - To benefit from the warm cache in batch scripts, the CLI supports multi-query arguments
+ *   (`sanctions search q1 q2 ...`) and `--file <path>`, executing all queries within a single
+ *   process lifetime against the warm in-memory index without paying repeated Firestore scans.
  *
  * Since issue #43, imports run in their own Cloud Function
  * (`runImportTask`), a separate process from whichever `api` instance
