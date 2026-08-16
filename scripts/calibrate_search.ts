@@ -20,14 +20,30 @@
  * implementation's own assumptions, and the whole point is to measure against
  * data nobody tuned against.
  *
+ * A correction to what this comment used to assert: `downloads/un_sanctions.xml`
+ * and `downloads/us_sdn.xml` were in fact TRACKED in git until they were
+ * untracked deliberately, because they landed in the initial commit before
+ * `downloads/` was added to .gitignore, and .gitignore never applies to
+ * already-tracked files. The claim here (and the matching one in #257's commit
+ * message, that CI could not run this harness because its inputs are ignored)
+ * was therefore wrong at the time it was written. It is true now. Do not
+ * re-commit these files to make the harness "just work" — see CLAUDE.md §1 on
+ * keeping full-size source files out of git, and note that `fetcher.ts` writes
+ * into this same directory, so a tracked copy turns every routine list refresh
+ * into a ~30 MB diff.
+ *
  * USAGE
  *   npx ts-node --transpile-only scripts/calibrate_search.ts
  *
- * Requires (download via the app's Official Sources tab, or the importer):
- *   downloads/un_sanctions.xml
- *   downloads/us_sdn.xml
+ * Requires (download via the app's Official Sources tab, or `npm run import`):
+ *   downloads/un_sanctions.xml   from https://scsanctions.un.org/resources/xml/en/consolidated.xml
+ *   downloads/us_sdn.xml         from https://www.treasury.gov/ofac/downloads/sdn.xml
  * Optional, included automatically when present:
  *   downloads/uk_sanctions.xml, downloads/ch_sanctions.xml
+ *
+ * Because the corpus is whatever you downloaded and the lists change daily,
+ * a before/after comparison is only meaningful against the SAME local files.
+ * Do not compare a run today against numbers quoted in an older PR.
  *
  * Exit code is 1 if any acceptance criterion from #239 fails, so it can gate
  * a change rather than merely describe one.
@@ -80,7 +96,19 @@ async function loadCorpus(): Promise<Indexed[]> {
   const un = 'downloads/un_sanctions.xml';
   const us = 'downloads/us_sdn.xml';
   if (!fs.existsSync(un) || !fs.existsSync(us)) {
-    console.error(`Missing corpus. Expected ${un} and ${us} (git-ignored — download them first).`);
+    console.error(
+      [
+        'Missing corpus — this harness measures against the real lists, which are',
+        'deliberately not in git (CLAUDE.md §1). Fetch them into downloads/ first:',
+        '',
+        `  ${un}`,
+        '    https://scsanctions.un.org/resources/xml/en/consolidated.xml',
+        `  ${us}`,
+        '    https://www.treasury.gov/ofac/downloads/sdn.xml',
+        '',
+        "Or use the app's Official Sources tab, which writes to the same directory.",
+      ].join('\n'),
+    );
     process.exit(2);
   }
   records.push(...(await parseUNList(un)));

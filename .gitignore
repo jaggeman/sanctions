@@ -8,6 +8,20 @@ firestore-debug.log
 *.local
 
 # Data files (Sanctions lists)
+#
+# These are the full-size upstream exports (us_sdn.xml alone is ~28 MB) and
+# they stay out of git on purpose — CLAUDE.md §1: carve a small sample into
+# tests/fixtures/ and keep the full-size file out. `src/importer/fetcher.ts`
+# writes into downloads/, so a tracked copy would turn every routine list
+# refresh into a ~30 MB diff, and a committed snapshot of a list that changes
+# daily invites calibrating against stale data while believing it is current.
+#
+# Note this rule did NOT hold retroactively: downloads/un_sanctions.xml and
+# downloads/us_sdn.xml were committed in the initial commit, before this rule
+# existed, and .gitignore never applies to already-tracked files. They stayed
+# tracked and unnoticed until they were untracked deliberately. Do not
+# `git add -f` them back; scripts/calibrate_search.ts prints the download URLs
+# when they are absent.
 data/
 downloads/
 lists/*
