@@ -4,7 +4,18 @@ import * as dotenv from 'dotenv';
 // Load environment variables from .env
 dotenv.config();
 
-const projectId = process.env.FIREBASE_PROJECT_ID || 'paygap-jaggeman';
+// GCLOUD_PROJECT is auto-populated by the real Cloud Functions/Cloud Run
+// runtime with the project this instance is actually deployed to — always
+// correct there, no config needed. FIREBASE_PROJECT_ID exists only as a
+// local-dev/.env override (it can't be set as a deployed function's env var
+// at all: Firebase Functions v2 rejects any FIREBASE_-prefixed key at
+// deploy time as reserved). Falling back to a hardcoded other project's id
+// when neither is set silently pointed every deployment that forgot to
+// configure this at the WRONG Firestore project — the service account for
+// project A has no permission on project B's database, so every read/write
+// failed with a generic PERMISSION_DENIED that looked like an IAM problem,
+// not a "connected to the wrong project entirely" problem.
+const projectId = process.env.GCLOUD_PROJECT || process.env.FIREBASE_PROJECT_ID || 'paygap-jaggeman';
 
 // Initialize firebase admin if not already initialized
 if (admin.apps.length === 0) {
