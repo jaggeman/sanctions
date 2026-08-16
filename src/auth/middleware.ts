@@ -2,7 +2,16 @@ import { Request, Response, NextFunction } from 'express';
 import { getSession } from './session';
 import { isAllowedEmail } from './emailAllowlist';
 
-export const SESSION_COOKIE_NAME = 'sid';
+// Must be exactly this name — issue #151, found via a live incident.
+// Firebase Hosting strips every cookie except one specifically named
+// `__session` when it rewrites a request to a Cloud Function/Cloud Run
+// service (documented: https://firebase.google.com/docs/hosting/manage-cache).
+// Any other name (this was `sid`) is silently dropped before Express ever
+// sees it on every request that goes through the public Hosting domain —
+// confirmed live: login succeeded and set the cookie, but the very next
+// request 401'd because req.headers.cookie was undefined, while the
+// identical request against the underlying Cloud Run URL directly worked.
+export const SESSION_COOKIE_NAME = '__session';
 
 /**
  * Verifies the session cookie and attaches `req.userEmail`. Used directly on

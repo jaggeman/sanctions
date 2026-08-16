@@ -20,6 +20,16 @@ function buildApp() {
   return app;
 }
 
+// Issue #151, regression guard: Firebase Hosting silently strips every
+// cookie except one specifically named `__session` when it rewrites a
+// request to a Cloud Function — any other name is dropped before Express
+// ever sees it. This must never drift back to something else.
+describe('SESSION_COOKIE_NAME', () => {
+  it('is exactly "__session" (Firebase Hosting rewrite requirement, issue #151)', () => {
+    expect(SESSION_COOKIE_NAME).toBe('__session');
+  });
+});
+
 const asUser = async (email: string) =>
   request(buildApp()).get('/protected').set('Cookie', `${SESSION_COOKIE_NAME}=${await createSession(email)}`);
 
