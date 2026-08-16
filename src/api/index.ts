@@ -181,6 +181,20 @@ if (require.main === module) {
 // regardless of which one ran the import.
 //
 // Both reasons are gone — no longer pinned (issue #101).
+//
+// Issue #230 decision: no minInstances, no Cloud Scheduler warmup ping, for
+// now. A cold instance pays a one-time 1-3s penalty to build getRecords()'s
+// in-memory index (src/search/index.ts) on its first search; every request
+// after that on the same instance is <15ms. minInstances: 1 would eliminate
+// it, but bills for a fully-allocated 1GiB instance continuously regardless
+// of traffic — a real, predictable recurring cost that's disproportionate
+// for this app's actual usage pattern (a small internal analyst team, not a
+// public/high-traffic service). A warmup ping avoids that always-on cost but
+// adds its own operational surface (a Scheduler job, a synthetic warmup
+// query, monitoring the ping itself) for a penalty that's a one-time hit on
+// the first search of a session, not a tax on every request. Revisit if
+// usage data ever shows cold starts happening often enough to be a real
+// nuisance, or if this app's audience grows beyond internal analyst use.
 export const api = onRequest({ memory: '1GiB', timeoutSeconds: 120 }, app);
 
 // Both re-exported so their deployable Cloud Functions are discovered:
