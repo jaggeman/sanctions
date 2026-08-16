@@ -135,7 +135,14 @@ export default function DriftStatusTab() {
     return parts.join(' ');
   };
 
-  const filteredLogs = logFilter === 'ALL' ? logs : logs.filter((l) => l.level === logFilter);
+  // Keep the table short (repo owner request): show only the 5 most recent
+  // entries for whichever filter is active, newest first, rather than every
+  // buffered log unbounded.
+  const LOG_DISPLAY_LIMIT = 5;
+  const filteredLogs = (logFilter === 'ALL' ? logs : logs.filter((l) => l.level === logFilter))
+    .slice()
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    .slice(0, LOG_DISPLAY_LIMIT);
 
   if (loading && !statusData) {
     return (
@@ -307,9 +314,14 @@ export default function DriftStatusTab() {
       {/* SECTION 2: Error Logs on Functions */}
       <Box>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-          <Typography variant="h6" sx={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 1 }}>
-            <BugReportIcon color="error" fontSize="small" /> Error Logs & System Events
-          </Typography>
+          <Box>
+            <Typography variant="h6" sx={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 1 }}>
+              <BugReportIcon color="error" fontSize="small" /> Error Logs & System Events
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Showing the {LOG_DISPLAY_LIMIT} most recent entries
+            </Typography>
+          </Box>
           <Box sx={{ display: 'flex', gap: 1 }}>
             {(['ALL', 'error', 'warn', 'info'] as const).map((filter) => (
               <Button
