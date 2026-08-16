@@ -58,6 +58,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetFakeDb();
   process.env.ADMIN_EMAILS = ADMIN_EMAIL;
+  process.env.ALLOWED_EMAIL_DOMAINS = 'corp.test';
   mockValidateScopes.mockImplementation(
     (scopes: unknown) => Array.isArray(scopes) && scopes.length > 0
   );
@@ -187,7 +188,7 @@ describe('POST /api/admin/tokens', () => {
     });
   });
 
-  it('returns 500 with details when createApiToken throws', async () => {
+  it('returns 500 without details when createApiToken throws', async () => {
     mockCreateApiToken.mockRejectedValueOnce(new Error('boom'));
 
     const res = await request(buildApp())
@@ -196,7 +197,8 @@ describe('POST /api/admin/tokens', () => {
       .send({ name: 'CI pipeline', scopes: ['read'] });
 
     expect(res.status).toBe(500);
-    expect(res.body.details).toBe('boom');
+    expect(res.body.error).toBe('Internal server error');
+    expect(res.body.details).toBeUndefined();
   });
 });
 
@@ -213,13 +215,14 @@ describe('GET /api/admin/tokens', () => {
     expect(res.body[0].id).toBe('tok-1');
   });
 
-  it('returns 500 with details when listApiTokens throws', async () => {
+  it('returns 500 without details when listApiTokens throws', async () => {
     mockListApiTokens.mockRejectedValueOnce(new Error('boom'));
 
     const res = await request(buildApp()).get('/api/admin/tokens').set('Cookie', await adminCookie());
 
     expect(res.status).toBe(500);
-    expect(res.body.details).toBe('boom');
+    expect(res.body.error).toBe('Internal server error');
+    expect(res.body.details).toBeUndefined();
   });
 });
 
@@ -251,12 +254,13 @@ describe('POST /api/admin/tokens/:id/revoke', () => {
     expect(mockRevokeApiToken).not.toHaveBeenCalled();
   });
 
-  it('returns 500 with details when revokeApiToken throws', async () => {
+  it('returns 500 without details when revokeApiToken throws', async () => {
     mockRevokeApiToken.mockRejectedValueOnce(new Error('boom'));
 
     const res = await request(buildApp()).post('/api/admin/tokens/tok-1/revoke').set('Cookie', await adminCookie());
 
     expect(res.status).toBe(500);
-    expect(res.body.details).toBe('boom');
+    expect(res.body.error).toBe('Internal server error');
+    expect(res.body.details).toBeUndefined();
   });
 });

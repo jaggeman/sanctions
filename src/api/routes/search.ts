@@ -107,7 +107,7 @@ searchRouter.get('/search', requireAuthOrScope('sanctions:read'), async (req, re
 
   } catch (error: any) {
     console.error('Search error:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -154,7 +154,7 @@ searchRouter.get('/sanctions/:id', requireAuthOrScope('sanctions:read'), async (
     });
   } catch (error: any) {
     console.error('Get details error:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -178,6 +178,6 @@ searchRouter.get('/sanctions/:id/versions', requireAuthOrScope('sanctions:read')
     res.json(versions);
   } catch (error: any) {
     console.error('List record versions error:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });

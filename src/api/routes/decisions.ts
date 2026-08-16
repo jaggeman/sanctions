@@ -37,7 +37,7 @@ decisionsRouter.get('/:entityId', requireAuthOrScope('decisions:read'), async (r
     res.json(decisions);
   } catch (error: any) {
     console.error('List decisions error:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

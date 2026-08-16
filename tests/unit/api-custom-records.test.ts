@@ -55,6 +55,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetFakeDb();
   process.env.ADMIN_EMAILS = ADMIN_EMAIL;
+  process.env.ALLOWED_EMAIL_DOMAINS = 'corp.test';
 });
 
 afterEach(() => {
@@ -149,7 +150,7 @@ describe('POST /api/admin/custom-records', () => {
     expect(res.status).toBe(409);
   });
 
-  it('returns 500 with details on an unexpected error', async () => {
+  it('returns 500 on an unexpected error without leaking details', async () => {
     mockCreateCustomRecord.mockRejectedValueOnce(new Error('boom'));
 
     const res = await request(buildApp())
@@ -158,7 +159,8 @@ describe('POST /api/admin/custom-records', () => {
       .send({ id: 'CUSTOM-1', type: 'individual', primaryName: 'Jane Doe' });
 
     expect(res.status).toBe(500);
-    expect(res.body.details).toBe('boom');
+    expect(res.body.error).toBe('Internal server error');
+    expect(res.body.details).toBeUndefined();
   });
 });
 

@@ -40,7 +40,7 @@ tokensRouter.post('/', async (req, res): Promise<any> => {
     res.status(201).json({ token, ...record });
   } catch (error: any) {
     console.error('Create token error:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -54,7 +54,7 @@ tokensRouter.get('/', async (_req, res): Promise<any> => {
     res.json(tokens);
   } catch (error: any) {
     console.error('List tokens error:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -71,6 +71,6 @@ tokensRouter.post('/:id/revoke', async (req, res): Promise<any> => {
     res.json(record);
   } catch (error: any) {
     console.error('Revoke token error:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });

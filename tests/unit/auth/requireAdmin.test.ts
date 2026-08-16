@@ -35,6 +35,7 @@ const ORIGINAL_ENV = { ...process.env };
 beforeEach(() => {
   resetFakeDb();
   process.env.NODE_ENV = 'test';
+  process.env.ALLOWED_EMAIL_DOMAINS = 'corp.com';
   delete process.env.ADMIN_EMAILS;
 });
 
@@ -123,7 +124,7 @@ describe('requireAdmin middleware', () => {
 
   it('does not admit anyone when the allow-list is unset in production', async () => {
     process.env.NODE_ENV = 'production';
-    const res = await asUser(TEST_LOGIN_EMAIL);
+    const res = await asUser('user@corp.com');
     expect(res.status).toBe(403);
   });
 
@@ -180,5 +181,35 @@ describe('requireAdmin middleware', () => {
     } finally {
       logSpy.mockRestore();
     }
+  });
+
+  it('rejects an admin whose email domain is not in ALLOWED_EMAIL_DOMAINS with 401', async () => {
+    process.env.ADMIN_EMAILS = 'admin@revoked-domain.com';
+    process.env.ALLOWED_EMAIL_DOMAINS = 'allowed-domain.com';
+
+    const cookie = `${SESSION_COOKIE_NAME}=${await createSession('admin@revoked-domain.com')}`;
+    const res = await request(buildApp()).get('/admin').set('Cookie', cookie);
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('Authentication required');
+  });
+
+  it('returns 500 without leaking error details when session retrieval throws', async () => {
+    const brokenDb = {
+      collection: () => ({
+        doc: () => ({
+          get: vi.fn().mockRejectedValueOnce(new Error('firestore timeout')),
+        }),
+      }),
+    };
+    vi.spyOn(fakeDb, 'collection').mockImplementationOnce(brokenDb.collection as any);
+
+    const res = await request(buildApp())
+      .get('/admin')
+      .set('Cookie', `${SESSION_COOKIE_NAME}=some-session-id`);
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Internal server error');
+    expect(res.body.details).toBeUndefined();
   });
 });

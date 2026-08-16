@@ -111,7 +111,8 @@ export async function parseChXmlStream(
         status = 'delisted';
         delistedAt = str(mod['@_effective-date'] || mod['@_publication-date'] || mod['@_enactment-date']) || undefined;
       } else if (modType === 'listed') {
-        listedAt = str(mod['@_effective-date'] || mod['@_publication-date'] || mod['@_enactment-date']) || undefined;
+        const date = str(mod['@_effective-date'] || mod['@_publication-date'] || mod['@_enactment-date']);
+        if (date) listedAt = date;
       }
     }
 

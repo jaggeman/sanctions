@@ -86,7 +86,7 @@ describe('GET /api/export', () => {
     expect(res.text).not.toContain('US-2');
   });
 
-  it('allows read-scoped API token bearer authorization', async () => {
+  it('allows sanctions:read-scoped API token bearer authorization', async () => {
     verifyApiToken.mockResolvedValue({
       valid: true,
       tokenId: 'tok-123',
@@ -99,6 +99,7 @@ describe('GET /api/export', () => {
 
     expect(res.status).toBe(200);
     expect(res.text).toContain('EU-1');
+    expect(verifyApiToken).toHaveBeenCalledWith('valid-token', 'sanctions:read');
   });
 
   it('filters by source and status=all', async () => {
@@ -135,7 +136,8 @@ describe('GET /api/export', () => {
     const res = await agent.get('/api/export?status=all');
 
     expect(res.status).toBe(500);
-    expect(res.body).toHaveProperty('error');
+    expect(res.body.error).toBe('Internal server error');
+    expect(res.body.details).toBeUndefined();
   });
 
   it('issue #260: skips a malformed record missing source/type instead of throwing (corrupt/manually-edited document)', async () => {

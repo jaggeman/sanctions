@@ -40,6 +40,6 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     bindLogIdentity(req, { userEmail: session.email });
     next();
   } catch (error: any) {
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 }

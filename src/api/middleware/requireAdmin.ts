@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { getSession } from '../../auth/session';
 import { SESSION_COOKIE_NAME } from '../../auth/middleware';
+import { isAllowedEmail } from '../../auth/emailAllowlist';
 import { isAdminEmail } from '../../auth/admins';
 import { bindLogIdentity } from './requestLogger';
 
@@ -21,7 +22,7 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
     const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
     const session = sessionId ? await getSession(sessionId) : null;
 
-    if (!session) {
+    if (!session || !isAllowedEmail(session.email)) {
       res.status(401).json({ error: 'Authentication required' });
       return;
     }
@@ -37,6 +38,6 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
     bindLogIdentity(req, { userEmail: session.email });
     next();
   } catch (error: any) {
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 }

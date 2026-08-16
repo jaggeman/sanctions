@@ -171,7 +171,8 @@ describe('POST /api/upload', () => {
       .attach('file', Buffer.from('id;name\n1;Test\n'), 'people.csv');
 
     expect(res.status).toBe(500);
-    expect(res.body.details).toBe('unexpected boom');
+    expect(res.body.error).toBe('Internal server error');
+    expect(res.body.details).toBeUndefined();
   });
 
   it('cleans up the multer temp file after processing, success or failure', async () => {

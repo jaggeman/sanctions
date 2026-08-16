@@ -421,7 +421,7 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
   return {
     results,
     totalMatches,
-    truncated: results.length > 0 && totalMatches > results.length,
+    truncated: totalMatches > results.length,
     tookMs: Date.now() - startedAt,
     sourcesSearched,
   };
