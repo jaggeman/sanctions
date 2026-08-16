@@ -153,6 +153,8 @@ Outside production (`NODE_ENV !== 'production'`), an unset list falls back to th
 
 Membership is re-read on every request, so removing someone from the list revokes their admin access immediately rather than when their session expires.
 
+**Every `ADMIN_EMAILS` address's domain must also appear in `ALLOWED_EMAIL_DOMAINS`.** The two lists are checked independently — `ALLOWED_EMAIL_DOMAINS` gates login before `ADMIN_EMAILS` is ever consulted, so an admin whose domain is missing from the login allow-list is locked out entirely, with no indication of why (it just looks like a normal login rejection). The server logs a `warn`-level entry at startup for any misconfigured admin address, but it is not fatal — double-check both lists together before deploying.
+
 ## 🚀 Hur man deployar (Laddar upp till produktion)
 
 För att ladda upp dina ändringar så att de syns live på webben följer du dessa exakta steg. 
