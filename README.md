@@ -153,6 +153,17 @@ Outside production (`NODE_ENV !== 'production'`), an unset list falls back to th
 
 Membership is re-read on every request, so removing someone from the list revokes their admin access immediately rather than when their session expires.
 
+### Model Context Protocol (MCP) server
+
+`src/mcp/index.ts` is a separate stdio process (run via `npm run dev:mcp`, or `node dist/mcp/index.js` after `npm run build`) that lets an AI agent search and manage sanctions data through the MCP protocol — it is not part of the Express app. It exposes read tools (`search_sanctions`, `get_sanction_details`, `get_override`, `list_decisions_for_entity`), a `sanctions://statistics` resource, and write tools (`run_database_import`, `create_override`, `record_decision`).
+
+```
+MCP_API_BASE_URL=http://localhost:3000
+MCP_API_TOKEN=sanc_...
+```
+
+Required only for `create_override`/`record_decision` — the other tools work with neither set. Both write tools proxy through the real running REST API (`PUT /api/overrides/:id`, `POST /api/decisions`) using this bearer token rather than writing to Firestore directly, so the write is always attributed to the token's `ownerEmail` (minted via `POST /api/admin/tokens` with `write` scope), never to anything the calling agent supplies. Missing either variable, or a failed API call, is surfaced back to the calling agent as an error rather than silently no-op'd.
+
 ## 🚀 Hur man deployar (Laddar upp till produktion)
 
 För att ladda upp dina ändringar så att de syns live på webben följer du dessa exakta steg. 
