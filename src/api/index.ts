@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import * as functions from 'firebase-functions';
+import { onRequest } from 'firebase-functions/v2/https';
 import * as path from 'path';
 import * as fs from 'fs-extra';
 import * as os from 'os';
@@ -18,6 +19,7 @@ import { listRecordVersions, generateImportId } from '../importer/uploader';
 import { tokensRouter } from './routes/tokens';
 import { decisionsRouter } from './routes/decisions';
 import { customRecordsRouter } from './routes/customRecords';
+import { systemRouter } from './routes/system';
 import { runSearch } from '../search';
 import { logSearchEvent } from '../search/searchLog';
 import { SanctionSource, SanctionRecord } from '../shared/types';
@@ -368,6 +370,9 @@ app.use('/api/overrides', overridesRouter);
 // Auth is enforced inside decisionsRouter itself (requireAuthOrScope) — no
 // middleware needed at this mount site. See src/api/routes/decisions.ts.
 app.use('/api/decisions', decisionsRouter);
+
+// System operations / Drift status diagnostic endpoints (health, logs, releases)
+app.use('/api/system', systemRouter);
 
 /**
  * Requester identity for the search audit log (issue #109) — a session
@@ -791,7 +796,7 @@ if (require.main === module) {
 // regardless of which one ran the import.
 //
 // Both reasons are gone — no longer pinned (issue #101).
-export const api = functions.https.onRequest(app);
+export const api = onRequest({ memory: '1GiB', timeoutSeconds: 120 }, app);
 
 // Both re-exported so their deployable Cloud Functions are discovered:
 // `dist/api/index.js` (package.json's `main`) is the sole file Firebase

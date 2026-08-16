@@ -15,7 +15,7 @@ dotenv.config();
 // project A has no permission on project B's database, so every read/write
 // failed with a generic PERMISSION_DENIED that looked like an IAM problem,
 // not a "connected to the wrong project entirely" problem.
-const projectId = process.env.GCLOUD_PROJECT || process.env.FIREBASE_PROJECT_ID || 'paygap-jaggeman';
+const projectId = process.env.GCLOUD_PROJECT || process.env.FIREBASE_PROJECT_ID || 'sanctions-app-dev-01';
 
 // Initialize firebase admin if not already initialized
 if (admin.apps.length === 0) {
