@@ -25,6 +25,18 @@ describe('isAdminEmail — existing behaviour (characterization, unchanged)', ()
     expect(isAdminEmail('alice@corp.com')).toBe(true);
     expect(isAdminEmail('bob@corp.com')).toBe(false);
   });
+
+  it('grants admin to the test login email in non-production even when ADMIN_EMAILS is configured with someone else', () => {
+    process.env.NODE_ENV = 'development';
+    process.env.ADMIN_EMAILS = 'alice@corp.com';
+    expect(isAdminEmail(TEST_LOGIN_EMAIL)).toBe(true);
+  });
+
+  it('denies admin to the test login email in production when not in ADMIN_EMAILS', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.ADMIN_EMAILS = 'alice@corp.com';
+    expect(isAdminEmail(TEST_LOGIN_EMAIL)).toBe(false);
+  });
 });
 
 describe('findMisconfiguredAdminEmails — issue #65: ADMIN_EMAILS vs ALLOWED_EMAIL_DOMAINS cross-check', () => {
