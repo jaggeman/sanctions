@@ -24,7 +24,7 @@ overridesRouter.get('/:id', requireAuthOrScope('overrides:read'), async (req, re
     res.json(override.data());
   } catch (error: any) {
     console.error('Get override error:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -39,7 +39,7 @@ overridesRouter.get('/', requireAuthOrScope('overrides:read'), async (_req, res)
     res.json(overrides);
   } catch (error: any) {
     console.error('List overrides error:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -85,7 +85,7 @@ overridesRouter.put('/:id', requireAuthOrScope('overrides:write'), async (req, r
     res.json(override);
   } catch (error: any) {
     console.error('Save override error:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -104,6 +104,6 @@ overridesRouter.delete('/:id', requireAuthOrScope('overrides:write'), async (req
     res.json({ ok: true });
   } catch (error: any) {
     console.error('Delete override error:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });

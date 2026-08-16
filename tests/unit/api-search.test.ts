@@ -216,11 +216,12 @@ describe('GET /api/search', () => {
     expect(res.body.sourcesSearched).toEqual(['EU', 'PEP']);
   });
 
-  it('returns 500 with details when the search engine throws', async () => {
+  it('returns 500 without details when the search engine throws', async () => {
     runSearch.mockRejectedValue(new Error('boom'));
     const res = await agent.get('/api/search').query({ q: 'Vladimir' });
     expect(res.status).toBe(500);
-    expect(res.body.details).toBe('boom');
+    expect(res.body.error).toBe('Internal server error');
+    expect(res.body.details).toBeUndefined();
   });
 
   it('fires a durable searchLog entry for a successful search (issue #109)', async () => {

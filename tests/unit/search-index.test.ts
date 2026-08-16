@@ -407,10 +407,17 @@ describe('runSearch — limit validation & negative resilience (issue #161)', ()
     expect(resMinusForty.results[0].id).toBe('EU-1');
   });
 
-  it('honors limit=0 without setting truncated to true when results are empty', async () => {
+  it('honors limit=0 and sets truncated to true when totalMatches > 0', async () => {
     const res = await runSearch('Vladimir', { limit: 0 });
     expect(res.results).toEqual([]);
     expect(res.totalMatches).toBe(2);
+    expect(res.truncated).toBe(true);
+  });
+
+  it('honors limit=0 and sets truncated to false when totalMatches === 0', async () => {
+    const res = await runSearch('NonExistentNameXYZ', { limit: 0 });
+    expect(res.results).toEqual([]);
+    expect(res.totalMatches).toBe(0);
     expect(res.truncated).toBe(false);
   });
 });

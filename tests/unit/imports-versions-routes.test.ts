@@ -114,11 +114,12 @@ describe('GET /api/imports', () => {
     expect(listImports).toHaveBeenCalledWith(100);
   });
 
-  it('returns 500 with details when listImports throws', async () => {
+  it('returns 500 without details when listImports throws', async () => {
     listImports.mockRejectedValue(new Error('boom'));
     const res = await agent.get('/api/imports');
     expect(res.status).toBe(500);
-    expect(res.body.details).toBe('boom');
+    expect(res.body.error).toBe('Internal server error');
+    expect(res.body.details).toBeUndefined();
   });
 
   // issue #261: `|| 20` treated an explicit limit=0 the same as "not provided",
@@ -188,12 +189,13 @@ describe('GET /api/sanctions/:id/versions', () => {
     expect(res.body.map((v: any) => v.importId)).toEqual(['import-2', 'import-1']);
   });
 
-  it('returns 500 with details when listRecordVersions throws', async () => {
+  it('returns 500 without details when listRecordVersions throws', async () => {
     docGetResult = { exists: true, data: () => ({ id: 'EU-1' }) };
     listRecordVersions.mockRejectedValue(new Error('boom'));
     const res = await agent.get('/api/sanctions/EU-1/versions');
     expect(res.status).toBe(500);
-    expect(res.body.details).toBe('boom');
+    expect(res.body.error).toBe('Internal server error');
+    expect(res.body.details).toBeUndefined();
   });
 
   it('rejects an id containing a path separator with 400, before ever touching Firestore', async () => {

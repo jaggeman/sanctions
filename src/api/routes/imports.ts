@@ -12,6 +12,7 @@ import { generateImportId } from '../../importer/uploader';
 import { SanctionSource } from '../../shared/types';
 import { requireAuthOrScope } from '../middleware/requireAuthOrScope';
 import { isAdminEmail } from '../../auth/admins';
+import { logger } from '../../shared/logger';
 
 const MAX_UPLOAD_BYTES = 64 * 1024 * 1024; // real EU FSD export is ~25 MB
 const ALLOWED_UPLOAD_EXTENSIONS = new Set(['.csv', '.xml']);
@@ -118,7 +119,7 @@ function assertForceAllowed(req: Request, res: Response, force: boolean): boolea
     return false;
   }
 
-  console.warn(`[audit] Delist guard override (force=true) used by ${email}`);
+  logger.warn(`[audit] Delist guard override (force=true) used by ${email}`);
   return true;
 }
 
@@ -144,7 +145,7 @@ importsRouter.get('/imports', requireAuthOrScope('imports:read'), async (req, re
     res.json(imports);
   } catch (error: any) {
     console.error('List imports error:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -166,7 +167,7 @@ importsRouter.get('/imports/:id', requireAuthOrScope('imports:read'), async (req
     res.json(record);
   } catch (error: any) {
     console.error('Get import detail error:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -248,7 +249,7 @@ importsRouter.post('/import', requireAuthOrScope('imports:write'), async (req, r
       return res.status(200).json(result);
     } catch (error: any) {
       console.error('Dry-run import failed:', error);
-      return res.status(500).json({ error: 'Internal server error', details: error.message });
+      return res.status(500).json({ error: 'Internal server error' });
     }
   }
 
@@ -275,7 +276,7 @@ importsRouter.post('/import', requireAuthOrScope('imports:write'), async (req, r
   } catch (error: any) {
     console.error('Failed to queue import task:', error);
     await markImportFailed(resolvedImportId, error.message);
-    return res.status(500).json({ error: 'Failed to start import', details: error.message });
+    return res.status(500).json({ error: 'Failed to start import' });
   }
 
   res.status(202).json({
@@ -383,7 +384,7 @@ importsRouter.post('/upload', requireAuthOrScope('imports:write'), uploadSingleF
     }
   } catch (error: any) {
     console.error('Upload processing error:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   } finally {
     fs.remove(uploadedPath).catch((e) => console.error('Failed to cleanup temp file', e));
   }

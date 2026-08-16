@@ -42,11 +42,10 @@ customRecordsRouter.post('/', requireAdminOrScope('custom:write'), async (req, r
       return res.status(409).json({ error: error.message });
     }
     console.error('Create custom record error:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-/**
 /**
  * PUT /api/custom-records/:id (or /api/admin/custom-records/:id)
  * Patches an existing custom record. Refuses to touch a non-CUSTOM record
@@ -64,7 +63,7 @@ customRecordsRouter.put('/:id', requireAdminOrScope('custom:write'), async (req,
       return res.status(400).json({ error: error.message });
     }
     console.error('Update custom record error:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -89,7 +88,7 @@ customRecordsRouter.delete('/:id', requireAdminOrScope('custom:write'), async (r
       return res.status(400).json({ error: error.message });
     }
     console.error('Delete custom record error:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -105,6 +104,6 @@ customRecordsRouter.get('/:id', requireAdminOrScope('custom:read'), async (req, 
     res.json(record);
   } catch (error: any) {
     console.error('Get custom record error:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });

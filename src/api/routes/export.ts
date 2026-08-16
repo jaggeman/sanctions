@@ -12,7 +12,7 @@ export const exportRouter = Router();
  * Supports filtering by source, type, status (active/delisted/all), and importId.
  * Authenticated via session cookie or 'read'-scoped API token.
  */
-exportRouter.get('/export', requireAuthOrScope('read'), async (req: Request, res: Response): Promise<void> => {
+exportRouter.get('/export', requireAuthOrScope('sanctions:read'), async (req: Request, res: Response): Promise<void> => {
   const { source, type, status, importId } = req.query;
 
   const sourcesFilter = source && typeof source === 'string'
@@ -79,6 +79,6 @@ exportRouter.get('/export', requireAuthOrScope('read'), async (req: Request, res
     res.status(200).send(csv);
   } catch (error: any) {
     console.error('Export error:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
