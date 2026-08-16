@@ -193,12 +193,26 @@ export async function handleSearchSanctions(args: any) {
     };
   }
 
+  // issue #149: validate limit argument. A non-numeric (e.g. "alla") or negative
+  // limit must fall back to default (undefined) instead of coercing to NaN or negative,
+  // which causes slice(0, NaN) => [] resulting in false negatives.
+  // Preserve explicit limit=0 per issue #37.
+  let parsedLimit: number | undefined = undefined;
+  if (args?.limit !== undefined && args?.limit !== null) {
+    if (typeof args.limit === 'number' && !Number.isNaN(args.limit) && args.limit >= 0) {
+      parsedLimit = Math.floor(args.limit);
+    } else if (typeof args.limit === 'string' && args.limit.trim() !== '') {
+      const n = Number(args.limit.trim());
+      if (!Number.isNaN(n) && n >= 0) {
+        parsedLimit = Math.floor(n);
+      }
+    }
+  }
+
   const { results, totalMatches, truncated } = await runSearch(queryStr, {
     source: args?.source ? String(args.source) : undefined,
     type: args?.type ? String(args.type) : undefined,
-    // issue #37: a truthy-ternary treats an explicit limit=0 the same as
-    // "not provided". Check presence explicitly so a real 0 survives.
-    limit: args?.limit !== undefined && args?.limit !== null ? Number(args.limit) : undefined,
+    limit: parsedLimit,
   });
 
   if (results.length === 0) {

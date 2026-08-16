@@ -85,4 +85,35 @@ describe('handleSearchSanctions — MCP search_sanctions tool', () => {
     const result = await handleSearchSanctions({ query: 'XY' });
     expect(result.content[0].text).toMatch(/50/);
   });
+
+  it('issue #149: falls back to default limit (undefined) when limit is a non-numeric string (e.g. "alla")', async () => {
+    runSearch.mockResolvedValue({ results: [], totalMatches: 0, truncated: false });
+    await handleSearchSanctions({ query: 'Vladimir Putin', limit: 'alla' });
+
+    expect(runSearch).toHaveBeenCalledWith('Vladimir Putin', expect.objectContaining({ limit: undefined }));
+  });
+
+  it('issue #149: falls back to default limit (undefined) when limit is negative', async () => {
+    runSearch.mockResolvedValue({ results: [], totalMatches: 0, truncated: false });
+    await handleSearchSanctions({ query: 'Vladimir Putin', limit: -5 });
+
+    expect(runSearch).toHaveBeenCalledWith('Vladimir Putin', expect.objectContaining({ limit: undefined }));
+
+    await handleSearchSanctions({ query: 'Vladimir Putin', limit: '-10' });
+    expect(runSearch).toHaveBeenCalledWith('Vladimir Putin', expect.objectContaining({ limit: undefined }));
+  });
+
+  it('issue #149: falls back to default limit (undefined) when limit is null', async () => {
+    runSearch.mockResolvedValue({ results: [], totalMatches: 0, truncated: false });
+    await handleSearchSanctions({ query: 'Vladimir Putin', limit: null });
+
+    expect(runSearch).toHaveBeenCalledWith('Vladimir Putin', expect.objectContaining({ limit: undefined }));
+  });
+
+  it('issue #149: parses valid numeric string limit (e.g. "10")', async () => {
+    runSearch.mockResolvedValue({ results: [], totalMatches: 0, truncated: false });
+    await handleSearchSanctions({ query: 'Vladimir Putin', limit: '10' });
+
+    expect(runSearch).toHaveBeenCalledWith('Vladimir Putin', expect.objectContaining({ limit: 10 }));
+  });
 });
