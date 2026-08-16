@@ -31,6 +31,34 @@ describe('csvSerializer', () => {
     it('quotes strings containing newlines', () => {
       expect(escapeCsvField("Line 1\nLine 2")).toBe('"Line 1\nLine 2"');
     });
+
+    describe('formula injection mitigation (issue #299)', () => {
+      it('prefixes values starting with "=" with a single quote', () => {
+        expect(escapeCsvField('=SUM(A1:A2)')).toBe("'=SUM(A1:A2)");
+        expect(escapeCsvField('=HYPERLINK("https://attacker.example/","Open")')).toBe(
+          '"\'=HYPERLINK(""https://attacker.example/"",""Open"")"',
+        );
+      });
+
+      it('prefixes values starting with "+" with a single quote', () => {
+        expect(escapeCsvField('+123456')).toBe("'+123456");
+      });
+
+      it('prefixes values starting with "-" with a single quote', () => {
+        expect(escapeCsvField('-100')).toBe("'-100");
+        expect(escapeCsvField("-cmd|' /C calc'!A0")).toBe("'-cmd|\' /C calc\'!A0");
+      });
+
+      it('prefixes values starting with "@" with a single quote', () => {
+        expect(escapeCsvField('@admin')).toBe("'@admin");
+        expect(escapeCsvField('@SUM(1,2)')).toBe('"\'@SUM(1,2)"');
+      });
+
+      it('prefixes values starting with tab or carriage return with a single quote', () => {
+        expect(escapeCsvField('\tvalue')).toBe("'\tvalue");
+        expect(escapeCsvField('\rvalue')).toBe('"\'\rvalue"');
+      });
+    });
   });
 
   describe('sanctionRecordToCsvRow & recordsToCsv', () => {
@@ -108,6 +136,17 @@ describe('csvSerializer', () => {
       const csv = recordsToCsv([sparseRecord]);
       expect(csv).toContain('US-EMPTY');
       expect(csv).toContain('Unknown Name');
+    });
+
+    it('neutralizes formula injection characters in primaryName and sanctionReason (issue #299)', () => {
+      const maliciousRecord: SanctionRecord = {
+        ...mockRecord,
+        names: [{ wholeName: '=HYPERLINK("https://attacker.com","Click")', strong: true }],
+        sanctionReason: '-2+5+cmd|',
+      };
+      const row = sanctionRecordToCsvRow(maliciousRecord);
+      expect(row).toContain('"\'=HYPERLINK(""https://attacker.com"",""Click"")"');
+      expect(row).toContain("'-2+5+cmd|");
     });
   });
 });

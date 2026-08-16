@@ -6,6 +6,10 @@ import { requireAuthOrScope } from '../middleware/requireAuthOrScope';
 
 export const exportRouter = Router();
 
+// Allow-list for importId (matching imports.ts and runImport shape).
+// Validates client-supplied importId before it can be used in Content-Disposition (issue #299).
+const IMPORT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
 /**
  * GET /api/export
  * Exports sanctions data as an RFC 4180 CSV attachment.
@@ -27,9 +31,14 @@ exportRouter.get('/export', requireAuthOrScope('read'), async (req: Request, res
     ? status.trim().toLowerCase()
     : 'active'; // Default to active records unless explicitly specified
 
-  const targetImportId = importId && typeof importId === 'string'
-    ? importId.trim()
-    : null;
+  let targetImportId: string | null = null;
+  if (importId !== undefined) {
+    if (typeof importId !== 'string' || !IMPORT_ID_PATTERN.test(importId.trim())) {
+      res.status(400).json({ error: 'Invalid importId parameter.' });
+      return;
+    }
+    targetImportId = importId.trim();
+  }
 
   try {
     const snapshot = await db.collection('sanctions').get();

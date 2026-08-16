@@ -33,6 +33,9 @@ export type CsvHeader = typeof CSV_HEADERS[number];
 
 /**
  * Escapes a single CSV field per RFC 4180.
+ * Neutralizes CSV formula injection (issue #299) by prefixing leading
+ * '=', '+', '-', '@', '\t', or '\r' with a single quote ("'") so spreadsheet
+ * applications treat them as static text rather than executable formulas.
  * If the value contains commas, double quotes, or newlines, it wraps the
  * value in quotes and escapes internal double quotes as `""`.
  */
@@ -41,11 +44,14 @@ export function escapeCsvField(value: unknown): string {
   const str = String(value);
   if (str === '') return '';
 
-  const needsQuotes = /[",\r\n]/.test(str);
+  // Neutralize formula injection characters (=, +, -, @, \t, \r)
+  const sanitized = /^[=+\-@\t\r]/.test(str) ? `'${str}` : str;
+
+  const needsQuotes = /[",\r\n]/.test(sanitized);
   if (needsQuotes) {
-    return `"${str.replace(/"/g, '""')}"`;
+    return `"${sanitized.replace(/"/g, '""')}"`;
   }
-  return str;
+  return sanitized;
 }
 
 export interface CsvRecordInput extends Partial<Omit<SanctionRecord, 'source' | 'type'>> {
