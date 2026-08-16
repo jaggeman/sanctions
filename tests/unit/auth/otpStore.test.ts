@@ -53,6 +53,18 @@ describe('otpStore (issue #63: Firestore-backed, survives multi-instance/cold-st
       expect(await verifyOtp('user@example.com', 'wrong-code')).toBe(false);
     }
     expect(await verifyOtp('user@example.com', code as string)).toBe(false);
+
+    // Extra attempts beyond the cap still return false
+    expect(await verifyOtp('user@example.com', 'another-wrong-code')).toBe(false);
+  });
+
+  it('deletes the expired code document on verification attempt', async () => {
+    vi.useFakeTimers();
+    const code = await createOtp('user@example.com');
+    expect(dumpIds('otpCodes')).toHaveLength(1);
+    vi.advanceTimersByTime(11 * 60 * 1000); // TTL is 10 minutes
+    expect(await verifyOtp('user@example.com', code as string)).toBe(false);
+    expect(dumpIds('otpCodes')).toHaveLength(0);
   });
 
   it('creating a new code resets the attempt counter', async () => {
