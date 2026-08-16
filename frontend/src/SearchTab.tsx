@@ -66,6 +66,11 @@ export default function SearchTab({ onSelectRecord }: SearchTabProps) {
         // expired session, not an empty result (issue #59).
         return;
       }
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => null);
+        setSearchError(errorData?.error || 'Search failed. Please try again.');
+        return;
+      }
       const data = await res.json();
       setResults(Array.isArray(data.results) ? data.results : []);
       setTotalMatches(typeof data.totalMatches === 'number' ? data.totalMatches : 0);
@@ -164,7 +169,7 @@ export default function SearchTab({ onSelectRecord }: SearchTabProps) {
             </Card>
           </Box>
         ))}
-        {results.length === 0 && !isLoading && (
+        {results.length === 0 && !isLoading && !searchError && (
           <Box sx={{ gridColumn: '1 / -1' }}>
             <Typography variant="body1" color="text.secondary" align="center" sx={{ mt: 4 }}>
               No results found. Enter a query to begin your search.

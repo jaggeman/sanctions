@@ -104,5 +104,27 @@ describe('SearchTab', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /^search$/i })).toBeEnabled());
     expect(screen.queryByText(/search failed/i)).not.toBeInTheDocument();
   });
+
+  it('issue #147: shows an error message and suppresses "No results found" on a 500 response', async () => {
+    stubFetch(() => ({ status: 500, body: { error: 'Internal server error', details: 'Firestore unavailable' } }));
+
+    render(<SearchTab onSelectRecord={vi.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText(/search by name/i), { target: { value: 'Putin' } });
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }));
+
+    await waitFor(() => expect(screen.getByText(/Internal server error/i)).toBeInTheDocument());
+    expect(screen.queryByText(/No results found/i)).not.toBeInTheDocument();
+  });
+
+  it('issue #147: shows an error message and suppresses "No results found" on a 403 response', async () => {
+    stubFetch(() => ({ status: 403, body: { error: 'Read scope required' } }));
+
+    render(<SearchTab onSelectRecord={vi.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText(/search by name/i), { target: { value: 'Putin' } });
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }));
+
+    await waitFor(() => expect(screen.getByText(/Read scope required/i)).toBeInTheDocument());
+    expect(screen.queryByText(/No results found/i)).not.toBeInTheDocument();
+  });
 });
 
