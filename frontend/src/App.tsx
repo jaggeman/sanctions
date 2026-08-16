@@ -10,31 +10,23 @@ import {
   Box,
   Tabs,
   Tab,
-  Card,
-  CardContent,
-  TextField,
-  Button,
-  Chip,
   CircularProgress,
   IconButton,
-  Alert
 } from '@mui/material';
 import type { PaletteMode } from '@mui/material';
-import CloudUploadIcon from '@mui/icons-material/CloudUpload';
-import SearchIcon from '@mui/icons-material/Search';
 import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Brightness7Icon from '@mui/icons-material/Brightness7';
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
-import InfoIcon from '@mui/icons-material/Info';
 import ShieldOutlinedIcon from '@mui/icons-material/ShieldOutlined';
-import VpnKeyIcon from '@mui/icons-material/VpnKey';
 import ApiTokensTab from './ApiTokensTab';
 import ImportHistoryTab from './ImportHistoryTab';
 import RecordDetail from './RecordDetail';
+import SearchTab from './SearchTab';
 import UploadTab from './UploadTab';
+import EuListsTab from './EuListsTab';
+import HelpManualTab from './HelpManualTab';
 import LogoutIcon from '@mui/icons-material/Logout';
 import Login from './components/Login';
-import { apiFetch, setOnSessionExpired } from './apiFetch';
+import { setOnSessionExpired } from './apiFetch';
 
 // Brand bar stays a consistent deep navy in both light and dark mode —
 // a fixed identity color reads as more "product" than a bar that changes
@@ -141,42 +133,11 @@ function App() {
 
   // App State
   const [tabValue, setTabValue] = useState(0);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [results, setResults] = useState<any[]>([]);
-  const [totalMatches, setTotalMatches] = useState(0);
-  const [truncated, setTruncated] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
   const [historyFocusId, setHistoryFocusId] = useState<string | undefined>(undefined);
 
   const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
-  };
-
-  const handleSearch = async () => {
-    if (!searchQuery) return;
-    setIsLoading(true);
-    setSearchError(null);
-    try {
-      const res = await apiFetch(`/api/search?q=${encodeURIComponent(searchQuery)}`);
-      if (res.status === 401) {
-        // Session expired — apiFetch's onSessionExpired callback (registered
-        // above) already flips userEmail back to null and returns to Login.
-        // Don't also render "No results found" for what is actually an
-        // expired session, not an empty result (issue #59).
-        return;
-      }
-      const data = await res.json();
-      setResults(Array.isArray(data.results) ? data.results : []);
-      setTotalMatches(typeof data.totalMatches === 'number' ? data.totalMatches : 0);
-      setTruncated(Boolean(data.truncated));
-    } catch (err) {
-      console.error(err);
-      setSearchError('Search failed. Please try again.');
-    } finally {
-      setIsLoading(false);
-    }
   };
 
   if (!authChecked) {
@@ -240,102 +201,7 @@ function App() {
           </Tabs>
         </Box>
 
-        {tabValue === 0 && (
-          <Box>
-            <Card sx={{ mb: 4, p: 2 }}>
-              <CardContent>
-                <Typography variant="h5" gutterBottom>
-                  Search Entities
-                </Typography>
-                <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
-                  <TextField
-                    fullWidth
-                    variant="outlined"
-                    placeholder="Search by name, passport, or ID..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                    disabled={isLoading}
-                  />
-                  <Button 
-                    variant="contained" 
-                    size="large" 
-                    startIcon={isLoading ? <CircularProgress size={20} color="inherit" /> : <SearchIcon />}
-                    onClick={handleSearch}
-                    disabled={isLoading}
-                  >
-                    Search
-                  </Button>
-                </Box>
-              </CardContent>
-            </Card>
-
-            {searchError && (
-              <Alert severity="error" sx={{ mb: 2 }} onClose={() => setSearchError(null)}>
-                {searchError}
-              </Alert>
-            )}
-
-            {results.length > 0 && (
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                {truncated
-                  ? `Showing ${results.length} of ${totalMatches} matches — narrow your search or raise the limit to see more.`
-                  : `${totalMatches} match${totalMatches === 1 ? '' : 'es'}`}
-              </Typography>
-            )}
-
-            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: '1fr 1fr 1fr' }, gap: 3 }}>
-              {results.map((r, i) => (
-                <Box key={i}>
-                  <Card
-                    sx={{ height: '100%', display: 'flex', flexDirection: 'column', cursor: 'pointer' }}
-                    onClick={() => setSelectedRecordId(r.id)}
-                  >
-                    <CardContent sx={{ flexGrow: 1 }}>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-                        <Chip label={r.source} size="small" color="primary" variant="outlined" />
-                        <Chip label={r.type} size="small" color="error" variant="outlined" />
-                      </Box>
-                      <Typography variant="h6" component="h2" gutterBottom>
-                        {r.primaryName}
-                      </Typography>
-                      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
-                        {typeof r.score === 'number' && (
-                          <Chip
-                            label={`${r.score}% match${r.matchedAlias ? ` — "${r.matchedAlias}"` : ''}`}
-                            size="small"
-                            color={r.score >= 90 ? 'success' : r.score >= 75 ? 'warning' : 'default'}
-                          />
-                        )}
-                        {r.status === 'delisted' && (
-                          <Chip label="Delisted" size="small" color="default" variant="outlined" />
-                        )}
-                      </Box>
-                      {r.aliases && r.aliases.length > 0 && (
-                        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                          <strong>Aliases:</strong> {r.aliases.slice(0, 3).join(', ')}
-                          {r.aliases.length > 3 ? '...' : ''}
-                        </Typography>
-                      )}
-                      {r.datesOfBirth && r.datesOfBirth.length > 0 && (
-                        <Typography variant="body2" color="text.secondary">
-                          <strong>DOB:</strong> {r.datesOfBirth.join(', ')}
-                        </Typography>
-                      )}
-                    </CardContent>
-                  </Card>
-                </Box>
-              ))}
-              {results.length === 0 && !isLoading && (
-                <Box sx={{ gridColumn: '1 / -1' }}>
-                  <Typography variant="body1" color="text.secondary" align="center" sx={{ mt: 4 }}>
-                    No results found. Enter a query to begin your search.
-                  </Typography>
-                </Box>
-              )}
-            </Box>
-          </Box>
-        )}
+        {tabValue === 0 && <SearchTab onSelectRecord={setSelectedRecordId} />}
 
         {tabValue === 1 && (
           <UploadTab
@@ -348,158 +214,11 @@ function App() {
 
         {tabValue === 2 && <ImportHistoryTab focusImportId={historyFocusId} />}
 
-        {tabValue === 3 && (
-          <Box>
-            <Typography variant="h5" gutterBottom sx={{ mb: 3 }}>
-              Official European Union Sanctions Lists
-            </Typography>
-            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 3 }}>
-              
-              <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                <CardContent sx={{ flexGrow: 1 }}>
-                  <Typography variant="h6" gutterBottom>
-                    EU Sanctions Map
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    An interactive map and visual tool providing up-to-date information on all EU restrictive measures currently in place around the world.
-                  </Typography>
-                </CardContent>
-                <Box sx={{ p: 2, pt: 0 }}>
-                  <Button 
-                    variant="outlined" 
-                    fullWidth 
-                    endIcon={<OpenInNewIcon />}
-                    href="https://www.sanctionsmap.eu/#/main"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Open Map
-                  </Button>
-                </Box>
-              </Card>
-
-              <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                <CardContent sx={{ flexGrow: 1 }}>
-                  <Typography variant="h6" gutterBottom>
-                    Consolidated Financial Sanctions
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    The official EU database of persons, groups, and entities subject to EU financial sanctions. Available through the EU Open Data portal.
-                  </Typography>
-                </CardContent>
-                <Box sx={{ p: 2, pt: 0 }}>
-                  <Button 
-                    variant="outlined" 
-                    fullWidth 
-                    endIcon={<OpenInNewIcon />}
-                    href="https://data.europa.eu/data/datasets/consolidated-list-of-persons-groups-and-entities-subject-to-eu-financial-sanctions"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Open Dataset
-                  </Button>
-                </Box>
-              </Card>
-
-              <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                <CardContent sx={{ flexGrow: 1 }}>
-                  <Typography variant="h6" gutterBottom>
-                    European Commission Policy
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    Comprehensive information, guidance, and policy details regarding the adoption and implementation of EU restrictive measures.
-                  </Typography>
-                </CardContent>
-                <Box sx={{ p: 2, pt: 0 }}>
-                  <Button 
-                    variant="outlined" 
-                    fullWidth 
-                    endIcon={<OpenInNewIcon />}
-                    href="https://finance.ec.europa.eu/eu-and-world/sanctions-restrictive-measures_en"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Read Policy
-                  </Button>
-                </Box>
-              </Card>
-
-            </Box>
-          </Box>
-        )}
+        {tabValue === 3 && <EuListsTab />}
 
         {tabValue === 4 && <ApiTokensTab />}
 
-        {tabValue === 5 && (
-          <Box>
-            <Typography variant="h5" gutterBottom sx={{ mb: 3 }}>
-              User Manual & Help
-            </Typography>
-            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 3 }}>
-              
-              <Card sx={{ height: '100%' }}>
-                <CardContent>
-                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                    <SearchIcon color="primary" sx={{ mr: 1.5, fontSize: 32 }} />
-                    <Typography variant="h6">How to Search</Typography>
-                  </Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    The <strong>Search</strong> tab allows you to query the entire unified sanctions database. You can search by entering an individual's name, an entity name, a passport number, or an ID number.
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    The results will display the primary name along with any known aliases. If available, dates of birth are also shown. Each card uses colored chips to indicate which official list the entity was sourced from (e.g., EU, UN, US OFAC) and their classification (e.g., PERSON or ENTITY). Since the search uses fuzzy matching, each result also includes a match score percentage and, for non-exact hits, the specific alias that matched — this works for names written in non-Latin scripts (e.g. Arabic, Cyrillic) as well.
-                  </Typography>
-                </CardContent>
-              </Card>
-
-              <Card sx={{ height: '100%' }}>
-                <CardContent>
-                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                    <CloudUploadIcon color="primary" sx={{ mr: 1.5, fontSize: 32 }} />
-                    <Typography variant="h6">Uploading Lists</Typography>
-                  </Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    The <strong>Upload Lists</strong> tab enables you to manually synchronize new sanctions files into the system database.
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Currently supported formats include structured <strong>CSV</strong> files and <strong>XML</strong> format lists, covering EU, UN, US, PEP, and CUSTOM sources. Uploading an identical file twice is rejected as a duplicate, with a link to the original import in the <strong>Import History</strong> tab.
-                  </Typography>
-                </CardContent>
-              </Card>
-
-              <Card sx={{ height: '100%' }}>
-                <CardContent>
-                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                    <VpnKeyIcon color="primary" sx={{ mr: 1.5, fontSize: 32 }} />
-                    <Typography variant="h6">Managing API Tokens</Typography>
-                  </Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    The <strong>API Tokens</strong> tab lets you create, list, and revoke tokens for programmatic access to the search and import APIs.
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Each token is minted with an explicit <strong>read</strong> or <strong>write</strong> scope — grant only the scope a given integration actually needs, and revoke a token immediately if it's no longer in use or may have leaked.
-                  </Typography>
-                </CardContent>
-              </Card>
-
-              <Card sx={{ height: '100%' }}>
-                <CardContent>
-                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                    <InfoIcon color="primary" sx={{ mr: 1.5, fontSize: 32 }} />
-                    <Typography variant="h6">Official Sources</Typography>
-                  </Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    While this tool centralizes information, you should always consult the original sources when making critical decisions.
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    The <strong>Official EU Lists</strong> tab provides direct links to the EU Sanctions Map and the EU's Open Data Portal where you can download the consolidated financial sanctions datasets directly.
-                  </Typography>
-                </CardContent>
-              </Card>
-
-            </Box>
-          </Box>
-        )}
+        {tabValue === 5 && <HelpManualTab />}
       </Container>
 
       <RecordDetail recordId={selectedRecordId} onClose={() => setSelectedRecordId(null)} />

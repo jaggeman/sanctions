@@ -1,4 +1,4 @@
-export type SanctionSource = 'EU' | 'UN' | 'US' | 'PEP' | 'CUSTOM';
+export type SanctionSource = 'EU' | 'UN' | 'US' | 'UK' | 'PEP' | 'CUSTOM';
 
 /**
  * Canonical internal vocabulary (issue #6). The EU FSD source uses
@@ -93,8 +93,6 @@ export interface Override {
   reason: string;
 }
 
-// Design-only for issue #10 — no persistence/CRUD/API built yet. Tracked for
-// the actual build in a follow-up issue (see PR description).
 export interface Decision {
   entityId: string;
   subjectId: string; // the customer/subject this adjudication was made for
@@ -102,6 +100,33 @@ export interface Decision {
   decidedBy: string;
   decidedAt: string; // ISO string
   notes?: string;
+}
+
+// One entry in `decisions/{entityId__subjectId}/history/{autoId}` (issue
+// #112) — same shape as sanctions/{id}/versions/{importId}: a full snapshot
+// of the state that resulted from this change, tagged with what kind of
+// change it was. `saveDecision`'s upsert-for-current-state behavior is
+// unchanged; this is what keeps the prior verdict/author/notes recoverable
+// once a second adjudication replaces them.
+export type DecisionChangeType = 'created' | 'replaced';
+export interface DecisionHistoryEntry {
+  changeType: DecisionChangeType;
+  changedAt: string; // ISO string
+  decision: Decision;
+}
+
+// One entry in `overrides/{entityId}/history/{autoId}` (issue #112). For
+// `changeType: 'deleted'`, `override` is the override as it stood just
+// before removal (the thing that got removed) — `changedBy`/`changedAt`
+// are the deleter's identity/time, not the original author's, so a delete
+// is attributable even though `saveOverride`/`overriddenBy` never recorded
+// a "deleter" field before this.
+export type OverrideChangeType = 'created' | 'replaced' | 'deleted';
+export interface OverrideHistoryEntry {
+  changeType: OverrideChangeType;
+  changedAt: string; // ISO string
+  changedBy: string;
+  override: Override;
 }
 
 export type ImportStatus = 'pending' | 'parsing' | 'applied' | 'failed' | 'rejected';
@@ -213,4 +238,26 @@ export interface RecordVersion {
   changedAt: string; // ISO string
   changeType: ChangeType;
   record: SanctionRecord; // full snapshot, per issue #9: simpler than a field-level delta
+}
+
+// One entry in the `searchLog` collection (issue #109) — a durable,
+// queryable record of who searched for what, when. Written from
+// src/api/routes/search.ts, never read back by the app today (no browsing
+// UI yet — that's a separate future issue); server-only access, no direct
+// client read/write path, per firestore.rules' blanket deny-all backstop.
+export interface SearchLogEntry {
+  id?: string; // Firestore doc id, present once read back
+  action: 'search' | 'lookup'; // 'search' = GET /api/search, 'lookup' = GET /api/sanctions/:id
+  requestedBy: string; // session: the user's email; token: `token:<tokenId>`
+  query?: string; // the raw `q`, present for action: 'search'
+  entityId?: string; // the looked-up record id, present for action: 'lookup'
+  filters?: {
+    source?: string;
+    type?: string;
+    threshold?: number;
+    includeDelisted?: boolean;
+    dob?: string;
+  };
+  resultCount: number; // totalMatches for a search; 1 (found) or 0 (not found) for a lookup
+  timestamp: string; // ISO string
 }

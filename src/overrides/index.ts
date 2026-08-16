@@ -1,5 +1,5 @@
 import { db } from '../shared/firebase';
-import { SanctionRecord, Override } from '../shared/types';
+import { SanctionRecord, Override, OverrideChangeType, OverrideHistoryEntry } from '../shared/types';
 import { generateSearchTokens } from '../importer/uploader';
 
 const COLLECTION = 'overrides';
@@ -70,11 +70,63 @@ export async function saveOverride(
     reason: meta.reason,
   };
 
-  await db.collection(COLLECTION).doc(entityId).set(override);
+  const docRef = db.collection(COLLECTION).doc(entityId);
+  const existing = await docRef.get();
+  const changeType: OverrideChangeType = existing.exists ? 'replaced' : 'created';
+
+  await docRef.set(override);
+
+  // Append-only history (issue #112) — the current-state doc above is a
+  // plain upsert (a second correction is the normal case, not an error),
+  // but the prior fields/author/reason must stay recoverable rather than
+  // silently overwritten. Written after the primary doc: if this write
+  // fails, current-state reads are still correct, just missing one
+  // history entry, which is the higher-priority guarantee.
+  const historyEntry: OverrideHistoryEntry = {
+    changeType,
+    changedAt: override.overriddenAt,
+    changedBy: override.overriddenBy,
+    override,
+  };
+  await docRef.collection('history').doc().set(historyEntry);
+
   return override;
 }
 
-/** Removes the override for an entity. Idempotent — no error if none exists. */
-export async function deleteOverride(entityId: string): Promise<void> {
-  await db.collection(COLLECTION).doc(entityId).delete();
+/**
+ * Removes the override for an entity. Idempotent — no error, and no history
+ * entry, if none exists (nothing real happened, nothing to record).
+ * `deletedBy` records who removed it (issue #112) — the stored record
+ * itself was never touched, so removing an override is not a destructive
+ * action for the sanctions data, but it is one for the override's own
+ * audit trail, and that shouldn't vanish silently.
+ */
+export async function deleteOverride(entityId: string, deletedBy: string): Promise<void> {
+  const docRef = db.collection(COLLECTION).doc(entityId);
+  const existing = await docRef.get();
+  if (!existing.exists) return;
+
+  const removedOverride = existing.data() as Override;
+  await docRef.delete();
+
+  // Firestore does not cascade-delete subcollections when a parent doc is
+  // deleted, so writing to `history` right after `.delete()` is safe — the
+  // subcollection lives on even though the parent doc no longer "exists".
+  const historyEntry: OverrideHistoryEntry = {
+    changeType: 'deleted',
+    changedAt: new Date().toISOString(),
+    changedBy: deletedBy,
+    override: removedOverride,
+  };
+  await docRef.collection('history').doc().set(historyEntry);
+}
+
+/**
+ * Full change history for an entity, most recent first — every prior
+ * correction and the deletion event itself, none of which `saveOverride`'s
+ * upsert or `deleteOverride`'s removal leave any other trace of (issue #112).
+ */
+export async function getOverrideHistory(entityId: string): Promise<OverrideHistoryEntry[]> {
+  const snapshot = await db.collection(COLLECTION).doc(entityId).collection('history').orderBy('changedAt', 'desc').get();
+  return snapshot.docs.map((doc: any) => doc.data() as OverrideHistoryEntry);
 }

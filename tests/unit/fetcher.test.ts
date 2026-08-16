@@ -171,22 +171,23 @@ describe('downloadAllSources', () => {
 
     const paths = await downloadAllSources();
 
-    expect(axiosMock).toHaveBeenCalledTimes(3);
+    expect(axiosMock).toHaveBeenCalledTimes(4);
     const requestedUrls = axiosMock.mock.calls.map((call) => call[0].url);
     expect(requestedUrls.sort()).toEqual(
-      [SOURCE_URLS.EU, SOURCE_URLS.UN, SOURCE_URLS.US].sort(),
+      [SOURCE_URLS.EU, SOURCE_URLS.UN, SOURCE_URLS.US, SOURCE_URLS.UK].sort(),
     );
 
     expect(paths.EU).toBeUndefined();
     expect(paths.UN).toBe(path.join(DOWNLOADS_DIR, 'un_sanctions.xml'));
     expect(paths.US).toBe(path.join(DOWNLOADS_DIR, 'us_sdn.xml'));
+    expect(paths.UK).toBe(path.join(DOWNLOADS_DIR, 'uk_sanctions.xml'));
   });
 
-  it('returns paths for all three sources when every download succeeds', async () => {
+  it('returns paths for all four sources when every download succeeds', async () => {
     axiosMock.mockResolvedValue({ data: readableWithChunks(['<xml/>']) });
 
     const paths = await downloadAllSources();
 
-    expect(Object.keys(paths).sort()).toEqual(['EU', 'UN', 'US']);
+    expect(Object.keys(paths).sort()).toEqual(['EU', 'UK', 'UN', 'US']);
   });
 });

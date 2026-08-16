@@ -35,14 +35,15 @@ function record(overrides: Record<string, any> = {}) {
 }
 
 async function clearCollection() {
-  // recursiveDelete (not a plain batch delete) so orphaned `versions`
-  // subcollections from prior tests can't leak into later ones — Firestore
-  // does not cascade-delete subcollections on its own (see issue #9 gotchas).
+  // recursiveDelete (not a plain batch delete) so orphaned `versions`/
+  // `history` subcollections from prior tests can't leak into later ones —
+  // Firestore does not cascade-delete subcollections on its own (see issue
+  // #9's gotchas, and now issue #112's overrides/{id}/history).
   const snap = await db.collection('sanctions').get();
   await Promise.all(snap.docs.map((doc) => db.recursiveDelete(doc.ref)));
 
   const overridesSnap = await db.collection('overrides').get();
-  await Promise.all(overridesSnap.docs.map((doc: any) => doc.ref.delete()));
+  await Promise.all(overridesSnap.docs.map((doc: any) => db.recursiveDelete(doc.ref)));
 }
 
 beforeEach(async () => {
@@ -103,6 +104,37 @@ describe('uploadRecords — real Firestore write path', () => {
     await expect(uploadRecords([])).resolves.toBeUndefined();
     const snap = await db.collection('sanctions').get();
     expect(snap.empty).toBe(true);
+  });
+
+  // --- issue #39 -------------------------------------------------------
+
+  it('preserves the original createdAt across a genuine content update, against a real merge:true write', async () => {
+    await uploadRecords([record({ createdAt: '2020-01-01T00:00:00.000Z' })]);
+
+    // Simulates a real re-parse: every parser stamps createdAt fresh on
+    // every run, so the incoming record's createdAt is "now", not the
+    // original value.
+    await uploadRecords([
+      record({ primaryName: 'Changed Name', createdAt: new Date().toISOString() }),
+    ]);
+
+    const doc = await db.collection('sanctions').doc('PEP-int-1').get();
+    expect(doc.data()!.createdAt).toBe('2020-01-01T00:00:00.000Z');
+  });
+
+  it('clears a field that disappears from a later import, via a real FieldValue.delete()', async () => {
+    await uploadRecords([record({ addresses: [{ fullAddress: 'Old Address' }] } as any)]);
+    let doc = await db.collection('sanctions').doc('PEP-int-1').get();
+    expect(doc.data()!.addresses).toEqual([{ fullAddress: 'Old Address' }]);
+
+    // Next import's parse no longer includes an address at all for this
+    // entity (the key is simply absent, same shape every real parser
+    // produces) — merge:true alone would leave the stale address in place.
+    await uploadRecords([record()]);
+
+    doc = await db.collection('sanctions').doc('PEP-int-1').get();
+    expect(doc.data()!.addresses).toBeUndefined();
+    expect(doc.data()!.primaryName).toBe('Integration Person');
   });
 });
 
@@ -240,7 +272,7 @@ describe('overrides — real Firestore write path (issue #35)', () => {
       record({ id: 'EU-override-2', primaryName: 'Original Name', sanctionReason: 'Second source update' }),
     ]);
 
-    await deleteOverride('EU-override-2');
+    await deleteOverride('EU-override-2', 'reviewer@example.com');
 
     const rawDoc = (await db.collection('sanctions').doc('EU-override-2').get()).data()!;
     const override = await getOverride('EU-override-2');

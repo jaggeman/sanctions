@@ -200,6 +200,110 @@ describe('uploadRecords — soft delete fields + version trail', () => {
     expect(store.get('PEP-1')!.data.listedAt).toBe(firstListedAt);
   });
 
+  // --- issue #39 -----------------------------------------------------------
+
+  it('preserves the original createdAt across a genuine content update, not just no-op re-imports', async () => {
+    await uploadRecords([record({ createdAt: '2020-01-01T00:00:00.000Z' })], 'import-1');
+    expect(store.get('PEP-1')!.data.createdAt).toBe('2020-01-01T00:00:00.000Z');
+
+    // Simulates a real re-parse: every parser stamps createdAt fresh on
+    // every run, so the incoming record's createdAt is "now", not the
+    // original value — that must not win.
+    await uploadRecords(
+      [record({ primaryName: 'Changed Name', createdAt: '2026-06-01T00:00:00.000Z' })],
+      'import-2',
+    );
+
+    expect(store.get('PEP-1')!.data.createdAt).toBe('2020-01-01T00:00:00.000Z');
+  });
+
+  it('preserves the original createdAt across a delist + relist cycle', async () => {
+    await uploadRecords([record({ createdAt: '2020-01-01T00:00:00.000Z' })], 'import-1');
+    await delistRecords(['PEP-1'], 'import-2');
+
+    await uploadRecords(
+      [record({ createdAt: '2026-06-01T00:00:00.000Z' })],
+      'import-3',
+    );
+
+    expect(store.get('PEP-1')!.data.status).toBe('active');
+    expect(store.get('PEP-1')!.data.createdAt).toBe('2020-01-01T00:00:00.000Z');
+  });
+
+  it('does not invent a createdAt for a pre-fix legacy record on an unchanged re-import', async () => {
+    const legacy = record();
+    delete (legacy as any).createdAt;
+    (legacy as any).contentHash = computeContentHash(legacy);
+    store.set('PEP-1', { data: { ...legacy }, versions: new Map() });
+
+    await uploadRecords([record({ createdAt: '2026-06-01T00:00:00.000Z' })], 'import-1');
+
+    expect(store.get('PEP-1')!.data.createdAt).toBeUndefined();
+  });
+
+  it('clears a field that disappears from a later import (e.g. a corrected/removed address)', async () => {
+    await uploadRecords(
+      [record({ addresses: [{ fullAddress: 'Old Address' }] } as any)],
+      'import-1',
+    );
+    expect(store.get('PEP-1')!.data.addresses).toEqual([{ fullAddress: 'Old Address' }]);
+
+    // Next import's parse no longer includes an address for this entity at
+    // all (the key is simply absent, same shape every real parser produces).
+    await uploadRecords([record()], 'import-2');
+
+    expect(store.get('PEP-1')!.data.addresses).toBeUndefined();
+    expect(store.get('PEP-1')!.data.primaryName).toBe('Vladimir Putin');
+  });
+
+  it('clears a removed field across a relist too, not just a plain update', async () => {
+    await uploadRecords(
+      [record({ addresses: [{ fullAddress: 'Old Address' }] } as any)],
+      'import-1',
+    );
+    await delistRecords(['PEP-1'], 'import-2');
+
+    await uploadRecords([record()], 'import-3');
+
+    expect(store.get('PEP-1')!.data.status).toBe('active');
+    expect(store.get('PEP-1')!.data.addresses).toBeUndefined();
+  });
+
+  it('does not clear a field that is still present and unchanged', async () => {
+    await uploadRecords(
+      [record({ addresses: [{ fullAddress: 'Same Address' }] } as any)],
+      'import-1',
+    );
+
+    await uploadRecords(
+      [record({ primaryName: 'Changed Name', addresses: [{ fullAddress: 'Same Address' }] } as any)],
+      'import-2',
+    );
+
+    expect(store.get('PEP-1')!.data.addresses).toEqual([{ fullAddress: 'Same Address' }]);
+  });
+
+  it('never clears a field the importer does not itself own, even when a real content field is cleared alongside it', async () => {
+    // Simulates manual analyst enrichment done directly in Firestore,
+    // outside anything a parser ever sets — same scenario the pre-existing
+    // "merges into an existing document instead of overwriting unrelated
+    // fields" integration test protects. The field-clearing fix must stay
+    // scoped to known SanctionRecord content fields, not "any key present on
+    // the existing doc the new record happens not to mention."
+    await uploadRecords(
+      [record({ addresses: [{ fullAddress: 'Old Address' }] } as any)],
+      'import-1',
+    );
+    const existing = store.get('PEP-1')!.data;
+    store.set('PEP-1', { data: { ...existing, analystNote: 'flagged for review' }, versions: new Map() });
+
+    await uploadRecords([record()], 'import-2'); // drops addresses this time
+
+    const doc = store.get('PEP-1')!.data;
+    expect(doc.addresses).toBeUndefined();
+    expect(doc.analystNote).toBe('flagged for review');
+  });
+
   it('flips a delisted record back to active and writes a "relisted" version on reappearance', async () => {
     await uploadRecords([record()], 'import-1');
     await delistRecords(['PEP-1'], 'import-2');

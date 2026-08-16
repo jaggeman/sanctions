@@ -40,6 +40,7 @@ const fakeDb = {
 
 const runSearch = vi.fn();
 const verifyApiToken = vi.fn();
+const logSearchEvent = vi.fn();
 
 vi.mock('../../src/shared/firebase', () => ({ db: fakeDb }));
 vi.mock('../../src/importer/taskQueue', () => ({ enqueueImportTask: vi.fn(async () => {}) }));
@@ -55,6 +56,7 @@ vi.mock('../../src/importer/importRecord', () => ({
   findImportBySha256: vi.fn(),
 }));
 vi.mock('../../src/search', () => ({ runSearch }));
+vi.mock('../../src/search/searchLog', () => ({ logSearchEvent }));
 vi.mock('../../src/shared/apiTokens', () => ({ verifyApiToken }));
 vi.stubEnv('NODE_ENV', 'test');
 
@@ -90,6 +92,7 @@ beforeEach(async () => {
   runSearch.mockReset();
   runSearch.mockResolvedValue({ results: [], totalMatches: 0, truncated: false });
   verifyApiToken.mockReset();
+  logSearchEvent.mockReset();
   vi.clearAllMocks();
   await agent.post('/api/auth/verify-otp').send({ email: 'admin@sanctions.com', code: '123456' });
 });
@@ -178,6 +181,27 @@ describe('GET /api/search', () => {
     expect(res.status).toBe(500);
     expect(res.body.details).toBe('boom');
   });
+
+  it('fires a durable searchLog entry for a successful search (issue #109)', async () => {
+    runSearch.mockResolvedValue({ results: [scoredRecord()], totalMatches: 1, truncated: false });
+
+    await agent.get('/api/search').query({ q: 'Vladimir Putin', source: 'EU', threshold: '70' });
+
+    expect(logSearchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'search',
+        query: 'Vladimir Putin',
+        resultCount: 1,
+        filters: expect.objectContaining({ source: 'EU', threshold: 70 }),
+      }),
+    );
+  });
+
+  it('does not fire a searchLog entry when the search engine throws', async () => {
+    runSearch.mockRejectedValue(new Error('boom'));
+    await agent.get('/api/search').query({ q: 'Vladimir' });
+    expect(logSearchEvent).not.toHaveBeenCalled();
+  });
 });
 
 describe('GET /api/sanctions/:id', () => {
@@ -244,6 +268,27 @@ describe('GET /api/sanctions/:id', () => {
     const res = await agent.get('/api/sanctions/EU@evil.com');
     expect(res.status).toBe(400);
     expect(fakeDb.collection).not.toHaveBeenCalledWith('sanctions');
+  });
+
+  it('fires a searchLog "lookup" entry with resultCount: 1 when the record is found (issue #109)', async () => {
+    const rec = record({ id: 'PEP-1' });
+    docGetResult = { exists: true, data: () => rec };
+
+    await agent.get('/api/sanctions/PEP-1');
+
+    expect(logSearchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'lookup', entityId: 'PEP-1', resultCount: 1 }),
+    );
+  });
+
+  it('fires a searchLog "lookup" entry with resultCount: 0 when the record is not found (issue #109)', async () => {
+    docGetResult = { exists: false };
+
+    await agent.get('/api/sanctions/DOES-NOT-EXIST');
+
+    expect(logSearchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'lookup', entityId: 'DOES-NOT-EXIST', resultCount: 0 }),
+    );
   });
 });
 

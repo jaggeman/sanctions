@@ -222,3 +222,43 @@ describe('scoreNameMatch — non-Latin script (issue #40)', () => {
     expect(score).toBeLessThan(40);
   });
 });
+
+describe('short-word edit-distance false positives (issue #104)', () => {
+  // The concrete case from the issue: jaroWinkler('qusay','musa') = 0.7833,
+  // well above the old flat EDIT_DISTANCE_MATCH_THRESHOLD (0.75), despite
+  // the two words being phonetically unrelated (soundex 'Q200' vs 'M200')
+  // and semantically unrelated real aliases in the corpus. A raw JW score
+  // on short words is coincidental far more often than the old flat
+  // threshold accounted for — see the real-corpus calibration in this PR's
+  // description for the fuller picture (many other short pairs coincide in
+  // the 0.75-0.88 range with no phonetic or substring relationship at all).
+  it('no longer matches "Qusay" against the unrelated alias "Musa"', () => {
+    const { score } = scoreNameMatch('Qusay', ['Musa']);
+    expect(score).toBe(0);
+  });
+
+  it('still rejects other short coincidental pairs with no phonetic backing', () => {
+    expect(scoreNameMatch('Omar', ['Oman']).score).toBe(0);
+    expect(scoreNameMatch('Angela', ['Jong']).score).toBe(0);
+  });
+
+  // Genuine short-name spelling variants must keep matching — this fix
+  // tightens the threshold, it doesn't replace edit-distance matching with
+  // phonetic-only matching (that would reject these too, since several of
+  // them disagree on soundex despite being real variants).
+  it('still matches genuine short-name spelling variants', () => {
+    expect(scoreNameMatch('Ahmed', ['Ahmad']).score).toBeGreaterThan(0);
+    expect(scoreNameMatch('Nasser', ['Nassar']).score).toBeGreaterThan(0);
+    expect(scoreNameMatch('Hana', ['Hanan']).score).toBeGreaterThan(0);
+    expect(scoreNameMatch('Musa', ['Musab']).score).toBeGreaterThan(0);
+    expect(scoreNameMatch('Musa', ['Mousa']).score).toBeGreaterThan(0);
+    expect(scoreNameMatch('Mahmoud', ['Mahmud']).score).toBeGreaterThan(0);
+  });
+
+  // DWAYNE/DUANE (the published JW reference pair, 0.84) stays a match even
+  // though it's short — its soundex agrees (D500/D500), so it matches via
+  // the phonetic path regardless of the stricter short-word JW bar.
+  it('keeps matching a short pair whose JW score is below the new bar but whose soundex agrees', () => {
+    expect(scoreNameMatch('Dwayne', ['Duane']).score).toBeGreaterThan(0);
+  });
+});
