@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { SanctionRecord } from '../../src/shared/types';
 import { createFakeDb } from './helpers/fakeFirestore';
 
 const { db: fakeDb, reset: resetFakeDb } = createFakeDb();
@@ -36,22 +35,10 @@ vi.mock('../../src/importer/uploader', () => ({
   filterAutomatedBatch: vi.fn((r) => r),
 }));
 
-const { startDiffSession, runDiffForSource } = await import('../../src/importer/diff');
+const { startDiffSession } = await import('../../src/importer/diff');
 const { SourceImportLockedError, isSourceLocked } = await import('../../src/importer/importLock');
 
-function makeRecord(id: string): SanctionRecord {
-  return {
-    id,
-    source: 'EU',
-    type: 'individual',
-    names: [{ wholeName: 'Test Person', strong: true }],
-    searchNames: [],
-    createdAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: '2026-01-01T00:00:00.000Z',
-  };
-}
-
-describe('startDiffSession & runDiffForSource concurrency locking (issue #184)', () => {
+describe('startDiffSession concurrency locking (issue #184)', () => {
   beforeEach(() => {
     resetFakeDb();
     vi.clearAllMocks();
@@ -98,11 +85,5 @@ describe('startDiffSession & runDiffForSource concurrency locking (issue #184)',
 
     await realSession.finish();
     await drySession.finish();
-  });
-
-  it('runDiffForSource acquires and releases lock', async () => {
-    expect(await isSourceLocked('EU')).toBe(false);
-    await runDiffForSource('EU', [makeRecord('EU-1')], { mode: 'append' });
-    expect(await isSourceLocked('EU')).toBe(false);
   });
 });

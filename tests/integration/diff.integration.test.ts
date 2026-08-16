@@ -13,7 +13,26 @@ process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || 'lo
 process.env.FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'sanctions-integration-test';
 
 const { db } = await import('../../src/shared/firebase');
-const { runDiffForSource, DelistGuardError } = await import('../../src/importer/diff');
+const { startDiffSession, DelistGuardError } = await import('../../src/importer/diff');
+import type { SanctionSource } from '../../src/shared/types';
+import type { ImportMode } from '../../src/importer/diff';
+
+// issue #185: the non-streaming runDiffForSource/computeDiff/applyDiff were
+// deleted as dead code (nothing in src/ called them, and they'd already
+// drifted from the CUSTOM-record guard the streaming path enforces). This
+// thin wrapper drives the real, shipped startDiffSession API the same way a
+// single-batch caller would, so this file keeps testing the actual
+// production write path against the real emulator rather than losing its
+// only real-Firestore coverage.
+async function runDiffForSource(
+  source: SanctionSource,
+  records: any[],
+  options: { mode: ImportMode; dryRun?: boolean; force?: boolean; importId?: string },
+) {
+  const session = await startDiffSession(source, options);
+  await session.addChunk(records);
+  return session.finish();
+}
 
 function record(overrides: Record<string, any> = {}) {
   return {
