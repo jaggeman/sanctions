@@ -32,7 +32,9 @@ vi.mock('../../src/importer/parsers/csv', () => ({
 const { runImport } = await import('../../src/importer');
 
 beforeAll(async () => {
-  realCsvPath = path.join(os.tmpdir(), `import-refresh-test-${Date.now()}.csv`);
+  const dataDir = path.join(process.cwd(), 'data');
+  await fs.ensureDir(dataDir);
+  realCsvPath = path.join(dataDir, `import-refresh-test-${Date.now()}.csv`);
   await fs.writeFile(realCsvPath, 'id;name\n1;Test Person\n', 'utf-8');
 });
 

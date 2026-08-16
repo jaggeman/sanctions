@@ -182,6 +182,14 @@ Required only for `create_override`/`record_decision` — the other tools work w
 
 If a deploy needs a different volume (a genuinely larger user base, or a stricter posture), edit these constants directly rather than looking for an env var — there isn't one, by design, for a limit that should always be active rather than something an unset config could silently disable.
 
+### `ALLOWED_CSV_DIR` — permitted directory for CSV imports (issue #157)
+
+Server-side CSV imports (`POST /api/import` and CLI importer) are strictly confined to the permitted data directory (defaults to `./data` relative to project root) to prevent arbitrary file read and path traversal attacks (issue #157 / CLAUDE.md §6). Paths referencing files outside this root, absolute paths pointing elsewhere, null bytes, or directory traversal (`../`) are rejected before any filesystem access.
+
+```
+ALLOWED_CSV_DIR=/path/to/permitted/data
+```
+
 ## 🚀 Hur man deployar (Laddar upp till produktion)
 
 För att ladda upp dina ändringar så att de syns live på webben följer du dessa exakta steg. 

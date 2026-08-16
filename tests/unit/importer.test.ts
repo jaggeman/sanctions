@@ -15,6 +15,9 @@ vi.mock('../../src/importer/parsers/un', () => ({
 vi.mock('../../src/importer/parsers/us', () => ({
   parseUSListStreaming: vi.fn(),
 }));
+vi.mock('../../src/importer/parsers/csv', () => ({
+  parseCSVList: vi.fn(async () => []),
+}));
 vi.mock('../../src/importer/uploader', () => ({
   uploadRecords: vi.fn(async () => {}),
   filterAutomatedBatch: vi.fn((records: SanctionRecord[]) => records.filter((r) => r.source !== 'CUSTOM')),
@@ -200,5 +203,13 @@ describe('runImport — streams sources, reconciles each via the diff engine', (
     expect(filterAutomatedBatch).toHaveBeenCalled();
     const passedToRunDiff = (diffFedBySource.get('EU') || diffFedBySource.get('PEP') || []) as SanctionRecord[];
     expect(passedToRunDiff.map((r) => r.id)).toEqual(['EU-1']);
+  });
+
+  describe('csvPath security validation (issue #157 / CLAUDE.md §6)', () => {
+    it('refuses to read files outside the permitted directory', async () => {
+      const result = await runImport({ csvPath: '../../etc/passwd' });
+      expect(result.importedCounts.PEP).toBeUndefined();
+      expect(result.importedCounts.CUSTOM).toBeUndefined();
+    });
   });
 });
