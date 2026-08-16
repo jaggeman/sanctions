@@ -16,7 +16,7 @@ describe('CH (Switzerland SECO) parser', () => {
 
   it('parses all records in the fixture with source "CH"', async () => {
     const records = await parseFixture();
-    expect(records.length).toBe(6);
+    expect(records.length).toBe(7);
     for (const record of records) {
       expect(record.source).toBe('CH');
       expect(record.id).toMatch(/^CH-\d+$/);
@@ -32,7 +32,7 @@ describe('CH (Switzerland SECO) parser', () => {
     for (const r of records) {
       typeCounts[r.type] = (typeCounts[r.type] || 0) + 1;
     }
-    expect(typeCounts['individual']).toBe(3);
+    expect(typeCounts['individual']).toBe(4);
     expect(typeCounts['entity']).toBe(2);
     expect(typeCounts['vessel']).toBe(1);
 
@@ -109,11 +109,24 @@ describe('CH (Switzerland SECO) parser', () => {
     expect(record).toBeDefined();
   });
 
+  // issue #283: a target with 2+ sibling <justification> elements gets an
+  // array from fast-xml-parser instead of a single node — falling through
+  // to String(array) produced the literal garbage "[object Object],[object
+  // Object]" in production (CH-52941, found via a live MCP smoke test).
+  it('joins multiple sibling <justification> elements into one real string, not "[object Object]"', async () => {
+    const records = await parseFixture();
+    const vorontsova = records.find((r) => r.id === 'CH-52941');
+    expect(vorontsova).toBeDefined();
+    expect(vorontsova?.sanctionReason).not.toMatch(/\[object Object\]/);
+    expect(vorontsova?.sanctionReason).toContain('eldest daughter of President Vladimir Putin');
+    expect(vorontsova?.sanctionReason).toContain('co-owner of the company Nomenko');
+  });
+
   // Aggregate assertions per CLAUDE.md §1
   describe('aggregate invariants (CLAUDE.md §1)', () => {
     it('every record has non-empty primary name, valid id, and valid type', async () => {
       const records = await parseFixture();
-      expect(records.length).toBe(6);
+      expect(records.length).toBe(7);
       for (const r of records) {
         expect(r.id).toBeDefined();
         expect(r.id.startsWith('CH-')).toBe(true);
