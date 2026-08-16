@@ -65,6 +65,65 @@
       <DATAID/>
       <FIRST_NAME>No Data Id</FIRST_NAME>
     </INDIVIDUAL>
+    <!--
+      Issue #34: real record carved verbatim from the actual UN Consolidated
+      List export (C:/Sanctions/downloads/un_sanctions.xml, DATAID 110425).
+      Its National Identification Number document, "0035011785", is a
+      genuine leading-zero value from production data — fast-xml-parser's
+      default parseTagValue coerces it to the number 35011785, silently
+      dropping the leading zeros.
+    -->
+    <INDIVIDUAL>
+      <DATAID>110425</DATAID>
+      <VERSIONNUM>1</VERSIONNUM>
+      <FIRST_NAME>NASER</FIRST_NAME>
+      <SECOND_NAME>MALEKI</SECOND_NAME>
+      <UN_LIST_TYPE>Iran</UN_LIST_TYPE>
+      <REFERENCE_NUMBER>IRi.022</REFERENCE_NUMBER>
+      <LISTED_ON>2007-03-24</LISTED_ON>
+      <COMMENTS1>[Old Reference # I.47.C.7]</COMMENTS1>
+      <HAS_INTERPOL_LINK>NO</HAS_INTERPOL_LINK>
+      <INTERPOL_LINK/>
+      <DESIGNATION>
+        <VALUE>Head of Shahid Hemmat Industrial Group (SHIG), which is designated
+under resolution 1737 (2006) for its role in Iran's ballistic missile programme
+(designated under IRe.067).</VALUE>
+        <VALUE>MODAFL official overseeing work on the Shahab-3 ballistic missile
+programme, Iran's long range ballistic missile currently in service.</VALUE>
+      </DESIGNATION>
+      <LIST_TYPE>
+        <VALUE>UN List</VALUE>
+      </LIST_TYPE>
+      <LAST_DAY_UPDATED>
+        <VALUE>2014-12-17</VALUE>
+      </LAST_DAY_UPDATED>
+      <INDIVIDUAL_ALIAS>
+        <QUALITY/>
+        <ALIAS_NAME/>
+      </INDIVIDUAL_ALIAS>
+      <INDIVIDUAL_ADDRESS>
+        <COUNTRY/>
+      </INDIVIDUAL_ADDRESS>
+      <INDIVIDUAL_DATE_OF_BIRTH>
+        <TYPE_OF_DATE>EXACT</TYPE_OF_DATE>
+        <YEAR>1960</YEAR>
+      </INDIVIDUAL_DATE_OF_BIRTH>
+      <INDIVIDUAL_PLACE_OF_BIRTH>
+        <COUNTRY/>
+      </INDIVIDUAL_PLACE_OF_BIRTH>
+      <INDIVIDUAL_DOCUMENT>
+        <TYPE_OF_DOCUMENT>Passport</TYPE_OF_DOCUMENT>
+        <NUMBER>A0003039</NUMBER>
+        <COUNTRY_OF_ISSUE>Iran (Islamic Republic of)</COUNTRY_OF_ISSUE>
+      </INDIVIDUAL_DOCUMENT>
+      <INDIVIDUAL_DOCUMENT>
+        <TYPE_OF_DOCUMENT>National Identification Number</TYPE_OF_DOCUMENT>
+        <NUMBER>0035011785</NUMBER>
+        <COUNTRY_OF_ISSUE>Iran (Islamic Republic of)</COUNTRY_OF_ISSUE>
+      </INDIVIDUAL_DOCUMENT>
+      <SORT_KEY/>
+      <SORT_KEY_LAST_MOD/>
+    </INDIVIDUAL>
   </INDIVIDUALS>
   <ENTITIES>
     <ENTITY>
