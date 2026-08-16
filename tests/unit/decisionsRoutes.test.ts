@@ -4,15 +4,18 @@ import request from 'supertest';
 import cookieParser from 'cookie-parser';
 import { createFakeDb } from './helpers/fakeFirestore';
 
-const { mockSaveDecision, mockListDecisionsForEntity } = vi.hoisted(() => ({
+const { mockSaveDecision, mockListDecisionsForEntity, mockVerifyApiToken } = vi.hoisted(() => ({
   mockSaveDecision: vi.fn(),
   mockListDecisionsForEntity: vi.fn(),
+  mockVerifyApiToken: vi.fn(),
 }));
 
 vi.mock('../../src/decisions', () => ({
   saveDecision: mockSaveDecision,
   listDecisionsForEntity: mockListDecisionsForEntity,
 }));
+
+vi.mock('../../src/shared/apiTokens', () => ({ verifyApiToken: mockVerifyApiToken }));
 
 // src/auth/session.ts now persists sessions through `db` (issue #63), so
 // this suite's authedCookie() needs a working fake Firestore, not just a
@@ -149,6 +152,34 @@ describe('POST /api/decisions', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/entityId/i);
+  });
+});
+
+describe('write-scoped bearer token attribution', () => {
+  it("attributes decidedBy to the token's ownerEmail instead of throwing \"decidedBy is required\"", async () => {
+    mockVerifyApiToken.mockResolvedValueOnce({
+      valid: true,
+      tokenId: 'tok-1',
+      scopes: ['write'],
+      ownerEmail: 'svc-agent@corp.test',
+    });
+    mockSaveDecision.mockResolvedValue({
+      entityId: 'EU-1',
+      subjectId: 'cust-a',
+      verdict: 'false_positive',
+      decidedBy: 'svc-agent@corp.test',
+      decidedAt: '2026-08-15T00:00:00.000Z',
+    });
+
+    const res = await request(buildApp())
+      .post('/api/decisions')
+      .set('Authorization', 'Bearer sanc_sometoken')
+      .send({ entityId: 'EU-1', subjectId: 'cust-a', verdict: 'false_positive' });
+
+    expect(res.status).toBe(201);
+    expect(mockSaveDecision).toHaveBeenCalledWith(
+      expect.objectContaining({ decidedBy: 'svc-agent@corp.test' }),
+    );
   });
 });
 
