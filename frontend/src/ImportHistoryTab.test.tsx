@@ -120,6 +120,24 @@ describe('ImportHistoryTab', () => {
     await waitFor(() => expect(screen.getByText(/parsed/i)).toBeInTheDocument());
   });
 
+  it('issue #165: calls onFocusConsumed once the focused import has been auto-opened', async () => {
+    stubFetch([APPLIED, REJECTED]);
+    const onFocusConsumed = vi.fn();
+    render(<ImportHistoryTab focusImportId="abc123" onFocusConsumed={onFocusConsumed} />);
+
+    await waitFor(() => expect(screen.getByText(/parsed/i)).toBeInTheDocument());
+    await waitFor(() => expect(onFocusConsumed).toHaveBeenCalledTimes(1));
+  });
+
+  it('issue #165: does not call onFocusConsumed when there is no focusImportId', async () => {
+    stubFetch([APPLIED]);
+    const onFocusConsumed = vi.fn();
+    render(<ImportHistoryTab onFocusConsumed={onFocusConsumed} />);
+
+    await waitFor(() => expect(screen.getByText('eu_list.xml')).toBeInTheDocument());
+    expect(onFocusConsumed).not.toHaveBeenCalled();
+  });
+
   it('a 401 fires the app-wide session-expiry handler instead of just showing a generic error (issue #59 gap)', async () => {
     vi.stubGlobal(
       'fetch',

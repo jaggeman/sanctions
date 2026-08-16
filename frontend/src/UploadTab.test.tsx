@@ -301,6 +301,95 @@ describe('UploadTab — batch upload', () => {
   });
 });
 
+describe('UploadTab — stale preview invalidation (#163)', () => {
+  function stubEchoingDryRun(onApply: (body: FormData) => void) {
+    const dryRunSources: string[] = [];
+    stubFetch((_url, init) => {
+      const body = init?.body as FormData;
+      if (body.get('dryRun') === 'true') {
+        dryRunSources.push((body.get('source') as string) || 'AUTO');
+        return {
+          status: 200,
+          body: {
+            status: 'dry_run',
+            importId: 'abc',
+            counts: { parsed: 1, uploaded: 0 },
+            diffs: [{
+              source: (body.get('source') as string) || 'AUTO',
+              counts: { parsed: 1, added: 1, updated: 0, unchanged: 0, delisted: 0, skipped: 0 },
+              samples: { added: [], updated: [], unchanged: [], delisted: [] },
+              toDelistIds: [],
+              activeCount: 0,
+              guardTripped: false,
+            }],
+          },
+        };
+      }
+      onApply(body);
+      return { status: 200, body: { status: 'applied', importId: 'abc', counts: { parsed: 1, uploaded: 1 } } };
+    });
+    return dryRunSources;
+  }
+
+  it('re-runs the dry run (not a stale one) when Source is changed after a preview', async () => {
+    const dryRunSources = stubEchoingDryRun(() => {});
+
+    render(<UploadTab onViewImport={vi.fn()} />);
+    await selectFile(makeFile());
+    await waitFor(() => expect(dryRunSources).toEqual(['AUTO']));
+
+    fireEvent.mouseDown(screen.getByLabelText(/^source/i));
+    fireEvent.click(screen.getByRole('option', { name: /^UN$/i }));
+
+    // A fresh dry run against the new source must fire — not a reuse of the stale AUTO preview.
+    await waitFor(() => expect(dryRunSources).toEqual(['AUTO', 'UN']));
+  });
+
+  it('re-runs the dry run when Mode is changed after a preview, and Apply then posts the new mode', async () => {
+    let capturedBody: FormData | undefined;
+    stubEchoingDryRun((body) => {
+      capturedBody = body;
+    });
+
+    render(<UploadTab onViewImport={vi.fn()} />);
+    await selectFile(makeFile());
+    await waitFor(() => expect(screen.getByRole('button', { name: /apply/i })).not.toBeDisabled());
+
+    fireEvent.mouseDown(screen.getByLabelText(/^mode/i));
+    fireEvent.click(screen.getByRole('option', { name: /^sync$/i }));
+
+    // While the re-run is in flight the stale preview/Apply must not be usable.
+    await waitFor(() => expect(screen.queryByRole('button', { name: /apply/i })).toBeFalsy());
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /apply/i })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole('button', { name: /apply/i }));
+
+    await waitFor(() => expect(capturedBody).toBeDefined());
+    expect(capturedBody!.get('mode')).toBe('sync');
+  });
+
+  it('never lets Apply post a source different from the one that produced the displayed preview', async () => {
+    let capturedBody: FormData | undefined;
+    const dryRunSources = stubEchoingDryRun((body) => {
+      capturedBody = body;
+    });
+
+    render(<UploadTab onViewImport={vi.fn()} />);
+    await selectFile(makeFile());
+    await waitFor(() => expect(dryRunSources).toEqual(['AUTO']));
+
+    fireEvent.mouseDown(screen.getByLabelText(/^source/i));
+    fireEvent.click(screen.getByRole('option', { name: /^UN$/i }));
+
+    await waitFor(() => expect(dryRunSources).toEqual(['AUTO', 'UN']));
+    await waitFor(() => expect(screen.getByRole('button', { name: /apply/i })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole('button', { name: /apply/i }));
+
+    await waitFor(() => expect(capturedBody).toBeDefined());
+    expect(capturedBody!.get('source')).toBe('UN');
+  });
+});
+
 describe('UploadTab — sync official sources', () => {
   it('calls POST /api/import with official sources when button clicked', async () => {
     let capturedUrl: string | undefined;
