@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { soundex, jaroWinkler, scoreNameMatch } from '../../src/search/matcher';
+import {
+  soundex,
+  jaroWinkler,
+  scoreNameMatch,
+  scoreTokenizedNameMatch,
+  buildTokenizedName,
+  buildTokenizedQuery,
+} from '../../src/search/matcher';
 
 /**
  * This is genuinely new code (issue #11), so this is real TDD: these tests
@@ -220,6 +227,51 @@ describe('scoreNameMatch — non-Latin script (issue #40)', () => {
   it('a Cyrillic query does not spuriously match an unrelated Latin name', () => {
     const { score } = scoreNameMatch('Абу Нидал', ['Kim Jong Un']);
     expect(score).toBeLessThan(40);
+  });
+});
+
+// Issue #42: runSearch precomputes each candidate's tokenized form once at
+// index-build time instead of re-tokenizing on every query. This is a "when
+// is it computed" change, not a "what does it compute" change — this suite
+// proves scoreTokenizedNameMatch over precomputed tokens returns exactly the
+// same result as scoreNameMatch over raw strings for every case above that
+// actually exercises the interesting behavior (transliteration, particle
+// weighting, reversed order, typos), so the refactor can't have silently
+// changed matching behavior.
+describe('scoreTokenizedNameMatch — precomputed-index equivalence (issue #42)', () => {
+  const cases: Array<[string, string[]]> = [
+    ['Vladimir Putin', ['Vladimir Putin']],
+    ['Qusay', ['Qoussaï Saddam Hussein Al-Tikriti']],
+    ['Mohammed Al-Amin', ['Muhammad Al-Amin']],
+    ['Saddam Hussein Al-Tikriti', ['Saddam Hussein Al-Tikriti']],
+    ['Hussein Al-Tikriti, Saddam', ['Saddam Hussein Al-Tikriti']],
+    ['Saddam Tikriti', ['Saddam Hussein Al-Tikriti']],
+    ['Vova Putin', ['Vladimir Vladimirovich Putin', 'Vova Putin']],
+    ['Angela Merkel', ['Kim Jong Un']],
+    ['Anyone', []],
+    ['Vladimir Putin', ['Vladmir Putin']],
+    ['Al Hassan', ['Al-Tikriti Hassan Omar']],
+    ['Ali Ali', ['Ali']],
+    ['Al Bin Omar', ['Al Rashid Bin Laden Al-Sayed']],
+    ['Ali Hassan', ['Hassan Ali']],
+    ['Abu Ali', ['Abu Ali']],
+    ['Абу Нидал', ['Абу Нидал']],
+    ['Μαύρος Σεπτέμβρης', ['Μαύρος Σεπτέμβρης']],
+    ['Abu Nidal', ['Организация „Абу Нидал”']],
+    ['Абу Нидал', ['Abu Nidal Organisation']],
+    ['Абу Нидал', ['Kim Jong Un']],
+  ];
+
+  it('produces byte-identical results to scoreNameMatch when candidates are pre-tokenized', () => {
+    for (const [query, candidateNames] of cases) {
+      const direct = scoreNameMatch(query, candidateNames);
+
+      const tokenizedQuery = buildTokenizedQuery(query);
+      const tokenizedCandidates = candidateNames.map(buildTokenizedName);
+      const viaPrecomputedIndex = scoreTokenizedNameMatch(tokenizedQuery, tokenizedCandidates);
+
+      expect(viaPrecomputedIndex, `query="${query}" candidates=${JSON.stringify(candidateNames)}`).toEqual(direct);
+    }
   });
 });
 
