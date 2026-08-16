@@ -20,18 +20,16 @@ import {
   Alert
 } from '@mui/material';
 import type { PaletteMode } from '@mui/material';
-import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import SearchIcon from '@mui/icons-material/Search';
 import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Brightness7Icon from '@mui/icons-material/Brightness7';
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
-import InfoIcon from '@mui/icons-material/Info';
 import ShieldOutlinedIcon from '@mui/icons-material/ShieldOutlined';
-import VpnKeyIcon from '@mui/icons-material/VpnKey';
 import ApiTokensTab from './ApiTokensTab';
 import ImportHistoryTab from './ImportHistoryTab';
 import RecordDetail from './RecordDetail';
 import UploadTab from './UploadTab';
+import EuListsTab from './EuListsTab';
+import HelpManualTab from './HelpManualTab';
 import LogoutIcon from '@mui/icons-material/Logout';
 import Login from './components/Login';
 import { apiFetch, setOnSessionExpired } from './apiFetch';
@@ -348,158 +346,11 @@ function App() {
 
         {tabValue === 2 && <ImportHistoryTab focusImportId={historyFocusId} />}
 
-        {tabValue === 3 && (
-          <Box>
-            <Typography variant="h5" gutterBottom sx={{ mb: 3 }}>
-              Official European Union Sanctions Lists
-            </Typography>
-            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 3 }}>
-              
-              <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                <CardContent sx={{ flexGrow: 1 }}>
-                  <Typography variant="h6" gutterBottom>
-                    EU Sanctions Map
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    An interactive map and visual tool providing up-to-date information on all EU restrictive measures currently in place around the world.
-                  </Typography>
-                </CardContent>
-                <Box sx={{ p: 2, pt: 0 }}>
-                  <Button 
-                    variant="outlined" 
-                    fullWidth 
-                    endIcon={<OpenInNewIcon />}
-                    href="https://www.sanctionsmap.eu/#/main"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Open Map
-                  </Button>
-                </Box>
-              </Card>
-
-              <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                <CardContent sx={{ flexGrow: 1 }}>
-                  <Typography variant="h6" gutterBottom>
-                    Consolidated Financial Sanctions
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    The official EU database of persons, groups, and entities subject to EU financial sanctions. Available through the EU Open Data portal.
-                  </Typography>
-                </CardContent>
-                <Box sx={{ p: 2, pt: 0 }}>
-                  <Button 
-                    variant="outlined" 
-                    fullWidth 
-                    endIcon={<OpenInNewIcon />}
-                    href="https://data.europa.eu/data/datasets/consolidated-list-of-persons-groups-and-entities-subject-to-eu-financial-sanctions"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Open Dataset
-                  </Button>
-                </Box>
-              </Card>
-
-              <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                <CardContent sx={{ flexGrow: 1 }}>
-                  <Typography variant="h6" gutterBottom>
-                    European Commission Policy
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    Comprehensive information, guidance, and policy details regarding the adoption and implementation of EU restrictive measures.
-                  </Typography>
-                </CardContent>
-                <Box sx={{ p: 2, pt: 0 }}>
-                  <Button 
-                    variant="outlined" 
-                    fullWidth 
-                    endIcon={<OpenInNewIcon />}
-                    href="https://finance.ec.europa.eu/eu-and-world/sanctions-restrictive-measures_en"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Read Policy
-                  </Button>
-                </Box>
-              </Card>
-
-            </Box>
-          </Box>
-        )}
+        {tabValue === 3 && <EuListsTab />}
 
         {tabValue === 4 && <ApiTokensTab />}
 
-        {tabValue === 5 && (
-          <Box>
-            <Typography variant="h5" gutterBottom sx={{ mb: 3 }}>
-              User Manual & Help
-            </Typography>
-            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 3 }}>
-              
-              <Card sx={{ height: '100%' }}>
-                <CardContent>
-                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                    <SearchIcon color="primary" sx={{ mr: 1.5, fontSize: 32 }} />
-                    <Typography variant="h6">How to Search</Typography>
-                  </Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    The <strong>Search</strong> tab allows you to query the entire unified sanctions database. You can search by entering an individual's name, an entity name, a passport number, or an ID number.
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    The results will display the primary name along with any known aliases. If available, dates of birth are also shown. Each card uses colored chips to indicate which official list the entity was sourced from (e.g., EU, UN, US OFAC) and their classification (e.g., PERSON or ENTITY). Since the search uses fuzzy matching, each result also includes a match score percentage and, for non-exact hits, the specific alias that matched — this works for names written in non-Latin scripts (e.g. Arabic, Cyrillic) as well.
-                  </Typography>
-                </CardContent>
-              </Card>
-
-              <Card sx={{ height: '100%' }}>
-                <CardContent>
-                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                    <CloudUploadIcon color="primary" sx={{ mr: 1.5, fontSize: 32 }} />
-                    <Typography variant="h6">Uploading Lists</Typography>
-                  </Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    The <strong>Upload Lists</strong> tab enables you to manually synchronize new sanctions files into the system database.
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Currently supported formats include structured <strong>CSV</strong> files and <strong>XML</strong> format lists, covering EU, UN, US, PEP, and CUSTOM sources. Uploading an identical file twice is rejected as a duplicate, with a link to the original import in the <strong>Import History</strong> tab.
-                  </Typography>
-                </CardContent>
-              </Card>
-
-              <Card sx={{ height: '100%' }}>
-                <CardContent>
-                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                    <VpnKeyIcon color="primary" sx={{ mr: 1.5, fontSize: 32 }} />
-                    <Typography variant="h6">Managing API Tokens</Typography>
-                  </Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    The <strong>API Tokens</strong> tab lets you create, list, and revoke tokens for programmatic access to the search and import APIs.
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Each token is minted with an explicit <strong>read</strong> or <strong>write</strong> scope — grant only the scope a given integration actually needs, and revoke a token immediately if it's no longer in use or may have leaked.
-                  </Typography>
-                </CardContent>
-              </Card>
-
-              <Card sx={{ height: '100%' }}>
-                <CardContent>
-                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                    <InfoIcon color="primary" sx={{ mr: 1.5, fontSize: 32 }} />
-                    <Typography variant="h6">Official Sources</Typography>
-                  </Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    While this tool centralizes information, you should always consult the original sources when making critical decisions.
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    The <strong>Official EU Lists</strong> tab provides direct links to the EU Sanctions Map and the EU's Open Data Portal where you can download the consolidated financial sanctions datasets directly.
-                  </Typography>
-                </CardContent>
-              </Card>
-
-            </Box>
-          </Box>
-        )}
+        {tabValue === 5 && <HelpManualTab />}
       </Container>
 
       <RecordDetail recordId={selectedRecordId} onClose={() => setSelectedRecordId(null)} />
