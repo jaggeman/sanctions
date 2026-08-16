@@ -194,10 +194,22 @@ export interface SanctionRecord {
   legalBasis?: string;
   rawSourceData?: any; // Keep raw data in case of detailed auditing
 
-  // --- EU FSD v1.1 source fidelity (issue #6) ---
+  // --- Source fidelity & cross-referencing (issue #6, #99, #142) ---
   euReferenceNumber?: string; // the EU's own public identifier, e.g. "EU.27.28"
-  unitedNationId?: string; // cross-reference to the UN list, e.g. "QDi.399"
-  sourceRef?: string; // the raw source-native id (e.g. EU logicalId), before any "EU-" prefix
+
+  /**
+   * Cross-reference to the UN list, e.g. "QDi.399" (carried by EU, UK, and UN sources).
+   *
+   * Architectural decision (issue #142):
+   * This field is informational metadata preserved for provenance, traceability, and
+   * search-time cross-linking/grouping. Ingestion intentionally keeps separate, source-scoped
+   * records (e.g. EU-123, UK-AFG0011, UN-5678) in the database rather than performing destructive
+   * physical record merging across jurisdictions. This ensures auditability, preserves source
+   * fidelity, avoids conflicting field reconciliations (names/addresses/DOBs), and prevents
+   * cross-jurisdiction delisting/versioning race conditions.
+   */
+  unitedNationId?: string;
+  sourceRef?: string; // the raw source-native id (e.g. EU logicalId, UK UniqueID), before any source prefix
   regulation?: Regulation;
   contactInfo?: ContactInfo;
 
