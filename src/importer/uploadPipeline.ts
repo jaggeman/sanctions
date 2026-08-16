@@ -4,12 +4,14 @@ import { hashFileStreaming } from './hashFile';
 import { detectFormat, DetectedFormat } from './formatDetection';
 import {
   createPendingImport,
+  createFetchImportRecord,
   findAppliedImportBySha256,
   markImportApplied,
   markImportFailed,
   ImportAlreadyInFlightError,
 } from './importRecord';
-import { runImport } from './index';
+import { runImport, ImportOptions } from './index';
+import { generateImportId } from './uploader';
 import { ImportMode, StreamedDiffResult } from './diff';
 import { getBucket } from '../shared/firebase';
 import { SanctionSource } from '../shared/types';
@@ -176,4 +178,68 @@ export async function processUpload(options: ProcessUploadOptions): Promise<Proc
     logger.error('Import succeeded but markImportApplied bookkeeping failed', { sha256, error: err });
   }
   return { outcome: 'applied', importId: sha256, counts: { parsed, uploaded: parsed } };
+}
+
+export interface RunFetchImportOptions {
+  sources?: ImportOptions['sources'];
+  mode?: ImportMode;
+  dryRun?: boolean;
+  force?: boolean;
+  uploadedBy: string | null;
+}
+
+/**
+ * issue #256 (followup to #192): an official-source fetch has no local file
+ * to sha256-dedup on before it runs — the download IS the side effect of
+ * running it — so this can't reuse processUpload's dedup mechanism.
+ * POST /api/import already solved exactly this (issue #111): a durable
+ * `imports` audit doc keyed by a fresh importId, created before the fetch
+ * runs and marked applied/failed once it resolves, instead of by sha256.
+ * This is that same mechanism, synchronous rather than that route's
+ * fire-and-forget Cloud Task — a CLI/MCP caller is already a long-running
+ * process that wants the real result back directly, not a 202.
+ */
+export async function runFetchTriggeredImport(
+  options: RunFetchImportOptions,
+): Promise<Awaited<ReturnType<typeof runImport>>> {
+  const { sources, mode, dryRun, force, uploadedBy } = options;
+
+  // A dry run must leave no trace — same precedent as processUpload's own
+  // dry-run handling just above.
+  if (dryRun) {
+    return runImport({ sources, mode, dryRun, force });
+  }
+
+  const importId = generateImportId();
+  await createFetchImportRecord({
+    importId,
+    sources,
+    mode,
+    force,
+    uploadedBy,
+    uploadedAt: new Date().toISOString(),
+  });
+
+  let result: Awaited<ReturnType<typeof runImport>>;
+  try {
+    result = await runImport({ sources, mode, force, importId });
+  } catch (err: any) {
+    await markImportFailed(importId, err.message);
+    throw err;
+  }
+
+  if (!result.success) {
+    await markImportFailed(importId, result.error || 'Import failed with no further detail.');
+    return result;
+  }
+
+  const parsed = Object.values(result.importedCounts).reduce((a, b) => a + b, 0);
+  try {
+    await markImportApplied(importId, { parsed, uploaded: parsed });
+  } catch (err: any) {
+    // Same precedent as processUpload above: the import already succeeded,
+    // so a bookkeeping failure here must never relabel it as failed.
+    logger.error('Import succeeded but markImportApplied bookkeeping failed', { importId, error: err });
+  }
+  return result;
 }

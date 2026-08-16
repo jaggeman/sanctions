@@ -8,8 +8,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import * as path from 'path';
 import { db } from '../shared/firebase';
-import { runImport } from '../importer';
-import { processUpload } from '../importer/uploadPipeline';
+import { processUpload, runFetchTriggeredImport } from '../importer/uploadPipeline';
 import { runSearch } from '../search';
 import { getOverride } from '../overrides';
 import { listDecisionsForEntity } from '../decisions';
@@ -414,14 +413,16 @@ export async function handleRunDatabaseImport(args: any) {
 
   // issue #192: csvPath is a genuine local file, so it goes through
   // processUpload() — sha256 dedup, the in-flight lock, and a durable
-  // `imports` audit record — instead of being bundled into the
-  // official-sources runImport() call, which has none of that. A bare
-  // csvPath (no sources) means "just import this file": skip the
-  // official-sources download entirely rather than silently triggering it
-  // too via runImport's own default-to-all-sources fallback.
-  let sourcesResult: Awaited<ReturnType<typeof runImport>> | undefined;
+  // `imports` audit record. The official-sources download below has no
+  // local file to dedup on, so it goes through runFetchTriggeredImport()
+  // instead (issue #256) — same durable audit record, keyed by a fresh
+  // importId rather than a file hash. A bare csvPath (no sources) means
+  // "just import this file": skip the official-sources download entirely
+  // rather than silently triggering it too via the old default-to-all-
+  // sources fallback.
+  let sourcesResult: Awaited<ReturnType<typeof runFetchTriggeredImport>> | undefined;
   if (sources || !csvPath) {
-    sourcesResult = await runImport({ sources });
+    sourcesResult = await runFetchTriggeredImport({ sources, uploadedBy: null });
   }
 
   let csvResult: Awaited<ReturnType<typeof processUpload>> | undefined;
