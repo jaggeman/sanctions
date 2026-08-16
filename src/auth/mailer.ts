@@ -25,9 +25,16 @@ export async function sendOtpEmail(email: string, code: string): Promise<void> {
   const t = getTransporter();
 
   if (!t) {
+    // issue #156: In production, missing SMTP configuration must be a hard error,
+    // not a silent success with secret codes dumped in plaintext logs.
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('SMTP_HOST is not configured in production.');
+    }
     // No SMTP configured yet (e.g. local dev before real credentials are added) —
     // fall back to logging so the flow is still usable end-to-end.
-    console.log(`[auth] SMTP not configured — OTP for ${email} is ${code}`);
+    // Redact identifying user part (CLAUDE.md §6: log domain, not full email).
+    const domain = email.includes('@') ? email.split('@')[1] : 'unknown';
+    console.log(`[auth] SMTP not configured — OTP for *@${domain} is ${code}`);
     return;
   }
 
