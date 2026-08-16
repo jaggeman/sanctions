@@ -22,14 +22,16 @@ searchRouter.param('id', validateEntityIdParam);
 
 /**
  * Requester identity for the search audit log (issue #109) — a session
- * carries `userEmail` (set by requireAuth), a bearer-token request carries
- * `apiTokenId` instead (set by requireScope). Exactly one is ever present,
- * since requireAuthOrScope delegates to one or the other, never both.
+ * carries `userEmail` (set by requireAuth). A bearer-token request carries
+ * `apiTokenId` (set by requireScope), but issue #189: requireScope also sets
+ * `userEmail` to the token's ownerEmail unconditionally (every token has one
+ * since issue #123), so apiTokenId must be checked first — a token-
+ * authenticated request is always `token:<id>`, regardless of ownerEmail.
  */
 function requesterIdentity(req: Request): string {
+  if (req.apiTokenId) return `token:${req.apiTokenId}`;
   const userEmail = (req as any).userEmail;
   if (userEmail) return userEmail;
-  if (req.apiTokenId) return `token:${req.apiTokenId}`;
   return 'unknown';
 }
 
