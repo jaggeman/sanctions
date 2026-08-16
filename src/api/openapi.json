@@ -588,6 +588,185 @@
         }
       }
     },
+    "/api/admin/custom-records": {
+      "post": {
+        "summary": "Skapa en intern watchlist-post (source: CUSTOM)",
+        "description": "Skapar en manuellt tillagd sanktionspost (t.ex. en lokal PEP eller intern bevakningspost) som inte täcks av de officiella källorna (issue #172). Existens-kontrollen sker atomärt via Firestores DocumentReference.create() — två samtidiga skapanden med samma id kan aldrig båda lyckas. Kräver en inloggad admin-session.",
+        "security": [{ "cookieAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["id", "type", "primaryName"],
+                "properties": {
+                  "id": { "type": "string", "example": "CUSTOM-1" },
+                  "type": { "type": "string", "enum": ["individual", "entity", "vessel"] },
+                  "primaryName": { "type": "string", "example": "Jane Doe" },
+                  "aliases": { "type": "array", "items": { "type": "string" } },
+                  "datesOfBirth": { "type": "array", "items": { "type": "string" } },
+                  "placesOfBirth": { "type": "array", "items": { "type": "string" } },
+                  "citizenships": { "type": "array", "items": { "type": "string" } },
+                  "passports": { "type": "array", "items": { "type": "string" } },
+                  "sanctionReason": { "type": "string" },
+                  "legalBasis": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Posten skapad",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SanctionRecord" }
+              }
+            }
+          },
+          "400": {
+            "description": "Saknat/ogiltigt fält, t.ex. tomt primaryName eller ett id med otillåtna tecken"
+          },
+          "401": {
+            "description": "Ingen giltig session (ej inloggad)"
+          },
+          "403": {
+            "description": "Inloggad men inte admin"
+          },
+          "409": {
+            "description": "En post med detta id finns redan"
+          }
+        }
+      }
+    },
+    "/api/admin/custom-records/{id}": {
+      "put": {
+        "summary": "Uppdatera en intern watchlist-post",
+        "description": "Patchar fält på en befintlig CUSTOM-post. Vägrar röra en post med annan source (använd overrides-vägen för sådana). id/source/createdAt/searchNames pinnas alltid om efter patchen — searchNames genereras alltid på nytt från den sammanslagna postens eget primaryName/aliases, aldrig från ett värde i request body.",
+        "security": [{ "cookieAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "Valfri delmängd av samma fält som POST accepterar",
+                "example": { "sanctionReason": "Uppdaterad intern notering" }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Posten uppdaterad",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SanctionRecord" }
+              }
+            }
+          },
+          "400": {
+            "description": "Ogiltigt id, eller posten är inte en CUSTOM-post"
+          },
+          "401": {
+            "description": "Ingen giltig session (ej inloggad)"
+          },
+          "403": {
+            "description": "Inloggad men inte admin"
+          },
+          "404": {
+            "description": "Ingen CUSTOM-post med detta id hittades"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Ta bort en intern watchlist-post",
+        "description": "Kräver explicit confirm: true i request body — annars 400. Vägrar radera en post med annan source än CUSTOM.",
+        "security": [{ "cookieAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["confirm"],
+                "properties": { "confirm": { "type": "boolean", "example": true } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Posten borttagen",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "ok": { "type": "boolean" } } }
+              }
+            }
+          },
+          "400": {
+            "description": "confirm: true saknas, eller posten är inte en CUSTOM-post"
+          },
+          "401": {
+            "description": "Ingen giltig session (ej inloggad)"
+          },
+          "403": {
+            "description": "Inloggad men inte admin"
+          },
+          "404": {
+            "description": "Ingen CUSTOM-post med detta id hittades"
+          }
+        }
+      },
+      "get": {
+        "summary": "Hämta en intern watchlist-post",
+        "security": [{ "cookieAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Posten",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SanctionRecord" }
+              }
+            }
+          },
+          "401": {
+            "description": "Ingen giltig session (ej inloggad)"
+          },
+          "403": {
+            "description": "Inloggad men inte admin"
+          },
+          "404": {
+            "description": "Ingen post med detta id hittades"
+          }
+        }
+      }
+    },
     "/api/decisions": {
       "post": {
         "summary": "Registrera eller uppdatera en screening-adjudikation",

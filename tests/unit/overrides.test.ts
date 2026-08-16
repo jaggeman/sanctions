@@ -3,8 +3,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Issue #35: overrides/index.ts now also persists (getOverride/saveOverride/
 // deleteOverride), so it needs `db`. Same in-memory-doc fake as
 // tests/unit/customRecords.test.ts — applyOverride itself stays pure and
-// untouched by this mock.
+// untouched by this mock. Issue #112: each doc also gets a `history`
+// subcollection (auto-id docs, queried via `.orderBy('changedAt', 'desc')`),
+// tracked here as an insertion-ordered array per doc id.
 let store: Record<string, unknown> = {};
+let historyStore: Record<string, unknown[]> = {};
 
 const fakeDb = {
   collection: vi.fn((name: string) => {
@@ -21,6 +24,25 @@ const fakeDb = {
         delete: vi.fn(async () => {
           delete store[id];
         }),
+        collection: vi.fn((subName: string) => {
+          if (subName !== 'history') throw new Error(`unexpected subcollection ${subName}`);
+          if (!historyStore[id]) historyStore[id] = [];
+          return {
+            doc: vi.fn(() => ({
+              set: vi.fn(async (data: unknown) => {
+                historyStore[id].push(data);
+              }),
+            })),
+            orderBy: vi.fn((field: string) => {
+              if (field !== 'changedAt') throw new Error(`unexpected orderBy(${field})`);
+              return {
+                get: vi.fn(async () => ({
+                  docs: (historyStore[id] || []).slice().reverse().map((h) => ({ data: () => h })),
+                })),
+              };
+            }),
+          };
+        }),
       })),
     };
   }),
@@ -28,12 +50,20 @@ const fakeDb = {
 
 vi.mock('../../src/shared/firebase', () => ({ db: fakeDb }));
 
-const { applyOverride, getOverride, saveOverride, deleteOverride, IMMUTABLE_KEYS } = await import('../../src/overrides');
+const {
+  applyOverride,
+  getOverride,
+  saveOverride,
+  deleteOverride,
+  getOverrideHistory,
+  IMMUTABLE_KEYS,
+} = await import('../../src/overrides');
 import type { SanctionRecord, Override } from '../../src/shared/types';
 import { primaryNameOf } from '../../src/shared/types';
 
 beforeEach(() => {
   store = {};
+  historyStore = {};
   vi.clearAllMocks();
 });
 
@@ -216,11 +246,71 @@ describe('saveOverride', () => {
 describe('deleteOverride', () => {
   it('removes an existing override', async () => {
     await saveOverride('EU-1', { sanctionReason: 'x' }, { overriddenBy: 'a@example.com', reason: 'r' });
-    await deleteOverride('EU-1');
+    await deleteOverride('EU-1', 'reviewer@example.com');
     expect(await getOverride('EU-1')).toBeNull();
   });
 
   it('does not throw when there is nothing to delete (idempotent)', async () => {
-    await expect(deleteOverride('DOES-NOT-EXIST')).resolves.toBeUndefined();
+    await expect(deleteOverride('DOES-NOT-EXIST', 'reviewer@example.com')).resolves.toBeUndefined();
+  });
+});
+
+describe('append-only history (issue #112)', () => {
+  it('saveOverride writes a "created" history entry the first time', async () => {
+    const result = await saveOverride('EU-1', { sanctionReason: 'Corrected' }, {
+      overriddenBy: 'analyst@example.com',
+      reason: 'Fix',
+    });
+
+    const history = await getOverrideHistory('EU-1');
+    expect(history).toHaveLength(1);
+    expect(history[0].changeType).toBe('created');
+    expect(history[0].changedBy).toBe('analyst@example.com');
+    expect(history[0].override).toEqual(result);
+  });
+
+  it('saveOverride writes a "replaced" entry on a second edit, keeping the first fields/author/reason recoverable', async () => {
+    await saveOverride('EU-1', { sanctionReason: 'First correction' }, { overriddenBy: 'a@example.com', reason: 'r1' });
+    await saveOverride('EU-1', { legalBasis: 'New basis' }, { overriddenBy: 'b@example.com', reason: 'r2' });
+
+    const history = await getOverrideHistory('EU-1');
+    expect(history).toHaveLength(2);
+    // Most recent first.
+    expect(history[0].changeType).toBe('replaced');
+    expect(history[0].override.fields).toEqual({ legalBasis: 'New basis' });
+    expect(history[1].changeType).toBe('created');
+    // The first override's own field/author/reason are recoverable here,
+    // even though the current-state doc (getOverride) no longer has them —
+    // that upsert-replaces behavior is unchanged (see the saveOverride
+    // describe block above).
+    expect(history[1].override.fields).toEqual({ sanctionReason: 'First correction' });
+    expect(history[1].override.overriddenBy).toBe('a@example.com');
+    expect(history[1].override.reason).toBe('r1');
+  });
+
+  it('deleteOverride writes a "deleted" entry recording who deleted it and when, with the removed override preserved', async () => {
+    await saveOverride('EU-1', { sanctionReason: 'Corrected' }, { overriddenBy: 'analyst@example.com', reason: 'Fix' });
+    await deleteOverride('EU-1', 'reviewer@example.com');
+
+    const history = await getOverrideHistory('EU-1');
+    expect(history).toHaveLength(2);
+    expect(history[0].changeType).toBe('deleted');
+    expect(history[0].changedBy).toBe('reviewer@example.com');
+    expect(history[0].changedAt).toBeTruthy();
+    // The override as it stood just before removal — not the current state,
+    // since there is none anymore.
+    expect(history[0].override.fields).toEqual({ sanctionReason: 'Corrected' });
+    expect(history[0].override.overriddenBy).toBe('analyst@example.com');
+  });
+
+  it('deleting a nonexistent override writes no history entry (idempotent, nothing to record)', async () => {
+    await deleteOverride('DOES-NOT-EXIST', 'reviewer@example.com');
+    expect(await getOverrideHistory('DOES-NOT-EXIST')).toEqual([]);
+  });
+});
+
+describe('getOverrideHistory', () => {
+  it('returns an empty array when no override was ever created for the entity', async () => {
+    expect(await getOverrideHistory('EU-404')).toEqual([]);
   });
 });

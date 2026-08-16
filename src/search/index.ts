@@ -1,7 +1,7 @@
 import * as admin from 'firebase-admin';
 import { db } from '../shared/firebase';
 import { SanctionRecord, Override, allNamesOf, formatBirthDates } from '../shared/types';
-import { scoreNameMatch } from './matcher';
+import { scoreTokenizedNameMatch, buildTokenizedName, buildTokenizedQuery, TokenizedName } from './matcher';
 import { applyOverride } from '../overrides';
 
 export interface ScoredResult extends SanctionRecord {
@@ -45,11 +45,21 @@ const MIN_PASSPORT_QUERY_LENGTH = 4; // avoids matching every ID on a 1-2 char q
  * counter every instance checks before trusting its own local cache; one
  * extra small doc read per search is far cheaper than the full `sanctions`
  * collection read it's guarding.
+ *
+ * Issue #42: every candidate name's tokenized form (words, transliterated
+ * variants, Soundex codes, particle weights) is precomputed once here, when
+ * the cache is (re)built, instead of being recomputed by `runSearch` on
+ * every single query — none of that work depends on what's being searched
+ * for. Kept in a separate map (`cachedNameIndex`), keyed by record id,
+ * rather than as a field on `IndexedRecord` itself: spreading a record into
+ * a `ScoredResult` (`{...record, score, matchedAlias}`) would otherwise leak
+ * these precomputed tokens into the `/api/search` JSON response.
  */
 type IndexedRecord = SanctionRecord & { overriddenFields: string[] };
 
 let cachedRecords: IndexedRecord[] | null = null;
 let cachedVersion: number | null = null;
+let cachedNameIndex: Map<string, TokenizedName[]> | null = null;
 
 const searchIndexMetaDoc = () => db.collection('meta').doc('searchIndex');
 
@@ -84,11 +94,15 @@ async function getRecords(): Promise<IndexedRecord[]> {
       overridesByEntityId.set(doc.id, doc.data() as Override);
     });
 
+    const nameIndex = new Map<string, TokenizedName[]>();
     cachedRecords = sanctionsSnapshot.docs.map((doc: any) => {
       const record = doc.data() as SanctionRecord;
       const { record: merged, overriddenFields } = applyOverride(record, overridesByEntityId.get(record.id));
+      const candidateNames = allNamesOf(merged.names);
+      nameIndex.set(merged.id, candidateNames.map(buildTokenizedName));
       return { ...merged, overriddenFields };
     });
+    cachedNameIndex = nameIndex;
     cachedVersion = currentVersion;
   }
   return cachedRecords;
@@ -149,11 +163,16 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
     }
   }
 
+  // Tokenized once per search (issue #42), not once per candidate record —
+  // the query is identical across every comparison within this call.
+  const tokenizedQuery = buildTokenizedQuery(trimmedQuery);
+  const nameIndex = cachedNameIndex!; // populated by the getRecords() call above
+
   for (const record of candidates) {
     if (matchedIds.has(record.id)) continue;
 
-    const candidateNames = allNamesOf(record.names);
-    const { score, matchedName } = scoreNameMatch(trimmedQuery, candidateNames);
+    const candidateTokens = nameIndex.get(record.id) ?? [];
+    const { score, matchedName } = scoreTokenizedNameMatch(tokenizedQuery, candidateTokens);
     const boostedScore = options.dob && matchesDob(record, options.dob)
       ? Math.min(100, score + DOB_MATCH_BOOST)
       : score;

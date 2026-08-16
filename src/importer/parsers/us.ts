@@ -5,14 +5,68 @@ import { logger } from '../../shared/logger';
 const log = logger.child({ module: 'importer.parsers.us' });
 
 /**
- * Issue #6: OFAC SDN has no strong/language markers on aliases and no
- * date-precision beyond whatever string `dateOfBirth` already is — derived
- * from the already-computed primary name/aliases/dates rather than invented.
+ * Issue #6/#168: OFAC SDN has no date-precision beyond whatever string
+ * `dateOfBirth` already is, but it DOES carry a real strong/weak marker per
+ * alias (`<aka><category>`) — `strongAliases` (built from that field by the
+ * caller) is fed through here rather than every alias being hardcoded weak
+ * (the bug issue #168 fixed: 4,393 real weak aliases were being presented as
+ * confirmed).
  */
-function deriveNames(primaryName: string, aliases: string[]): NameAlias[] {
+function deriveNames(primaryName: string, aliases: string[], strongAliases: Set<string>): NameAlias[] {
   const names: NameAlias[] = [{ wholeName: primaryName, strong: true }];
-  for (const alias of aliases) names.push({ wholeName: alias, strong: false });
+  for (const alias of aliases) names.push({ wholeName: alias, strong: strongAliases.has(alias) });
   return names;
+}
+
+/**
+ * OFAC's free-text `expirationDate` on an `<id>` entry, parsed into the
+ * latest date the document should be considered valid through — or `null`
+ * if the format can't be confidently interpreted (issue #168). Real formats
+ * observed in the SDN export: `"17 Jul 2011"` (day+month+year), `"May
+ * 2006"` (month+year — valid through month-end), `"2010"` (year only —
+ * valid through year-end), and a date RANGE `"01 Jan 2026 to 31 Dec 2026"`
+ * (valid through the range's end). Anything else is left unparsed rather
+ * than guessed at — presence of the field alone does not mean expired: 383
+ * of the 1,173 real occurrences are dated in the future.
+ */
+const MONTHS: Record<string, number> = {
+  Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5,
+  Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11,
+};
+
+function parseExpirationBoundary(raw: string): Date | null {
+  const text = raw.trim();
+
+  const rangeMatch = text.match(/^(.+?)\s+to\s+(.+)$/i);
+  if (rangeMatch) return parseExpirationBoundary(rangeMatch[2]);
+
+  const dayMonthYear = text.match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})$/);
+  if (dayMonthYear) {
+    const month = MONTHS[dayMonthYear[2]];
+    if (month === undefined) return null;
+    return new Date(Number(dayMonthYear[3]), month, Number(dayMonthYear[1]), 23, 59, 59);
+  }
+
+  const monthYear = text.match(/^([A-Za-z]{3})\s+(\d{4})$/);
+  if (monthYear) {
+    const month = MONTHS[monthYear[1]];
+    if (month === undefined) return null;
+    return new Date(Number(monthYear[2]), month + 1, 0, 23, 59, 59); // last day of that month
+  }
+
+  const yearOnly = text.match(/^(\d{4})$/);
+  if (yearOnly) {
+    return new Date(Number(yearOnly[1]), 11, 31, 23, 59, 59); // last day of that year
+  }
+
+  return null;
+}
+
+function isExpired(raw: string | undefined): boolean {
+  if (!raw) return false;
+  const boundary = parseExpirationBoundary(raw);
+  if (!boundary) return false; // can't confirm — don't claim expired
+  return boundary.getTime() < Date.now();
 }
 
 function deriveBirthDates(datesOfBirth: string[]): BirthDate[] {
@@ -72,14 +126,19 @@ function mapEntryToRecord(entry: any): SanctionRecord | null {
   const last = entry.lastName ? String(entry.lastName) : '';
   const primaryName = first ? `${first} ${last}`.trim() : last.trim();
 
-  // Map aliases (AKA)
+  // Map aliases (AKA) — each carries a real strong/weak reliability marker
+  // (<category>) from the source (issue #168).
   const aliases: string[] = [];
+  const strongAliases = new Set<string>();
   for (const aka of toArray(entry.akaList?.aka)) {
     const akaFirst = aka.firstName ? String(aka.firstName) : '';
     const akaLast = aka.lastName ? String(aka.lastName) : '';
     const akaName = akaFirst ? `${akaFirst} ${akaLast}`.trim() : akaLast.trim();
     if (akaName && !aliases.includes(akaName)) {
       aliases.push(akaName);
+      if (String(aka.category || '').trim().toLowerCase() === 'strong') {
+        strongAliases.add(akaName);
+      }
     }
   }
 
@@ -118,19 +177,23 @@ function mapEntryToRecord(entry: any): SanctionRecord | null {
     }
   }
 
-  // Map IDs (passports, national ID, etc.) — issue #46: structured, not a formatted string
+  // Map IDs (passports, national ID, etc.) — issue #46 / #168
   const identifications: Identification[] = [];
   for (const idItem of toArray(entry.idList?.id)) {
     const num = idItem.idNumber ? String(idItem.idNumber) : '';
     const idType = idItem.idType ? String(idItem.idType) : '';
     const country = idItem.idCountry ? String(idItem.idCountry) : '';
-    if (num) {
-      identifications.push({
-        number: num,
-        typeDescription: idType || undefined,
-        countryIso2: country || undefined,
-      });
-    }
+    const expirationRaw = idItem.expirationDate ? String(idItem.expirationDate) : undefined;
+    
+    if (!num) continue;
+
+    const knownExpired = isExpired(expirationRaw);
+    identifications.push({
+      number: num,
+      typeDescription: idType || undefined,
+      countryIso2: country || undefined,
+      knownExpired,
+    });
   }
 
   // Map nationality/citizenship (issue #169). OFAC uses plain full-text
@@ -153,9 +216,10 @@ function mapEntryToRecord(entry: any): SanctionRecord | null {
   const programs = toArray(entry.programList?.program).map((p) => String(p));
   const sanctionReason = programs.join(', ');
 
-  // Structured fields from #44. Derived from the flat ones rather than
-  // invented: OFAC SDN carries no strong/language markers on aliases and no
-  // date precision beyond the raw string.
+  // Structured fields from #44/#168. birthDates has no date precision
+  // beyond the raw string (this source doesn't distinguish exact/year-only/
+  // circa); names/identifications DO carry real reliability markers from
+  // the source (category, expirationDate) rather than being invented.
   const birthDates = deriveBirthDates(datesOfBirth);
 
   const now = new Date().toISOString();
@@ -164,7 +228,7 @@ function mapEntryToRecord(entry: any): SanctionRecord | null {
     id: `US-SDN-${uid}`,
     source: 'US',
     type,
-    names: deriveNames(primaryName, aliases),
+    names: deriveNames(primaryName, aliases, strongAliases),
     searchNames: [], // Generated by uploader
     birthDates: birthDates.length > 0 ? birthDates : undefined,
     placesOfBirth: placesOfBirth.length > 0 ? placesOfBirth : undefined,

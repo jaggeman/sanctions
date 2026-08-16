@@ -2,6 +2,11 @@ import { db } from '../shared/firebase';
 import { SanctionRecord, NameAlias, BirthDate, Identification, primaryNameOf, aliasNamesOf } from '../shared/types';
 import { generateSearchTokens } from '../importer/uploader';
 import { isValidEntityId } from '../shared/entityId';
+import { invalidateSearchIndex } from '../search';
+
+// gRPC status code for ALREADY_EXISTS — what Firestore's DocumentReference.create()
+// throws when the document is already present. Any other error rethrows as-is.
+const FIRESTORE_ALREADY_EXISTS = 6;
 
 function assertValidId(id: string): void {
   if (!isValidEntityId(id)) {
@@ -59,10 +64,6 @@ const COLLECTION = 'sanctions';
 export async function createCustomRecord(input: CustomRecordInput): Promise<SanctionRecord> {
   assertValidId(input.id);
   const docRef = db.collection(COLLECTION).doc(input.id);
-  const existing = await docRef.get();
-  if (existing.exists) {
-    throw new Error(`A record with id "${input.id}" already exists — cannot create a duplicate custom record.`);
-  }
 
   const now = new Date().toISOString();
   const names = namesFrom(input.primaryName, input.aliases);
@@ -86,7 +87,21 @@ export async function createCustomRecord(input: CustomRecordInput): Promise<Sanc
     updatedAt: now,
   };
 
-  await docRef.set(record);
+  // docRef.create() is Firestore's own atomic "insert if absent" — the
+  // existence check and the write happen as one server-side operation, so
+  // two concurrent creates for the same id can no longer both pass a
+  // separate get() check and both write (TOCTOU, issue #172). Only the
+  // ALREADY_EXISTS case gets the friendly message; anything else rethrows.
+  try {
+    await docRef.create(record);
+  } catch (error: any) {
+    if (error?.code === FIRESTORE_ALREADY_EXISTS) {
+      throw new Error(`A record with id "${input.id}" already exists — cannot create a duplicate custom record.`);
+    }
+    throw error;
+  }
+
+  await invalidateSearchIndex();
   return record;
 }
 
@@ -119,6 +134,7 @@ export async function updateCustomRecord(
 
   const merged: SanctionRecord = {
     ...current,
+
     id,
     source: 'CUSTOM',
     names,
@@ -141,6 +157,7 @@ export async function updateCustomRecord(
   }
 
   await docRef.set(merged);
+  await invalidateSearchIndex();
   return merged;
 }
 
@@ -162,6 +179,7 @@ export async function deleteCustomRecord(id: string, options: { confirm: boolean
   }
 
   await docRef.delete();
+  await invalidateSearchIndex();
 }
 
 export async function getCustomRecord(id: string): Promise<SanctionRecord | null> {

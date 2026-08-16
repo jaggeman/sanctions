@@ -12,10 +12,11 @@ import { db } from '../shared/firebase';
 import { enqueueImportTask } from '../importer/taskQueue';
 import { runImport } from '../importer';
 import { processUpload } from '../importer/uploadPipeline';
-import { listImports, findImportBySha256 } from '../importer/importRecord';
-import { listRecordVersions } from '../importer/uploader';
+import { listImports, findImportBySha256, createFetchImportRecord, markImportFailed } from '../importer/importRecord';
+import { listRecordVersions, generateImportId } from '../importer/uploader';
 import { tokensRouter } from './routes/tokens';
 import { decisionsRouter } from './routes/decisions';
+import { customRecordsRouter } from './routes/customRecords';
 import { runSearch } from '../search';
 import { logSearchEvent } from '../search/searchLog';
 import { SanctionSource, SanctionRecord } from '../shared/types';
@@ -27,16 +28,28 @@ import { consumeGlobalOtpBudget } from '../auth/otpBudget';
 import { sendOtpEmail } from '../auth/mailer';
 import { createSession, destroySession } from '../auth/session';
 import { requireAuth, SESSION_COOKIE_NAME } from '../auth/middleware';
-import { isAdminEmail } from '../auth/admins';
+import { isAdminEmail, findMisconfiguredAdminEmails } from '../auth/admins';
 import { isAllowedEmail } from '../auth/emailAllowlist';
 import { TEST_LOGIN_EMAIL, TEST_LOGIN_CODE, isTestLoginEnabled, isTestLoginEmail } from '../auth/testAccount';
 import { requestLogger } from './middleware/requestLogger';
 import { errorLogger } from './middleware/errorLogger';
 import { scheduledSourceFetch } from '../scheduled';
 import { requireAuthOrScope } from './middleware/requireAuthOrScope';
+import { logger } from '../shared/logger';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// issue #65: ADMIN_EMAILS and ALLOWED_EMAIL_DOMAINS are independently
+// configured — an admin address whose domain isn't allow-listed gets
+// silently locked out at login with no indication of why. Not fatal (an
+// operator may be mid-rollout of a new domain); just surfaced in logs.
+for (const { maskedEmail, domain } of findMisconfiguredAdminEmails()) {
+  logger.warn(
+    'ADMIN_EMAILS contains an address whose domain is not in ALLOWED_EMAIL_DOMAINS — this admin will be locked out at login (issue #65).',
+    { maskedEmail, domain },
+  );
+}
 
 const MAX_UPLOAD_BYTES = 64 * 1024 * 1024; // real EU FSD export is ~25 MB
 const ALLOWED_UPLOAD_EXTENSIONS = new Set(['.csv', '.xml']);
@@ -337,6 +350,15 @@ app.get('/openapi.json', (req, res) => {
 app.use('/api/admin/tokens', requireAuth, tokensRouter);
 
 /**
+ * POST/PUT/DELETE/GET /api/admin/custom-records
+ * Internal watchlist entries (source: 'CUSTOM') the official lists don't
+ * cover (issue #172). Auth is enforced inside customRecordsRouter itself
+ * (requireAdmin) — no middleware needed at this mount site. See
+ * src/api/routes/customRecords.ts.
+ */
+app.use('/api/admin/custom-records', customRecordsRouter);
+
+/**
  * PUT/DELETE /api/overrides/:id
  * Field-level corrections layered on top of an imported record (issue #35).
  * Auth is enforced inside overridesRouter itself (requireAuthOrScope) — no
@@ -563,6 +585,14 @@ app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<a
   }
   if (!assertForceAllowed(req, res, !!force)) return;
 
+  // A dry run must leave no trace (same precedent as uploadPipeline.ts's
+  // dry-run path) — no audit doc, since it never actually applies anything.
+  // Resolve the real importId here, before dryRun's early return, so the
+  // dry-run's own DiffResults (which get stamped with importId internally
+  // for record versioning) and a real apply of the same request use a
+  // consistent id if the caller re-sends the same importId for both.
+  const resolvedImportId = importId || generateImportId();
+
   const importOptions = {
     sources,
     csvPath,
@@ -571,7 +601,7 @@ app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<a
     mode,
     dryRun: !!dryRun,
     force: !!force,
-    importId,
+    importId: resolvedImportId,
   };
 
   // Dry-run is a preview (issue #8): the caller needs the counts back to
@@ -588,6 +618,19 @@ app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<a
     }
   }
 
+  // issue #111: a fetch-triggered import has no file to hash-dedup on like
+  // an upload does, so this is its own durable audit record — created
+  // before enqueueing so "who triggered this and what was requested" is
+  // captured even if the Cloud Task itself never runs.
+  await createFetchImportRecord({
+    importId: resolvedImportId,
+    sources,
+    mode,
+    force: !!force,
+    uploadedBy: (req as any).userEmail || null,
+    uploadedAt: new Date().toISOString(),
+  });
+
   try {
     // importOptions already carries mode/dryRun/force/importId — building a
     // fresh object here (as an earlier version of this route did) silently
@@ -597,11 +640,13 @@ app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<a
     await enqueueImportTask(importOptions);
   } catch (error: any) {
     console.error('Failed to queue import task:', error);
+    await markImportFailed(resolvedImportId, error.message);
     return res.status(500).json({ error: 'Failed to start import', details: error.message });
   }
 
   res.status(202).json({
     status: 'import_started',
+    importId: resolvedImportId,
     message: 'The import has been queued and will run independently of this request.',
   });
 });

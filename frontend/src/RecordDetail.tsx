@@ -16,6 +16,7 @@ import {
   ListItemText,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
+import { apiFetch } from './apiFetch';
 
 interface NameAlias {
   wholeName: string;
@@ -103,8 +104,8 @@ export default function RecordDetail({ recordId, onClose }: { recordId: string |
     (async () => {
       try {
         const [recordRes, versionsRes] = await Promise.all([
-          fetch(`/api/sanctions/${encodeURIComponent(recordId)}`),
-          fetch(`/api/sanctions/${encodeURIComponent(recordId)}/versions`),
+          apiFetch(`/api/sanctions/${encodeURIComponent(recordId)}`),
+          apiFetch(`/api/sanctions/${encodeURIComponent(recordId)}/versions`),
         ]);
         if (!recordRes.ok) throw new Error(`Server returned ${recordRes.status}`);
         const recordData = await recordRes.json();

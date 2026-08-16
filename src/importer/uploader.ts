@@ -198,7 +198,10 @@ export function computeContentHash(record: SanctionRecord): string {
   return crypto.createHash('sha256').update(JSON.stringify(content)).digest('hex');
 }
 
-function generateImportId(): string {
+// Exported for reuse by the fetch-triggered import path (issue #111), which
+// needs an importId of its own before enqueueing the Cloud Task, not just
+// as an internal default inside uploadRecords/delistRecords.
+export function generateImportId(): string {
   return `import_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
 }
 

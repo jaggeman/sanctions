@@ -42,14 +42,15 @@ function record(overrides: Record<string, any> = {}) {
 }
 
 async function clearCollection() {
-  // recursiveDelete (not a plain batch delete) so orphaned `versions`
-  // subcollections from prior tests can't leak into later ones — Firestore
-  // does not cascade-delete subcollections on its own (see issue #9 gotchas).
+  // recursiveDelete (not a plain batch delete) so orphaned `versions`/
+  // `history` subcollections from prior tests can't leak into later ones —
+  // Firestore does not cascade-delete subcollections on its own (see issue
+  // #9's gotchas, and now issue #112's overrides/{id}/history).
   const snap = await db.collection('sanctions').get();
   await Promise.all(snap.docs.map((doc) => db.recursiveDelete(doc.ref)));
 
   const overridesSnap = await db.collection('overrides').get();
-  await Promise.all(overridesSnap.docs.map((doc: any) => doc.ref.delete()));
+  await Promise.all(overridesSnap.docs.map((doc: any) => db.recursiveDelete(doc.ref)));
 }
 
 beforeEach(async () => {
@@ -277,7 +278,7 @@ describe('overrides — real Firestore write path (issue #35)', () => {
       record({ id: 'EU-override-2', names: namesOverride('Original Name'), sanctionReason: 'Second source update' }),
     ]);
 
-    await deleteOverride('EU-override-2');
+    await deleteOverride('EU-override-2', 'reviewer@example.com');
 
     const rawDoc = (await db.collection('sanctions').doc('EU-override-2').get()).data()!;
     const override = await getOverride('EU-override-2');

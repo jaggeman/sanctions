@@ -11,16 +11,18 @@ function toArray(val: any): any[] {
 }
 
 /**
- * Issue #6: this source has no `strong`/language/precision markers the way
- * the EU FSD export does — only a primary name and a flat alias list, and
- * either a full date or a bare year. Structured `names`/`birthDates` are
- * derived straight from what's already computed below rather than invented;
- * the richer per-alias/per-date fields (language, circa, year ranges) simply
- * don't exist in this format, so they're left undefined, not guessed at.
+ * Issue #6/#168: this source has no language/precision markers the way the
+ * EU FSD export does, and either a full date or a bare year for birthdates.
+ * `INDIVIDUAL_ALIAS` DOES carry a real reliability marker (`<QUALITY>Good|
+ * Low</QUALITY>`) — `strongAliases` (built from that field by individual
+ * callers only, see below) is fed through here instead of hardcoding every
+ * alias weak. `ENTITY_ALIAS`'s `<QUALITY>` is a different thing entirely
+ * (an alias-type label, `a.k.a.`/`f.k.a.` — never `Good`/`Low`) and is never
+ * passed here, so entity aliases keep the unchanged default.
  */
-function deriveNames(primaryName: string, aliases: string[]): NameAlias[] {
+function deriveNames(primaryName: string, aliases: string[], strongAliases: Set<string> = new Set()): NameAlias[] {
   const names: NameAlias[] = [{ wholeName: primaryName, strong: true }];
-  for (const alias of aliases) names.push({ wholeName: alias, strong: false });
+  for (const alias of aliases) names.push({ wholeName: alias, strong: strongAliases.has(alias) });
   return names;
 }
 
@@ -71,13 +73,19 @@ export async function parseUNList(filePath: string): Promise<SanctionRecord[]> {
       .filter(Boolean);
     const primaryName = nameParts.join(' ') || 'Unknown Name';
 
-    // Map aliases
+    // Map aliases — INDIVIDUAL_ALIAS's <QUALITY> is a genuine reliability
+    // marker ("Good"/"Low"), unlike ENTITY_ALIAS's same-named field below
+    // (issue #168).
     const aliases: string[] = [];
+    const strongAliases = new Set<string>();
     const rawAliases = toArray(ind.INDIVIDUAL_ALIAS);
     for (const alias of rawAliases) {
       const aliasName = String(alias.ALIAS_NAME || '').trim();
       if (aliasName && !aliases.includes(aliasName)) {
         aliases.push(aliasName);
+        if (String(alias.QUALITY || '').trim().toLowerCase() === 'good') {
+          strongAliases.add(aliasName);
+        }
       }
     }
 
@@ -159,7 +167,7 @@ export async function parseUNList(filePath: string): Promise<SanctionRecord[]> {
       id: `UN-${dataId}`,
       source: 'UN',
       type: 'individual',
-      names: deriveNames(primaryName, aliases),
+      names: deriveNames(primaryName, aliases, strongAliases),
       searchNames: [],
       birthDates: birthDates.length > 0 ? birthDates : undefined,
       placesOfBirth: placesOfBirth.length > 0 ? placesOfBirth : undefined,
@@ -182,7 +190,11 @@ export async function parseUNList(filePath: string): Promise<SanctionRecord[]> {
 
     const primaryName = String(ent.FIRST_NAME || '').trim() || 'Unknown Name';
 
-    // Map aliases
+    // Map aliases. NOT reading ENTITY_ALIAS's <QUALITY> for strong/weak
+    // (issue #168): on entities that field holds an alias-TYPE label
+    // ("a.k.a."/"f.k.a."), never "Good"/"Low" — reusing the individual
+    // mapping here would fabricate a false "every entity alias is
+    // low-confidence" signal the source never actually asserted.
     const aliases: string[] = [];
     const rawAliases = toArray(ent.ENTITY_ALIAS);
     for (const alias of rawAliases) {

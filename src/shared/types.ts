@@ -94,8 +94,6 @@ export interface Override {
   reason: string;
 }
 
-// Design-only for issue #10 — no persistence/CRUD/API built yet. Tracked for
-// the actual build in a follow-up issue (see PR description).
 export interface Decision {
   entityId: string;
   subjectId: string; // the customer/subject this adjudication was made for
@@ -105,26 +103,64 @@ export interface Decision {
   notes?: string;
 }
 
+// One entry in `decisions/{entityId__subjectId}/history/{autoId}` (issue
+// #112) — same shape as sanctions/{id}/versions/{importId}: a full snapshot
+// of the state that resulted from this change, tagged with what kind of
+// change it was. `saveDecision`'s upsert-for-current-state behavior is
+// unchanged; this is what keeps the prior verdict/author/notes recoverable
+// once a second adjudication replaces them.
+export type DecisionChangeType = 'created' | 'replaced';
+export interface DecisionHistoryEntry {
+  changeType: DecisionChangeType;
+  changedAt: string; // ISO string
+  decision: Decision;
+}
+
+// One entry in `overrides/{entityId}/history/{autoId}` (issue #112). For
+// `changeType: 'deleted'`, `override` is the override as it stood just
+// before removal (the thing that got removed) — `changedBy`/`changedAt`
+// are the deleter's identity/time, not the original author's, so a delete
+// is attributable even though `saveOverride`/`overriddenBy` never recorded
+// a "deleter" field before this.
+export type OverrideChangeType = 'created' | 'replaced' | 'deleted';
+export interface OverrideHistoryEntry {
+  changeType: OverrideChangeType;
+  changedAt: string; // ISO string
+  changedBy: string;
+  override: Override;
+}
+
 export type ImportStatus = 'pending' | 'parsing' | 'applied' | 'failed' | 'rejected';
 export type ImportFormat = 'eu-xml-1.1' | 'eu-csv-1.1' | 'eu-csv-1.0' | 'un-xml' | 'us-xml' | 'csv';
 
-// Audit trail for POST /api/upload (issue #7). Document ID == sha256, which
-// is the concurrency-safety mechanism: Firestore's doc.create() fails
-// atomically if the ID already exists, so two concurrent uploads of the
-// identical file can't both "win" the pending-creation race — see
-// src/importer/importRecord.ts. `status` stops at 'applied' rather than
-// including a 'diffing' state, since the reconciliation/diff engine (issue
-// #8) doesn't exist yet; this pipeline still runs the existing
+// Audit trail for POST /api/upload (issue #7) AND POST /api/import (issue
+// #111) — one collection, two triggers, discriminated by `trigger`. For an
+// upload, document ID == sha256, which is the concurrency-safety mechanism:
+// Firestore's doc.create() fails atomically if the ID already exists, so two
+// concurrent uploads of the identical file can't both "win" the
+// pending-creation race — see src/importer/importRecord.ts. For a
+// fetch-triggered import there's no file/hash to dedup on, so the ID is a
+// freshly generated importId per call instead. `status` stops at 'applied'
+// rather than including a 'diffing' state, since the reconciliation/diff
+// engine (issue #8) doesn't exist yet; this pipeline still runs the existing
 // parse-everything upload path under the hood.
 export interface ImportRecord {
-  importId: string; // == sha256
-  filename: string;
-  sha256: string;
-  sizeBytes: number;
-  storagePath: string;
-  source: SanctionSource;
-  format: ImportFormat;
-  fileGenerationDate: string | null; // parsed from the file's own content, not the upload time
+  importId: string; // == sha256 for an upload; a generated id for a fetch
+  trigger: 'upload' | 'fetch';
+  // Upload-only fields (issue #7) — undefined for a fetch-triggered import.
+  filename?: string;
+  sha256?: string;
+  sizeBytes?: number;
+  storagePath?: string;
+  source?: SanctionSource;
+  format?: ImportFormat;
+  fileGenerationDate?: string | null; // parsed from the file's own content, not the upload time
+  // Fetch-triggered-only fields (issue #111) — undefined for an upload. A
+  // fetch can span multiple sources in one call (POST /api/import's
+  // `sources` array), unlike an upload which is always exactly one file/source.
+  sources?: SanctionSource[];
+  mode?: 'sync' | 'append'; // issue #8 — plain literal here, not importer/diff's ImportMode, to avoid a shared-types -> importer dependency
+  force?: boolean;
   uploadedBy: string | null; // null until issue #3's auth lands on this endpoint
   uploadedAt: string; // ISO string
   status: ImportStatus;

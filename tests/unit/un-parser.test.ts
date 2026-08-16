@@ -109,6 +109,34 @@ describe('parseUNList', () => {
     expect(naser!.identifications?.every((id) => id.countryIso2 === 'Iran (Islamic Republic of)')).toBe(true);
   });
 
+  it('issue #168: marks a Good-quality INDIVIDUAL_ALIAS as strong, a Low-quality one as weak', async () => {
+    const records = await parseUNList(FIXTURE);
+    const gaston = records.find((r) => r.id === 'UN-6907995');
+
+    expect(gaston).toBeDefined();
+    const rumuli = gaston!.names?.find((n) => n.wholeName === 'Rumuli');
+    const byiringiro = gaston!.names?.find((n) => n.wholeName === 'Byiringiro Victor Rumuli');
+    expect(rumuli?.strong).toBe(false);
+    expect(byiringiro?.strong).toBe(true);
+  });
+
+  it("issue #168: ENTITY_ALIAS's QUALITY is an alias-type label (a.k.a./f.k.a.), not a reliability marker — must not flip strong", async () => {
+    // Real records: DATAID 6908026 has an "a.k.a." alias, DATAID 6908335 has
+    // an "f.k.a." one. Neither value is ever "Good", so naively reusing the
+    // INDIVIDUAL_ALIAS Good->strong mapping here would mark every entity
+    // alias as weak — a confidence signal the source never actually
+    // asserted. Entities keep the pre-existing default (false) unchanged.
+    const records = await parseUNList(FIXTURE);
+
+    const cagl = records.find((r) => r.id === 'UN-6908026');
+    const caglAlias = cagl!.names?.find((n) => n.wholeName === 'CAGL');
+    expect(caglAlias?.strong).toBe(false);
+
+    const logarcheo = records.find((r) => r.id === 'UN-6908335');
+    const logarcheoAlias = logarcheo!.names?.find((n) => n.wholeName === 'LOGARCHEO AG');
+    expect(logarcheoAlias?.strong).toBe(false);
+  });
+
   it('returns an empty list when CONSOLIDATED_LIST is absent', async () => {
     // Reuse the fixture dir but point at a file with a different root element.
     const emptyXml = '<?xml version="1.0"?><NotTheRightRoot/>';

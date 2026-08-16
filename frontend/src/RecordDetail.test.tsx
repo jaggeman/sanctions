@@ -1,6 +1,7 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import RecordDetail from './RecordDetail';
+import { setOnSessionExpired } from './apiFetch';
 
 /**
  * RecordDetail is a dialog shown when a search result is clicked (issue #12).
@@ -25,6 +26,7 @@ function stubFetch(record: any, versions: any[] = []) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  setOnSessionExpired(null);
 });
 
 describe('RecordDetail', () => {
@@ -122,5 +124,18 @@ describe('RecordDetail', () => {
     render(<RecordDetail recordId="EU-1" onClose={() => {}} />);
 
     await waitFor(() => expect(screen.getByText(/could not load/i)).toBeInTheDocument());
+  });
+
+  it('a 401 from the record fetch fires the app-wide session-expiry handler (issue #59 gap)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 401, json: async () => ({ error: 'Authentication required' }) }) as Response),
+    );
+    const sessionExpired = vi.fn();
+    setOnSessionExpired(sessionExpired);
+
+    render(<RecordDetail recordId="EU-1" onClose={() => {}} />);
+
+    await waitFor(() => expect(sessionExpired).toHaveBeenCalled());
   });
 });

@@ -45,6 +45,16 @@ const logSearchEvent = vi.fn();
 vi.mock('../../src/shared/firebase', () => ({ db: fakeDb }));
 vi.mock('../../src/importer/taskQueue', () => ({ enqueueImportTask: vi.fn(async () => {}) }));
 vi.mock('../../src/importer', () => ({ runImport: vi.fn(async () => ({ success: true, importedCounts: {} })) }));
+// issue #111: POST /api/import now creates its own audit doc in the
+// 'imports' collection, which this file's fakeDb (scoped to 'sanctions'
+// only, for the search tests) doesn't model — mock the collaborator module
+// directly instead, same as taskQueue/runImport above.
+vi.mock('../../src/importer/importRecord', () => ({
+  createFetchImportRecord: vi.fn(async () => {}),
+  markImportFailed: vi.fn(async () => {}),
+  listImports: vi.fn(),
+  findImportBySha256: vi.fn(),
+}));
 vi.mock('../../src/search', () => ({ runSearch }));
 vi.mock('../../src/search/searchLog', () => ({ logSearchEvent }));
 vi.mock('../../src/shared/apiTokens', () => ({ verifyApiToken }));

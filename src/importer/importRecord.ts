@@ -42,7 +42,9 @@ function isStalePending(existing: ImportRecord): boolean {
  * (issue #60) is retryable — the new attempt replaces it instead of being
  * turned away forever.
  */
-export async function createPendingImport(record: Omit<ImportRecord, 'status'>): Promise<void> {
+export async function createPendingImport(
+  record: Omit<ImportRecord, 'status'> & { sha256: string },
+): Promise<void> {
   const docRef = db.collection(COLLECTION).doc(record.sha256);
 
   await db.runTransaction(async (tx: FirebaseFirestore.Transaction) => {
@@ -62,6 +64,24 @@ export async function createPendingImport(record: Omit<ImportRecord, 'status'>):
 
     throw new ImportAlreadyInFlightError(`Import ${record.sha256} is already pending or in progress`);
   });
+}
+
+/**
+ * Creates the pending import doc for a fetch-triggered import (issue #111
+ * — POST /api/import, which downloads and parses the EU/UN/US sources
+ * directly, unlike an upload which has a file to hash-dedup on). Keyed by
+ * `record.importId`, which the caller must have already generated (or
+ * accepted from the client and validated against a safe id pattern, per
+ * CLAUDE.md §6) — there's no natural dedup key here, so no retry/staleness
+ * handling like createPendingImport's: every call gets its own fresh id, and
+ * a collision (e.g. a client-supplied importId reused) is a genuine error,
+ * not an in-flight race to recover from.
+ */
+export async function createFetchImportRecord(
+  record: Omit<ImportRecord, 'status' | 'trigger'>,
+): Promise<void> {
+  const docRef = db.collection(COLLECTION).doc(record.importId);
+  await docRef.create({ ...record, trigger: 'fetch', status: 'pending' });
 }
 
 export async function findImportBySha256(sha256: string): Promise<ImportRecord | null> {
