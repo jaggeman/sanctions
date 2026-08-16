@@ -116,6 +116,49 @@ describe('App component navigation tabs', () => {
 
     await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
   });
+
+  it('issue #188: preserves search query and results when switching tabs', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('/api/auth/session')) {
+          return { ok: true, json: async () => ({ email: 'analyst@example.com' }) } as Response;
+        }
+        if (url.includes('/api/search')) {
+          return {
+            ok: true,
+            json: async () => ({
+              results: [{ id: 'TEST-1', source: 'TEST', type: 'individual', names: [{ wholeName: 'Vladimir Putin', strong: true }] }],
+              totalMatches: 1,
+              truncated: false,
+            }),
+          } as Response;
+        }
+        return { ok: true, json: async () => ({}) } as Response;
+      }),
+    );
+
+    await renderLoggedIn();
+    
+    // 1. Search
+    const searchInput = screen.getByPlaceholderText(/search by name/i);
+    fireEvent.change(searchInput, { target: { value: 'Vladimir Putin' } });
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }));
+    
+    await waitFor(() => expect(screen.getByText('Vladimir Putin')).toBeInTheDocument());
+    
+    // 2. Switch tab
+    fireEvent.click(screen.getByText('Official EU Lists'));
+    expect(screen.getByText('EU Sanctions Map')).toBeInTheDocument();
+    
+    // 3. Switch back
+    fireEvent.click(screen.getByRole('tab', { name: /^search$/i }));
+    
+    // 4. Verify state is preserved
+    expect(screen.getByPlaceholderText(/search by name/i)).toHaveValue('Vladimir Putin');
+    expect(screen.getByText('Vladimir Putin')).toBeInTheDocument();
+  });
 });
 
 describe('App — session-expiry handling (issue #59)', () => {

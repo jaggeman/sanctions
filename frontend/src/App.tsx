@@ -201,7 +201,9 @@ function App() {
           </Tabs>
         </Box>
 
-        {tabValue === 0 && <SearchTab onSelectRecord={setSelectedRecordId} />}
+        <Box sx={{ display: tabValue === 0 ? 'block' : 'none' }}>
+          <SearchTab onSelectRecord={setSelectedRecordId} />
+        </Box>
 
         {tabValue === 1 && (
           <UploadTab
