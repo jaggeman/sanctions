@@ -203,3 +203,25 @@ export interface RecordVersion {
   changeType: ChangeType;
   record: SanctionRecord; // full snapshot, per issue #9: simpler than a field-level delta
 }
+
+// One entry in the `searchLog` collection (issue #109) — a durable,
+// queryable record of who searched for what, when. Written from
+// src/api/routes/search.ts, never read back by the app today (no browsing
+// UI yet — that's a separate future issue); server-only access, no direct
+// client read/write path, per firestore.rules' blanket deny-all backstop.
+export interface SearchLogEntry {
+  id?: string; // Firestore doc id, present once read back
+  action: 'search' | 'lookup'; // 'search' = GET /api/search, 'lookup' = GET /api/sanctions/:id
+  requestedBy: string; // session: the user's email; token: `token:<tokenId>`
+  query?: string; // the raw `q`, present for action: 'search'
+  entityId?: string; // the looked-up record id, present for action: 'lookup'
+  filters?: {
+    source?: string;
+    type?: string;
+    threshold?: number;
+    includeDelisted?: boolean;
+    dob?: string;
+  };
+  resultCount: number; // totalMatches for a search; 1 (found) or 0 (not found) for a lookup
+  timestamp: string; // ISO string
+}

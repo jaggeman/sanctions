@@ -4,7 +4,7 @@ import { createFakeDb } from '../helpers/fakeFirestore';
 const { db: fakeDb, reset: resetFakeDb, dumpIds } = createFakeDb();
 vi.mock('../../../src/shared/firebase', () => ({ db: fakeDb }));
 
-const { createOtp, verifyOtp } = await import('../../../src/auth/otpStore');
+const { createOtp, verifyOtp, isInCooldown } = await import('../../../src/auth/otpStore');
 
 describe('otpStore (issue #63: Firestore-backed, survives multi-instance/cold-start)', () => {
   beforeEach(() => {
@@ -83,6 +83,32 @@ describe('otpStore (issue #63: Firestore-backed, survives multi-instance/cold-st
     it('cools down independently per email', async () => {
       expect(await createOtp('a@example.com')).toBeTruthy();
       expect(await createOtp('b@example.com')).toBeTruthy();
+    });
+  });
+
+  describe('isInCooldown — read-only peek (issue #62)', () => {
+    it('is false for an email with no pending code', async () => {
+      expect(await isInCooldown('nobody@example.com')).toBe(false);
+    });
+
+    it('is true right after createOtp succeeds', async () => {
+      await createOtp('user@example.com');
+      expect(await isInCooldown('user@example.com')).toBe(true);
+    });
+
+    it('is false once the cooldown window has passed', async () => {
+      vi.useFakeTimers();
+      await createOtp('user@example.com');
+      vi.advanceTimersByTime(61 * 1000);
+      expect(await isInCooldown('user@example.com')).toBe(false);
+    });
+
+    it('does not write anything — checking cooldown status has no side effect', async () => {
+      await createOtp('user@example.com');
+      const before = dumpIds('otpCodes');
+      await isInCooldown('user@example.com');
+      await isInCooldown('someone-else@example.com');
+      expect(dumpIds('otpCodes')).toEqual(before);
     });
   });
 

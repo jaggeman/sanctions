@@ -200,6 +200,38 @@ function generateImportId(): string {
   return `import_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
 }
 
+// The optional, parser-populated SanctionRecord content fields eligible to
+// be cleared when a later import omits them (issue #39) — deliberately an
+// explicit allow-list, not "every key on the existing doc minus some
+// exclusions": the stored doc can carry fields the importer itself never
+// owns at all (e.g. an analyst's manual annotation added directly in
+// Firestore, issue #10's customRecords-adjacent enrichment) — the whole
+// point of `merge: true` is to leave those alone, and a generic
+// existing-vs-new key diff would delete them the moment a re-import didn't
+// happen to mention them, which is exactly the bug this fix must not become.
+const CLEARABLE_CONTENT_FIELDS = [
+  'firstNames', 'lastNames', 'titles', 'datesOfBirth', 'placesOfBirth',
+  'citizenships', 'passports', 'addresses', 'sanctionReason', 'legalBasis',
+  'rawSourceData', 'euReferenceNumber', 'unitedNationId', 'sourceRef',
+  'identifications', 'regulation', 'names', 'birthDates', 'contactInfo',
+] as const;
+
+/**
+ * issue #39: `merge: true` only adds/overwrites keys that ARE present in a
+ * write — it never removes a key that's simply absent, so a field a record
+ * loses between imports (a corrected alias, a removed address) survives in
+ * Firestore forever unless something explicitly deletes it. Returns the
+ * known content fields present on the existing stored doc but absent from
+ * the freshly parsed record, for the caller to FieldValue.delete().
+ */
+function fieldsRemovedUpstream(existing: SanctionRecord, record: SanctionRecord): string[] {
+  return CLEARABLE_CONTENT_FIELDS.filter((key) => {
+    const existingValue = (existing as any)[key];
+    const newValue = (record as any)[key];
+    return existingValue !== undefined && newValue === undefined;
+  });
+}
+
 function writeVersion(
   batch: FirebaseFirestore.WriteBatch,
   docRef: FirebaseFirestore.DocumentReference,
@@ -242,6 +274,7 @@ export async function uploadRecords(records: SanctionRecord[], importId?: string
       record.contentHash = computeContentHash(record);
 
       let changeType: ChangeType | null;
+      let existing: SanctionRecord | undefined;
 
       if (!existingDoc.exists) {
         record.status = 'active';
@@ -249,11 +282,19 @@ export async function uploadRecords(records: SanctionRecord[], importId?: string
         record.updatedAt = now;
         changeType = 'created';
       } else {
-        const existing = existingDoc.data() as SanctionRecord;
+        existing = existingDoc.data() as SanctionRecord;
         const wasDelisted = existing.status === 'delisted';
         const contentChanged = existing.contentHash !== record.contentHash;
 
         record.status = 'active';
+        // issue #39: every parser stamps createdAt fresh on every run, so
+        // without this the incoming record's createdAt ("now") would
+        // silently overwrite the original "first seen" date on any genuine
+        // update or relist — not just no-op re-imports (those already write
+        // nothing at all, per issue #108, so createdAt is untouched there
+        // regardless). `|| record.createdAt` only matters for a pre-fix
+        // legacy doc that never had createdAt stored at all.
+        record.createdAt = existing.createdAt || record.createdAt;
 
         if (wasDelisted) {
           changeType = 'relisted';
@@ -283,6 +324,14 @@ export async function uploadRecords(records: SanctionRecord[], importId?: string
         const toWrite: any = { ...record };
         if (changeType === 'relisted') {
           toWrite.delistedAt = admin.firestore.FieldValue.delete();
+        }
+        // issue #39: `merge: true` never removes a key that's simply absent
+        // from this write — a field the record loses upstream (a corrected
+        // alias, a removed address) would otherwise survive forever.
+        if (existing) {
+          for (const key of fieldsRemovedUpstream(existing, record)) {
+            toWrite[key] = admin.firestore.FieldValue.delete();
+          }
         }
         batch.set(docRef, toWrite, { merge: true });
         writeVersion(batch, docRef, effectiveImportId, changeType, now, record);

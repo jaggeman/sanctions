@@ -18,6 +18,16 @@ function buildApp() {
     res.status(200).json({ ok: true });
     next(new Error('too late'));
   });
+  app.get('/throws-400', () => {
+    const err: any = new SyntaxError('Unexpected token b in JSON at position 1');
+    err.status = 400;
+    throw err;
+  });
+  app.get('/throws-statuscode-403', () => {
+    const err: any = new Error('Forbidden');
+    err.statusCode = 403;
+    throw err;
+  });
   app.use(errorLogger);
   return app;
 }
@@ -77,5 +87,42 @@ describe('errorLogger middleware', () => {
     const entries = readJsonLines(errorSpy);
     const errorLine = entries.find((e) => e.message === 'request.error');
     expect(errorLine.userEmail).toBe('a***@example.com');
+  });
+
+  // issue #66: an unconditional 500 mislabels a client's own mistake (e.g. a
+  // body-parser SyntaxError, naturally a 400) as a server fault, and pollutes
+  // the error-level log stream with what's actually routine bad input.
+  it('respects err.status when present, instead of always returning 500', async () => {
+    const res = await request(buildApp()).get('/throws-400');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Unexpected token b in JSON at position 1');
+    expect(res.body.requestId).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('respects err.statusCode when err.status is absent', async () => {
+    const res = await request(buildApp()).get('/throws-statuscode-403');
+    expect(res.status).toBe(403);
+  });
+
+  it('logs a 4xx error at warn, not error, so genuine server failures stay findable by volume', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await request(buildApp()).get('/throws-400');
+
+    const warnEntries = readJsonLines(warnSpy);
+    expect(warnEntries.some((e) => e.message === 'request.error')).toBe(true);
+    const errorEntries = readJsonLines(errorSpy);
+    expect(errorEntries.some((e) => e.message === 'request.error')).toBe(false);
+  });
+
+  it('still logs a 500 (no status) at error level', async () => {
+    await request(buildApp()).get('/throws');
+    const errorEntries = readJsonLines(errorSpy);
+    expect(errorEntries.some((e) => e.message === 'request.error')).toBe(true);
+  });
+
+  it('defaults to 500 and the generic message when the error carries no status', async () => {
+    const res = await request(buildApp()).get('/throws');
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Internal server error');
   });
 });

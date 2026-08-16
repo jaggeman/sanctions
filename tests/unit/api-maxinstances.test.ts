@@ -2,16 +2,20 @@ import { describe, it, expect, vi } from 'vitest';
 
 // Issue #16 pinned maxInstances to 1 because OTP/session storage was an
 // in-memory Map, which would fragment across concurrent Cloud Function
-// instances. Issue #63 moved that storage to Firestore, so that half of the
-// original reason is gone — but the pin STAYS regardless (see the comment
-// on `export const api` in src/api/index.ts): src/search/index.ts's
-// `cachedRecords` is a separate, still in-memory, per-instance cache that
-// issue #43 hasn't yet made multi-instance-safe. Removing the pin before
-// #43 lands would silently reintroduce stale search results on any instance
-// that didn't run the most recent import. Verified here directly on the
-// CloudFunction wrapper's __endpoint, which firebase-functions populates
-// from the onRequest options at module load, no firebase-functions mock
-// required.
+// instances. Issue #63 moved that storage to Firestore, and issue #43 later
+// added a Firestore-backed `meta/searchIndex.version` counter that
+// src/search/index.ts's getRecords() checks before trusting its own
+// in-memory cache — so a search served by any instance now picks up an
+// invalidation regardless of which instance ran the import. Both reasons
+// for the pin are gone (issue #101): `api` is no longer pinned to a single
+// instance.
+//
+// Asserting `.not.toBe(1)` rather than `.toBeUndefined()`: firebase-functions
+// represents an explicitly-unset option as a `ResetValue` sentinel object,
+// not a bare `undefined`, when no `maxInstances` is passed to onRequest at
+// all. Verified here directly on the CloudFunction wrapper's __endpoint,
+// which firebase-functions populates from the onRequest options at module
+// load, no firebase-functions mock required.
 vi.mock('../../src/shared/firebase', () => ({ db: { collection: vi.fn() } }));
 vi.mock('../../src/importer', () => ({ runImport: vi.fn(async () => ({ success: true, importedCounts: {} })) }));
 vi.mock('../../src/search', () => ({
@@ -20,8 +24,8 @@ vi.mock('../../src/search', () => ({
 
 const { api } = await import('../../src/api');
 
-describe('api Cloud Function export (issue #16, still pinned pending issue #43)', () => {
-  it('is pinned to a single instance until the search index cache is also multi-instance-safe', () => {
-    expect((api as any).__endpoint.maxInstances).toBe(1);
+describe('api Cloud Function export (issue #101)', () => {
+  it('is no longer pinned to a single instance', () => {
+    expect((api as any).__endpoint.maxInstances).not.toBe(1);
   });
 });
