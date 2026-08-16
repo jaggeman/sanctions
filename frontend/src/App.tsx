@@ -15,16 +15,11 @@ import {
   TextField,
   Button,
   Chip,
-  Paper,
   CircularProgress,
   IconButton,
-  Select,
-  MenuItem,
-  FormControl,
-  InputLabel,
   Alert
 } from '@mui/material';
-import type { PaletteMode, SelectChangeEvent } from '@mui/material';
+import type { PaletteMode } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import SearchIcon from '@mui/icons-material/Search';
 import Brightness4Icon from '@mui/icons-material/Brightness4';
@@ -36,6 +31,7 @@ import VpnKeyIcon from '@mui/icons-material/VpnKey';
 import ApiTokensTab from './ApiTokensTab';
 import ImportHistoryTab from './ImportHistoryTab';
 import RecordDetail from './RecordDetail';
+import UploadTab from './UploadTab';
 import LogoutIcon from '@mui/icons-material/Logout';
 import Login from './components/Login';
 import { apiFetch, setOnSessionExpired } from './apiFetch';
@@ -150,14 +146,8 @@ function App() {
   const [totalMatches, setTotalMatches] = useState(0);
   const [truncated, setTruncated] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [uploadSource, setUploadSource] = useState('EU');
   const [searchError, setSearchError] = useState<string | null>(null);
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
-  const [uploadFeedback, setUploadFeedback] = useState<{
-    severity: 'success' | 'error' | 'warning';
-    message: string;
-    duplicateImportId?: string;
-  } | null>(null);
   const [historyFocusId, setHistoryFocusId] = useState<string | undefined>(undefined);
 
   const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
@@ -184,53 +174,6 @@ function App() {
     } catch (err) {
       console.error(err);
       setSearchError('Search failed. Please try again.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || e.target.files.length === 0) return;
-    const file = e.target.files[0];
-
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('source', uploadSource);
-
-    setIsLoading(true);
-    setUploadFeedback(null);
-    try {
-      const res = await apiFetch('/api/upload', {
-        method: 'POST',
-        body: formData
-      });
-      if (res.status === 401) {
-        // Session expired — apiFetch's callback already returns to Login;
-        // don't also show the generic "Upload failed." for this case
-        // (issue #59).
-        return;
-      }
-
-      const data = await res.json().catch(() => ({}));
-
-      if (res.status === 200 && data.status === 'applied') {
-        const counts = data.counts || {};
-        setUploadFeedback({
-          severity: 'success',
-          message: `Import applied — parsed ${counts.parsed ?? 0}, uploaded ${counts.uploaded ?? 0}.`,
-        });
-      } else if (res.status === 409 && data.duplicateOfImportId) {
-        setUploadFeedback({
-          severity: 'warning',
-          message: `Identical file already imported as import #${data.duplicateOfImportId}.`,
-          duplicateImportId: data.duplicateOfImportId,
-        });
-      } else {
-        setUploadFeedback({ severity: 'error', message: data.error || 'Upload failed.' });
-      }
-    } catch (err) {
-      console.error(err);
-      setUploadFeedback({ severity: 'error', message: 'Upload failed.' });
     } finally {
       setIsLoading(false);
     }
@@ -395,85 +338,12 @@ function App() {
         )}
 
         {tabValue === 1 && (
-          <Box>
-            <Card sx={{ p: 2 }}>
-              <CardContent>
-                <Typography variant="h5" gutterBottom>
-                  Import Sanctions List
-                </Typography>
-                <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
-                  Upload CSV or XML files to sync with the database. The file is parsed and applied immediately, and you'll see the outcome below.
-                </Typography>
-
-                <FormControl size="small" sx={{ minWidth: 200 }}>
-                  <InputLabel id="upload-source-label">Source</InputLabel>
-                  <Select
-                    labelId="upload-source-label"
-                    label="Source"
-                    value={uploadSource}
-                    onChange={(e: SelectChangeEvent) => setUploadSource(e.target.value)}
-                    disabled={isLoading}
-                  >
-                    <MenuItem value="EU">EU</MenuItem>
-                    <MenuItem value="UN">UN</MenuItem>
-                    <MenuItem value="US">US</MenuItem>
-                    <MenuItem value="PEP">PEP</MenuItem>
-                    <MenuItem value="CUSTOM">CUSTOM</MenuItem>
-                  </Select>
-                </FormControl>
-
-                <Paper
-                  variant="outlined"
-                  sx={{ 
-                    mt: 4, 
-                    p: 6, 
-                    textAlign: 'center', 
-                    cursor: 'pointer',
-                    borderStyle: 'dashed',
-                    borderColor: 'primary.main',
-                    backgroundColor: mode === 'dark' ? 'rgba(144, 202, 249, 0.04)' : 'rgba(25, 118, 210, 0.04)',
-                    transition: 'all 0.2s',
-                    '&:hover': {
-                      backgroundColor: mode === 'dark' ? 'rgba(144, 202, 249, 0.08)' : 'rgba(25, 118, 210, 0.08)'
-                    }
-                  }}
-                  component="label"
-                >
-                  <input type="file" hidden onChange={handleUpload} accept=".csv,.xml" />
-                  <CloudUploadIcon sx={{ fontSize: 60, color: 'primary.main', mb: 2 }} />
-                  <Typography variant="h6" gutterBottom>
-                    {isLoading ? 'Uploading...' : 'Click or Drag & Drop to upload files'}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Supported formats: CSV, XML
-                  </Typography>
-                </Paper>
-
-                {uploadFeedback && (
-                  <Alert
-                    severity={uploadFeedback.severity}
-                    sx={{ mt: 3 }}
-                    onClose={() => setUploadFeedback(null)}
-                    action={
-                      uploadFeedback.duplicateImportId ? (
-                        <Button
-                          size="small"
-                          onClick={() => {
-                            setHistoryFocusId(uploadFeedback.duplicateImportId);
-                            setTabValue(2);
-                          }}
-                        >
-                          View import
-                        </Button>
-                      ) : undefined
-                    }
-                  >
-                    {uploadFeedback.message}
-                  </Alert>
-                )}
-              </CardContent>
-            </Card>
-          </Box>
+          <UploadTab
+            onViewImport={(importId) => {
+              setHistoryFocusId(importId);
+              setTabValue(2);
+            }}
+          />
         )}
 
         {tabValue === 2 && <ImportHistoryTab focusImportId={historyFocusId} />}
@@ -592,7 +462,7 @@ function App() {
                     The <strong>Upload Lists</strong> tab enables you to manually synchronize new sanctions files into the system database.
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Currently supported formats include structured <strong>CSV</strong> files and <strong>XML</strong> format lists (specifically parsing the EU, UN, and US standard schema). Uploading an identical file twice is rejected as a duplicate, with a link to the original import in the <strong>Import History</strong> tab.
+                    Currently supported formats include structured <strong>CSV</strong> files and <strong>XML</strong> format lists, covering EU, UN, US, PEP, and CUSTOM sources. Uploading an identical file twice is rejected as a duplicate, with a link to the original import in the <strong>Import History</strong> tab.
                   </Typography>
                 </CardContent>
               </Card>

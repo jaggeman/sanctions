@@ -719,6 +719,16 @@
               "skipped": { "type": "integer" }
             }
           },
+          "samples": {
+            "type": "object",
+            "description": "Issue #12 — a bounded sample (up to SAMPLE_LIMIT, currently 5) of actual records per bucket, for the diff preview UI. Names, not just counts.",
+            "properties": {
+              "added": { "type": "array", "items": { "$ref": "#/components/schemas/SampleRecord" } },
+              "updated": { "type": "array", "items": { "$ref": "#/components/schemas/SampleRecord" } },
+              "unchanged": { "type": "array", "items": { "$ref": "#/components/schemas/SampleRecord" } },
+              "delisted": { "type": "array", "items": { "$ref": "#/components/schemas/SampleRecord" } }
+            }
+          },
           "toDelistIds": { "type": "array", "items": { "type": "string" } },
           "activeCount": { "type": "integer" },
           "guardTripped": {
@@ -772,6 +782,13 @@
             }
           }
         ]
+      },
+      "SampleRecord": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "example": "EU-1234" },
+          "primaryName": { "type": "string", "example": "Jane Doe" }
+        }
       },
       "SanctionRecord": {
         "type": "object",
