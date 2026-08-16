@@ -1,3 +1,28 @@
+/**
+ * Retention decision (issue #114, confirmed 2026-08-16): this logger's
+ * output is operational/ephemeral only, NOT a durable audit source.
+ *
+ * Under Cloud Functions, every line written here (via console.log/warn/error
+ * below) is picked up automatically by GCP Cloud Logging, but this repo does
+ * not configure a log sink/export or an extended-retention bucket anywhere
+ * (see `firebase.json`) — so it sits in the project's default `_Default` log
+ * bucket, subject to GCP's default retention (commonly ~30 days), and is
+ * only queryable from the GCP Console/Cloud Logging Explorer by someone with
+ * project access, not from within this app.
+ *
+ * That's a deliberate choice, not an accident of GCP defaults: this project
+ * answers "can we look something up later" with Firestore audit
+ * collections, not Cloud Logging —
+ *   - `sanctions/{id}` + its `versions` subcollection (issue #9)
+ *   - `imports/{sha256}` (issue #7)
+ *   - `overrides/{entityId}` (issue #35)
+ *   - `decisions/{entityId}_{subjectId}` (issue #22)
+ * Anything that needs to be looked up later belongs in one of those
+ * collections, not inferred from a log line. If a future need arises for
+ * durable operational logs too (e.g. a warn/error sink to Cloud Storage or
+ * BigQuery), that's a new, explicit decision — not a reason to assume this
+ * logger's output already survives past the default retention window.
+ */
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 const LEVEL_WEIGHT: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };

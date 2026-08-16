@@ -123,6 +123,12 @@ Test files live under `tests/unit`, `tests/rules`, and `tests/integration`, with
 
 If another process on your machine already holds the Firestore emulator port, change `emulators.firestore.port` in `firebase.json` locally and leave the change uncommitted — the suite picks the port up from `FIRESTORE_EMULATOR_HOST`.
 
+## Logging & durability
+
+`src/shared/logger.ts` writes structured JSON lines that Cloud Functions forwards to GCP Cloud Logging automatically — but this repo does not configure a log sink/export or extended retention anywhere, so that output sits in GCP's default `_Default` log bucket (commonly ~30 days) and is only queryable via the GCP Console by someone with project access.
+
+That's a deliberate decision (issue #114), not an oversight: **Firestore audit collections are this project's sole durable record**, not Cloud Logging. If you need to look something up later, it lives in `sanctions`/`versions` (issue #9), `imports` (issue #7), `overrides` (issue #35), or `decisions` (issue #22) — not in a log line. See the comment at the top of `src/shared/logger.ts` for the full reasoning.
+
 ## Configuration
 
 ### `ALLOWED_EMAIL_DOMAINS` — required in production
