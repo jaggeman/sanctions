@@ -9,6 +9,8 @@ import {
 import * as path from 'path';
 import { db } from '../shared/firebase';
 import { processUpload, runFetchTriggeredImport } from '../importer/uploadPipeline';
+import { validateCsvPath } from '../importer/csvPath';
+import { verifyApiToken } from '../shared/apiTokens';
 import { runSearch } from '../search';
 import { getOverride } from '../overrides';
 import { listDecisionsForEntity } from '../decisions';
@@ -78,7 +80,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'run_database_import',
-        description: 'Ladda ner och importera de senaste sanktionslistorna till databasen.',
+        description: 'Ladda ner och importera de senaste sanktionslistorna till databasen. Kräver en skriv-skopad API-token (MCP_API_TOKEN, scope imports:write); importen attribueras till tokenens ägare.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -406,10 +408,56 @@ export async function handleGetSanctionDetails(args: any) {
 /**
  * Handles the run_database_import tool. Exported so it can be unit tested
  * directly (issue #71), mirroring the handleSearchSanctions pattern.
+ *
+ * issue #262: this is a privileged write — it either triggers a real
+ * official-sources import or reads and ingests an arbitrary local file into
+ * the live database — yet, unlike create_override/record_decision, it never
+ * checked anything before doing so. Those two tools get their authorization
+ * "for free" by proxying through the real HTTP API (callSanctionsApi), which
+ * requireAuthOrScope gates; there is no equivalent proxy here because
+ * csvPath names a file on the MCP server's own local disk, not something an
+ * HTTP call could carry without restructuring the upload pipeline. So the
+ * same check callSanctionsApi ultimately relies on — a write-scoped
+ * MCP_API_TOKEN, verified via verifyApiToken like requireScope does for the
+ * REST route — is applied directly here, before either the filesystem or the
+ * database is touched at all.
  */
 export async function handleRunDatabaseImport(args: any) {
+  const token = process.env.MCP_API_TOKEN;
+  const auth = token ? await verifyApiToken(token, 'imports:write') : { valid: false as const, reason: 'missing' as const };
+  if (!auth.valid) {
+    return {
+      content: [{
+        type: 'text',
+        text: token
+          ? `MCP_API_TOKEN saknar rätt behörighet (imports:write) eller är ogiltig: ${auth.reason}.`
+          : 'MCP_API_TOKEN saknas — sätt en skriv-skopad API-token i miljövariabeln MCP_API_TOKEN.',
+      }],
+      isError: true,
+    };
+  }
+  const ownerEmail = auth.ownerEmail ?? null;
+
   const sources = args?.sources as ('EU' | 'UN' | 'US')[] | undefined;
-  const csvPath = args?.csvPath as string | undefined;
+  const rawCsvPath = args?.csvPath as string | undefined;
+
+  // issue #262: rawCsvPath is caller-supplied and, unlike the REST route's
+  // multer-written req.file.path, never came from anything trustworthy —
+  // constrain it to the permitted directory (same guard the REST /api/import
+  // route and runImport's own csvPath option already apply) before it is
+  // ever handed to processUpload(), which itself performs no validation at
+  // all (it was designed for multer's own controlled paths).
+  let csvPath: string | undefined;
+  if (rawCsvPath !== undefined) {
+    const validation = validateCsvPath(rawCsvPath);
+    if (!validation.valid) {
+      return {
+        content: [{ type: 'text', text: `Ogiltig csvPath: ${validation.error}` }],
+        isError: true,
+      };
+    }
+    csvPath = validation.absolutePath;
+  }
 
   // issue #192: csvPath is a genuine local file, so it goes through
   // processUpload() — sha256 dedup, the in-flight lock, and a durable
@@ -422,7 +470,7 @@ export async function handleRunDatabaseImport(args: any) {
   // sources fallback.
   let sourcesResult: Awaited<ReturnType<typeof runFetchTriggeredImport>> | undefined;
   if (sources || !csvPath) {
-    sourcesResult = await runFetchTriggeredImport({ sources, uploadedBy: null });
+    sourcesResult = await runFetchTriggeredImport({ sources, uploadedBy: ownerEmail });
   }
 
   let csvResult: Awaited<ReturnType<typeof processUpload>> | undefined;
@@ -431,7 +479,7 @@ export async function handleRunDatabaseImport(args: any) {
       filePath: csvPath,
       originalFilename: path.basename(csvPath),
       sourceHint: 'PEP',
-      uploadedBy: null,
+      uploadedBy: ownerEmail,
       importOptions: {},
     });
   }
