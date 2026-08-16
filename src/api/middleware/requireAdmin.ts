@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { getSession } from '../../auth/session';
 import { SESSION_COOKIE_NAME } from '../../auth/middleware';
 import { isAdminEmail } from '../../auth/admins';
+import { bindLogIdentity } from './requestLogger';
 
 /**
  * Gate for administrative endpoints.
@@ -33,6 +34,7 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
     }
 
     (req as any).userEmail = session.email;
+    bindLogIdentity(req, { userEmail: session.email });
     next();
   } catch (error: any) {
     res.status(500).json({ error: 'Internal server error', details: error.message });

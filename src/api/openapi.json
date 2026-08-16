@@ -252,7 +252,7 @@
                     "type": "array",
                     "items": {
                       "type": "string",
-                      "enum": ["EU", "UN", "US"]
+                      "enum": ["EU", "UN", "US", "UK"]
                     }
                   },
                   "csvPath": {
@@ -707,7 +707,7 @@
         "type": "object",
         "description": "Issue #8 — per-source reconciliation result from computeDiff/runDiffForSource.",
         "properties": {
-          "source": { "type": "string", "enum": ["EU", "UN", "US", "PEP", "CUSTOM"] },
+          "source": { "type": "string", "enum": ["EU", "UN", "US", "UK", "PEP", "CUSTOM"] },
           "counts": {
             "type": "object",
             "properties": {
@@ -800,7 +800,7 @@
           },
           "source": {
             "type": "string",
-            "enum": ["EU", "UN", "US", "PEP", "CUSTOM"],
+            "enum": ["EU", "UN", "US", "UK", "PEP", "CUSTOM"],
             "example": "EU"
           },
           "type": {
@@ -939,7 +939,7 @@
           "filename": { "type": "string" },
           "sha256": { "type": "string" },
           "sizeBytes": { "type": "integer" },
-          "source": { "type": "string", "enum": ["EU", "UN", "US", "PEP", "CUSTOM"] },
+          "source": { "type": "string", "enum": ["EU", "UN", "US", "UK", "PEP", "CUSTOM"] },
           "format": {
             "type": "string",
             "enum": ["eu-xml-1.1", "eu-csv-1.1", "eu-csv-1.0", "un-xml", "us-xml", "csv"]

@@ -73,6 +73,31 @@ describe('parseUNList', () => {
     expect(adf!.addresses?.[0].fullAddress).toBe('Beni, Democratic Republic of the Congo');
   });
 
+  it('issue #34: preserves a leading-zero document number instead of silently truncating it as a number', async () => {
+    // Real record (DATAID 110425) carved from the actual UN Consolidated
+    // List export — its National Identification Number is "0035011785".
+    // fast-xml-parser's default parseTagValue would coerce this all-digit
+    // element text to the number 35011785, losing both leading zeros.
+    const records = await parseUNList(FIXTURE);
+    const naser = records.find((r) => r.id === 'UN-110425');
+
+    expect(naser).toBeDefined();
+    expect(naser!.passports).toContain('National Identification Number 0035011785 (Iran (Islamic Republic of))');
+    // The other document on the same record isn't all-digit, so it was never
+    // at risk — asserting it anyway to pin the full expected shape.
+    expect(naser!.passports).toContain('Passport A0003039 (Iran (Islamic Republic of))');
+  });
+
+  it('reads the issuing country from COUNTRY_OF_ISSUE, not just ISSUING_COUNTRY', async () => {
+    // Found while adding the fixture above: the real Consolidated List
+    // export uses ISSUING_COUNTRY on ~293 INDIVIDUAL_DOCUMENT entries and
+    // COUNTRY_OF_ISSUE on ~102 others. Both documents on DATAID 110425 use
+    // COUNTRY_OF_ISSUE — this pins that the country isn't silently dropped.
+    const records = await parseUNList(FIXTURE);
+    const naser = records.find((r) => r.id === 'UN-110425');
+    expect(naser!.passports?.every((p) => p.includes('Iran (Islamic Republic of)'))).toBe(true);
+  });
+
   it('returns an empty list when CONSOLIDATED_LIST is absent', async () => {
     // Reuse the fixture dir but point at a file with a different root element.
     const emptyXml = '<?xml version="1.0"?><NotTheRightRoot/>';
