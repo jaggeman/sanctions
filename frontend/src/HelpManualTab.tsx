@@ -72,7 +72,7 @@ function HelpManualTab() {
               While this tool centralizes information, you should always consult the original sources when making critical decisions.
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              The <strong>Official EU Lists</strong> tab provides direct links to the EU Sanctions Map and the EU's Open Data Portal where you can download the consolidated financial sanctions datasets directly.
+              The <strong>Official Sources</strong> tab provides direct links to the official governmental portals and registries across the EU, UN, US OFAC, UK FCDO/OFSI, and Swiss SECO.
             </Typography>
           </CardContent>
         </Card>

@@ -9,7 +9,7 @@ describe('HelpManualTab', () => {
     expect(screen.getByText('How to Search')).toBeInTheDocument();
     expect(screen.getByText('Uploading Lists')).toBeInTheDocument();
     expect(screen.getByText('Managing API Tokens')).toBeInTheDocument();
-    expect(screen.getByText('Official Sources')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Official Sources' })).toBeInTheDocument();
   });
 
   it('documents fuzzy match scoring, non-Latin search, and duplicate-upload behavior', () => {

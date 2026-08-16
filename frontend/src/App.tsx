@@ -22,7 +22,7 @@ import ImportHistoryTab from './ImportHistoryTab';
 import RecordDetail from './RecordDetail';
 import SearchTab from './SearchTab';
 import UploadTab from './UploadTab';
-import EuListsTab from './EuListsTab';
+import OfficialSourcesTab from './OfficialSourcesTab';
 import HelpManualTab from './HelpManualTab';
 import DriftStatusTab from './DriftStatusTab';
 import LogoutIcon from '@mui/icons-material/Logout';
@@ -196,7 +196,7 @@ function App() {
             <Tab label="Search" />
             <Tab label="Upload Lists" />
             <Tab label="Import History" />
-            <Tab label="Official EU Lists" />
+            <Tab label="Official Sources" />
             <Tab label="API Tokens" />
             <Tab label="Help & Manual" />
             <Tab label="Drift status" />
@@ -218,7 +218,7 @@ function App() {
 
         {tabValue === 2 && <ImportHistoryTab focusImportId={historyFocusId} />}
 
-        {tabValue === 3 && <EuListsTab />}
+        {tabValue === 3 && <OfficialSourcesTab />}
 
         {tabValue === 4 && <ApiTokensTab />}
 
