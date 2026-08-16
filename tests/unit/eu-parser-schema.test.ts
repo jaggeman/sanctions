@@ -63,10 +63,10 @@ describe('parseEUList — issue #6 source-fidelity fields', () => {
       expect(french!.language).toBe('FR');
     });
 
-    it('still derives legacy primaryName/aliases the same way as before', async () => {
+    it('orders the selected primary name first, matching primaryNameOf/aliasNamesOf convention (issue #46)', async () => {
       const r = await byId('EU-13');
-      expect(r!.primaryName).toBe('Saddam Hussein Al-Tikriti');
-      expect(r!.aliases).toEqual(['Abu Ali', 'Abou Ali']);
+      expect(r!.names[0].wholeName).toBe('Saddam Hussein Al-Tikriti');
+      expect(r!.names.slice(1).map((n) => n.wholeName)).toEqual(['Abu Ali', 'Abou Ali']);
     });
   });
 
@@ -86,9 +86,6 @@ describe('parseEUList — issue #6 source-fidelity fields', () => {
       ]);
     });
 
-    it('still derives the legacy flat datesOfBirth the same way as before', async () => {
-      expect((await byId('EU-191'))!.datesOfBirth).toEqual(['1965-04-14', '1964-03-01']);
-    });
   });
 
   describe('structured identifications', () => {
@@ -108,10 +105,6 @@ describe('parseEUList — issue #6 source-fidelity fields', () => {
       ]);
     });
 
-    it('still derives the legacy flat passports the same way as before', async () => {
-      const r = await byId('EU-191');
-      expect(r!.passports).toContain('National passport 488555');
-    });
   });
 
   describe('contactInfo aggregated across all address nodes', () => {
@@ -133,9 +126,9 @@ describe('parseEUList — issue #6 source-fidelity fields', () => {
   });
 
   describe('entity with no nameAlias at all', () => {
-    it('has no structured names either', async () => {
+    it('falls back to a single "Unknown Name" entry (issue #46: names is required, never empty)', async () => {
       const r = await byId('EU-999999');
-      expect(r!.names ?? []).toHaveLength(0);
+      expect(r!.names).toEqual([{ wholeName: 'Unknown Name', strong: false }]);
     });
   });
 });

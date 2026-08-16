@@ -64,7 +64,7 @@ describe('CLI search command', () => {
 
   it('prints the score for each hit', async () => {
     runSearch.mockResolvedValue({
-      results: [{ id: 'PEP-1', primaryName: 'Vladimir Putin', source: 'PEP', type: 'individual', aliases: [], score: 92, matchedAlias: 'Vladimir Putin' }],
+      results: [{ id: 'PEP-1', names: [{ wholeName: 'Vladimir Putin', strong: true }], source: 'PEP', type: 'individual', score: 92, matchedAlias: 'Vladimir Putin' }],
       totalMatches: 1,
       truncated: false,
     });
@@ -81,7 +81,7 @@ describe('CLI search command', () => {
 
   it('mentions total vs shown count when truncated', async () => {
     runSearch.mockResolvedValue({
-      results: [{ id: 'PEP-1', primaryName: 'X', source: 'PEP', type: 'individual', aliases: [], score: 90, matchedAlias: 'X' }],
+      results: [{ id: 'PEP-1', names: [{ wholeName: 'X', strong: true }], source: 'PEP', type: 'individual', score: 90, matchedAlias: 'X' }],
       totalMatches: 42,
       truncated: true,
     });

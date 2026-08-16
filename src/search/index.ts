@@ -1,6 +1,6 @@
 import * as admin from 'firebase-admin';
 import { db } from '../shared/firebase';
-import { SanctionRecord, Override } from '../shared/types';
+import { SanctionRecord, Override, allNamesOf, formatBirthDates } from '../shared/types';
 import { scoreNameMatch } from './matcher';
 import { applyOverride } from '../overrides';
 
@@ -65,7 +65,7 @@ async function getCurrentVersion(): Promise<number> {
 
 /**
  * Merges each record's override in at index-build time, not after a result
- * is already chosen — this is what makes an overridden primaryName actually
+ * is already chosen — this is what makes an overridden name actually
  * searchable (issue #35), not just visible once found some other way. Every
  * caller of runSearch (API, CLI, MCP) shares this one cache, so all three
  * see the same overridden data. Call invalidateSearchIndex() after any
@@ -100,11 +100,11 @@ function normalizeForExactMatch(s: string): string {
 
 function matchesPassportQuery(record: SanctionRecord, normalizedQuery: string): boolean {
   if (normalizedQuery.length < MIN_PASSPORT_QUERY_LENGTH) return false;
-  return (record.passports || []).some((p) => normalizeForExactMatch(p).includes(normalizedQuery));
+  return (record.identifications || []).some((id) => normalizeForExactMatch(id.number).includes(normalizedQuery));
 }
 
 function matchesDob(record: SanctionRecord, dobQuery: string): boolean {
-  return (record.datesOfBirth || []).some((d) => d.includes(dobQuery));
+  return formatBirthDates(record.birthDates).some((d) => d.includes(dobQuery));
 }
 
 /**
@@ -152,7 +152,7 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
   for (const record of candidates) {
     if (matchedIds.has(record.id)) continue;
 
-    const candidateNames = [record.primaryName, ...(record.aliases || [])];
+    const candidateNames = allNamesOf(record.names);
     const { score, matchedName } = scoreNameMatch(trimmedQuery, candidateNames);
     const boostedScore = options.dob && matchesDob(record, options.dob)
       ? Math.min(100, score + DOB_MATCH_BOOST)

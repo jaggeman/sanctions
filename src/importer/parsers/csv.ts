@@ -1,5 +1,5 @@
 import * as fs from 'fs-extra';
-import { SanctionRecord, SanctionType, SanctionSource, Address, NameAlias, BirthDate } from '../../shared/types';
+import { SanctionRecord, SanctionType, SanctionSource, Address, NameAlias, BirthDate, Identification } from '../../shared/types';
 import { logger } from '../../shared/logger';
 
 const log = logger.child({ module: 'importer.parsers.csv' });
@@ -105,8 +105,13 @@ export async function parseCSVList(
     const rawCitizenships = row.citizenships || row.citizenship || row.nationality || '';
     const citizenships = rawCitizenships ? rawCitizenships.split('|').map(s => s.trim()).filter(Boolean) : [];
 
+    // issue #46: the CSV format carries no type/country columns for these
+    // values, so a structured Identification here is just the bare number —
+    // lossless equivalent of the old flat string list, not an invented breakdown.
     const rawPassports = row.passports || row.passport || row.idnumbers || row.ssn || row.pnr || '';
-    const passports = rawPassports ? rawPassports.split('|').map(s => s.trim()).filter(Boolean) : [];
+    const identifications: Identification[] = rawPassports
+      ? rawPassports.split('|').map(s => s.trim()).filter(Boolean).map((number) => ({ number }))
+      : [];
 
     const street = row.street || row.address || '';
     const city = row.city || '';
@@ -129,14 +134,11 @@ export async function parseCSVList(
       id: `${source}-${rawId}`,
       source,
       type,
-      primaryName: name,
-      aliases,
-      searchNames: [],
       names: deriveNames(name, aliases),
-      datesOfBirth: datesOfBirth.length > 0 ? datesOfBirth : undefined,
+      searchNames: [],
       birthDates: birthDates.length > 0 ? birthDates : undefined,
       citizenships: citizenships.length > 0 ? citizenships : undefined,
-      passports: passports.length > 0 ? passports : undefined,
+      identifications: identifications.length > 0 ? identifications : undefined,
       addresses: addresses.length > 0 ? addresses : undefined,
       sanctionReason,
       legalBasis,

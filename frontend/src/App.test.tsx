@@ -91,7 +91,7 @@ describe('App component navigation tabs', () => {
           return {
             ok: true,
             json: async () => ({
-              results: [{ id: 'EU-1', source: 'EU', type: 'individual', primaryName: 'Test Person', aliases: [] }],
+              results: [{ id: 'EU-1', source: 'EU', type: 'individual', names: [{ wholeName: 'Test Person', strong: true }] }],
               totalMatches: 1,
               truncated: false,
             }),
@@ -101,7 +101,7 @@ describe('App component navigation tabs', () => {
           return { ok: true, json: async () => [] } as Response;
         }
         if (url.includes('/api/sanctions/')) {
-          return { ok: true, json: async () => ({ id: 'EU-1', source: 'EU', type: 'individual', primaryName: 'Test Person', aliases: [] }) } as Response;
+          return { ok: true, json: async () => ({ id: 'EU-1', source: 'EU', type: 'individual', names: [{ wholeName: 'Test Person', strong: true }] }) } as Response;
         }
         return { ok: true, json: async () => ({}) } as Response;
       }),

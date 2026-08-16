@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SanctionRecord } from '../../src/shared/types';
+import { primaryNameOf } from '../../src/shared/types';
 
 // Same fake-Firestore-doc pattern as tests/unit/api-search.test.ts: an
 // in-memory store keyed by id, with collection('sanctions').doc(id) exposing
@@ -40,8 +41,7 @@ function officialRecord(overrides: Partial<SanctionRecord> = {}): SanctionRecord
     id: 'EU-1',
     source: 'EU',
     type: 'individual',
-    primaryName: 'Official Person',
-    aliases: [],
+    names: [{ wholeName: 'Official Person', strong: true }],
     searchNames: ['official', 'person'],
     createdAt: '2024-01-01T00:00:00.000Z',
     updatedAt: '2024-01-01T00:00:00.000Z',
@@ -89,7 +89,7 @@ describe('createCustomRecord', () => {
       createCustomRecord({ id: 'EU-1', type: 'individual', primaryName: 'Attempted Overwrite' }),
     ).rejects.toThrow(/already exists/i);
     // The official record must survive the rejected attempt untouched.
-    expect(store['EU-1'].primaryName).toBe('Official Person');
+    expect(primaryNameOf(store['EU-1'].names)).toBe('Official Person');
   });
 });
 
@@ -101,7 +101,7 @@ describe('updateCustomRecord', () => {
   it('refuses to edit a non-custom (official) record through this path', async () => {
     store['EU-1'] = officialRecord();
     await expect(updateCustomRecord('EU-1', { primaryName: 'x' })).rejects.toThrow(/not a custom record/i);
-    expect(store['EU-1'].primaryName).toBe('Official Person');
+    expect(primaryNameOf(store['EU-1'].names)).toBe('Official Person');
   });
 
   it('updates fields and bumps updatedAt while preserving id/source/createdAt', async () => {
@@ -175,7 +175,7 @@ describe('getCustomRecord', () => {
   it('returns the record when it exists', async () => {
     await createCustomRecord({ id: 'CUSTOM-1', type: 'individual', primaryName: 'Jane Doe' });
     const rec = await getCustomRecord('CUSTOM-1');
-    expect(rec?.primaryName).toBe('Jane Doe');
+    expect(rec && primaryNameOf(rec.names)).toBe('Jane Doe');
   });
 });
 

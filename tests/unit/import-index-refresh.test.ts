@@ -26,7 +26,7 @@ vi.mock('../../src/importer/parsers/eu', () => ({ parseEUList: vi.fn(async () =>
 vi.mock('../../src/importer/parsers/un', () => ({ parseUNList: vi.fn(async () => []) }));
 vi.mock('../../src/importer/parsers/us', () => ({ parseUSList: vi.fn(async () => []) }));
 vi.mock('../../src/importer/parsers/csv', () => ({
-  parseCSVList: vi.fn(async () => [{ id: 'PEP-1', primaryName: 'Test' }]),
+  parseCSVList: vi.fn(async () => [{ id: 'PEP-1', names: [{ wholeName: 'Test', strong: true }] }]),
 }));
 
 const { runImport } = await import('../../src/importer');

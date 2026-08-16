@@ -35,7 +35,7 @@ describe('SearchTab', () => {
       status: 200,
       body: {
         results: [
-          { id: 'EU-1', source: 'EU', type: 'individual', primaryName: 'Vladimir Putin', aliases: [], score: 92, matchedAlias: 'V. Putin', status: 'delisted' },
+          { id: 'EU-1', source: 'EU', type: 'individual', names: [{ wholeName: 'Vladimir Putin' }], score: 92, matchedAlias: 'V. Putin', status: 'delisted' },
         ],
         totalMatches: 1,
         truncated: false,
@@ -54,7 +54,7 @@ describe('SearchTab', () => {
   it('calls onSelectRecord with the clicked result id', async () => {
     stubFetch(() => ({
       status: 200,
-      body: { results: [{ id: 'EU-1', source: 'EU', type: 'individual', primaryName: 'Test Person', aliases: [] }], totalMatches: 1, truncated: false },
+      body: { results: [{ id: 'EU-1', source: 'EU', type: 'individual', names: [{ wholeName: 'Test Person' }] }], totalMatches: 1, truncated: false },
     }));
 
     const onSelectRecord = vi.fn();
@@ -71,7 +71,7 @@ describe('SearchTab', () => {
   it('shows a truncated-results message when the server reports more matches than returned', async () => {
     stubFetch(() => ({
       status: 200,
-      body: { results: [{ id: 'EU-1', source: 'EU', type: 'individual', primaryName: 'Test Person', aliases: [] }], totalMatches: 500, truncated: true },
+      body: { results: [{ id: 'EU-1', source: 'EU', type: 'individual', names: [{ wholeName: 'Test Person' }] }], totalMatches: 500, truncated: true },
     }));
 
     render(<SearchTab onSelectRecord={vi.fn()} />);
@@ -105,3 +105,4 @@ describe('SearchTab', () => {
     expect(screen.queryByText(/search failed/i)).not.toBeInTheDocument();
   });
 });
+

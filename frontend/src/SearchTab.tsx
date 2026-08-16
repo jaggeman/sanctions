@@ -13,6 +13,34 @@ import {
 import SearchIcon from '@mui/icons-material/Search';
 import { apiFetch } from './apiFetch';
 
+// issue #46: SanctionRecord no longer has flat primaryName/aliases/
+// datesOfBirth fields — every result from the API now carries `names`
+// (NameAlias[], primary first) and `birthDates` (BirthDate[]) instead. These
+// three mirror the equivalent helpers in src/shared/types.ts on the backend;
+// duplicated rather than imported since the frontend build doesn't share
+// modules with the backend one.
+interface NameAliasLike { wholeName: string }
+interface BirthDateLike { raw?: string; year?: number; month?: number; day?: number; yearRangeFrom?: number; yearRangeTo?: number }
+
+function primaryNameOf(names: NameAliasLike[] | undefined): string {
+  return names?.[0]?.wholeName || 'Unknown Name';
+}
+
+function aliasNamesOf(names: NameAliasLike[] | undefined): string[] {
+  return (names || []).slice(1).map((n) => n.wholeName);
+}
+
+function formatBirthDates(birthDates: BirthDateLike[] | undefined): string[] {
+  return (birthDates || [])
+    .map((b) => {
+      if (b.raw) return b.raw;
+      if (b.yearRangeFrom || b.yearRangeTo) return `${b.yearRangeFrom ?? '?'}-${b.yearRangeTo ?? '?'}`;
+      if (b.year) return [b.year, b.month, b.day].filter((p) => p !== undefined).join('-');
+      return '';
+    })
+    .filter(Boolean);
+}
+
 interface SearchTabProps {
   onSelectRecord: (id: string) => void;
 }
@@ -107,7 +135,7 @@ export default function SearchTab({ onSelectRecord }: SearchTabProps) {
                   <Chip label={r.type} size="small" color="error" variant="outlined" />
                 </Box>
                 <Typography variant="h6" component="h2" gutterBottom>
-                  {r.primaryName}
+                  {primaryNameOf(r.names)}
                 </Typography>
                 <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
                   {typeof r.score === 'number' && (
@@ -121,15 +149,15 @@ export default function SearchTab({ onSelectRecord }: SearchTabProps) {
                     <Chip label="Delisted" size="small" color="default" variant="outlined" />
                   )}
                 </Box>
-                {r.aliases && r.aliases.length > 0 && (
+                {aliasNamesOf(r.names).length > 0 && (
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    <strong>Aliases:</strong> {r.aliases.slice(0, 3).join(', ')}
-                    {r.aliases.length > 3 ? '...' : ''}
+                    <strong>Aliases:</strong> {aliasNamesOf(r.names).slice(0, 3).join(', ')}
+                    {aliasNamesOf(r.names).length > 3 ? '...' : ''}
                   </Typography>
                 )}
-                {r.datesOfBirth && r.datesOfBirth.length > 0 && (
+                {formatBirthDates(r.birthDates).length > 0 && (
                   <Typography variant="body2" color="text.secondary">
-                    <strong>DOB:</strong> {r.datesOfBirth.join(', ')}
+                    <strong>DOB:</strong> {formatBirthDates(r.birthDates).join(', ')}
                   </Typography>
                 )}
               </CardContent>

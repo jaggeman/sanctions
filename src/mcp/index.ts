@@ -11,6 +11,7 @@ import { runImport } from '../importer';
 import { runSearch } from '../search';
 import { getOverride } from '../overrides';
 import { listDecisionsForEntity } from '../decisions';
+import { primaryNameOf, aliasNamesOf, formatBirthDates } from '../shared/types';
 
 // Create the MCP server instance
 const server = new Server(
@@ -207,10 +208,12 @@ export async function handleSearchSanctions(args: any) {
   }
 
   const formatted = results.map(r => {
-    const aliasStr = r.aliases.length > 0 ? ` (Alias: ${r.aliases.join(', ')})` : '';
-    const dobStr = r.datesOfBirth ? ` | DOB: ${r.datesOfBirth.join(', ')}` : '';
+    const aliases = aliasNamesOf(r.names);
+    const aliasStr = aliases.length > 0 ? ` (Alias: ${aliases.join(', ')})` : '';
+    const birthDates = formatBirthDates(r.birthDates);
+    const dobStr = birthDates.length > 0 ? ` | DOB: ${birthDates.join(', ')}` : '';
     const reasonStr = r.sanctionReason ? ` | Orsak: ${r.sanctionReason.substring(0, 100)}${r.sanctionReason.length > 100 ? '...' : ''}` : '';
-    return `[${r.id}] ${r.primaryName}${aliasStr} - Källa: ${r.source} (${r.type}) - Träffsäkerhet: ${r.score}% (matchade "${r.matchedAlias}")${dobStr}${reasonStr}`;
+    return `[${r.id}] ${primaryNameOf(r.names)}${aliasStr} - Källa: ${r.source} (${r.type}) - Träffsäkerhet: ${r.score}% (matchade "${r.matchedAlias}")${dobStr}${reasonStr}`;
   }).join('\n');
 
   const truncationNote = truncated

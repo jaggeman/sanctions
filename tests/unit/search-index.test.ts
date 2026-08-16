@@ -73,13 +73,17 @@ function record(overrides: Partial<SanctionRecord> = {}): SanctionRecord {
     id: 'PEP-1',
     source: 'PEP',
     type: 'individual',
-    primaryName: 'Vladimir Putin',
-    aliases: [],
+    names: [{ wholeName: 'Vladimir Putin', strong: true }],
     searchNames: [],
     createdAt: '2024-01-01T00:00:00.000Z',
     updatedAt: '2024-01-01T00:00:00.000Z',
     ...overrides,
   };
+}
+
+/** Builds a `names` override for a single primary name, matching this suite's `record()` shape. */
+function namesOverride(wholeName: string): SanctionRecord['names'] {
+  return [{ wholeName, strong: true }];
 }
 
 beforeEach(async () => {
@@ -103,7 +107,7 @@ describe('runSearch — basic behaviour', () => {
   });
 
   it('finds a fuzzy match at or above the default threshold', async () => {
-    allRecords = [record({ id: 'PEP-1', primaryName: 'Vladimir Putin' })];
+    allRecords = [record({ id: 'PEP-1', names: namesOverride('Vladimir Putin') })];
     const { results } = await runSearch('Vladmir Putin'); // typo
     expect(results).toHaveLength(1);
     expect(results[0].id).toBe('PEP-1');
@@ -112,7 +116,7 @@ describe('runSearch — basic behaviour', () => {
   });
 
   it('excludes a candidate scoring below the threshold', async () => {
-    allRecords = [record({ id: 'PEP-1', primaryName: 'Angela Merkel' })];
+    allRecords = [record({ id: 'PEP-1', names: namesOverride('Angela Merkel') })];
     const { results } = await runSearch('Kim Jong Un');
     expect(results).toEqual([]);
   });
@@ -120,7 +124,7 @@ describe('runSearch — basic behaviour', () => {
 
 describe('runSearch — threshold', () => {
   it('respects a custom, lower threshold', async () => {
-    allRecords = [record({ id: 'PEP-1', primaryName: 'Somewhat Different Name' })];
+    allRecords = [record({ id: 'PEP-1', names: namesOverride('Somewhat Different Name') })];
     const withDefault = await runSearch('Somewhat Different Namex', {});
     const withLowThreshold = await runSearch('Completely Unrelated Query', { threshold: 0 });
     // threshold: 0 must accept everything regardless of score
@@ -128,7 +132,7 @@ describe('runSearch — threshold', () => {
   });
 
   it('respects a custom, higher threshold that excludes a borderline match', async () => {
-    allRecords = [record({ id: 'PEP-1', primaryName: 'Vladimir Putin' })];
+    allRecords = [record({ id: 'PEP-1', names: namesOverride('Vladimir Putin') })];
     const lenient = await runSearch('Vladmir Putin', { threshold: 50 });
     const strict = await runSearch('Vladmir Putin', { threshold: 99 });
     expect(lenient.results.length).toBeGreaterThanOrEqual(strict.results.length);
@@ -138,8 +142,8 @@ describe('runSearch — threshold', () => {
 describe('runSearch — filters', () => {
   it('filters by a comma-separated source list', async () => {
     allRecords = [
-      record({ id: 'EU-1', source: 'EU', primaryName: 'Test Person' }),
-      record({ id: 'PEP-1', source: 'PEP', primaryName: 'Test Person' }),
+      record({ id: 'EU-1', source: 'EU', names: namesOverride('Test Person') }),
+      record({ id: 'PEP-1', source: 'PEP', names: namesOverride('Test Person') }),
     ];
     const { results } = await runSearch('Test Person', { source: 'EU' });
     expect(results.map((r) => r.id)).toEqual(['EU-1']);
@@ -147,8 +151,8 @@ describe('runSearch — filters', () => {
 
   it('filters by type', async () => {
     allRecords = [
-      record({ id: 'PEP-1', type: 'individual', primaryName: 'Test Person' }),
-      record({ id: 'PEP-2', type: 'entity', primaryName: 'Test Person' }),
+      record({ id: 'PEP-1', type: 'individual', names: namesOverride('Test Person') }),
+      record({ id: 'PEP-2', type: 'entity', names: namesOverride('Test Person') }),
     ];
     const { results } = await runSearch('Test Person', { type: 'entity' });
     expect(results.map((r) => r.id)).toEqual(['PEP-2']);
@@ -164,7 +168,7 @@ describe('runSearch — limit and truncation reporting', () => {
   });
 
   it('reports truncated:true and a totalMatches greater than the returned count when capped', async () => {
-    allRecords = Array.from({ length: 5 }, (_, i) => record({ id: `PEP-${i}`, primaryName: 'Vladimir Putin' }));
+    allRecords = Array.from({ length: 5 }, (_, i) => record({ id: `PEP-${i}`, names: namesOverride('Vladimir Putin') }));
     const { results, totalMatches, truncated } = await runSearch('Vladimir Putin', { limit: 2 });
     expect(results).toHaveLength(2);
     expect(truncated).toBe(true);
@@ -172,7 +176,7 @@ describe('runSearch — limit and truncation reporting', () => {
   });
 
   it('caps the limit at 100 regardless of what was requested', async () => {
-    allRecords = Array.from({ length: 3 }, (_, i) => record({ id: `PEP-${i}`, primaryName: 'Vladimir Putin' }));
+    allRecords = Array.from({ length: 3 }, (_, i) => record({ id: `PEP-${i}`, names: namesOverride('Vladimir Putin') }));
     const { results } = await runSearch('Vladimir Putin', { limit: 999999 });
     expect(results).toHaveLength(3); // fewer records than the 100 cap — cap itself tested via truncation math above
   });
@@ -181,7 +185,7 @@ describe('runSearch — limit and truncation reporting', () => {
 describe('runSearch — exact passport/ID fast path', () => {
   it('returns a passport match with a perfect score regardless of name similarity', async () => {
     allRecords = [
-      record({ id: 'PEP-1', primaryName: 'Totally Unrelated Name', passports: ['Passport SE1234567'] }),
+      record({ id: 'PEP-1', names: namesOverride('Totally Unrelated Name'), identifications: [{ number: 'Passport SE1234567' }] }),
     ];
     const { results } = await runSearch('SE1234567');
     expect(results).toHaveLength(1);
@@ -191,7 +195,7 @@ describe('runSearch — exact passport/ID fast path', () => {
 
   it('does not double-count a record matched by both passport and name', async () => {
     allRecords = [
-      record({ id: 'PEP-1', primaryName: 'Vladimir Putin', passports: ['SE1234567'] }),
+      record({ id: 'PEP-1', names: namesOverride('Vladimir Putin'), identifications: [{ number: 'SE1234567' }] }),
     ];
     const { results } = await runSearch('SE1234567');
     expect(results).toHaveLength(1);
@@ -201,7 +205,7 @@ describe('runSearch — exact passport/ID fast path', () => {
 describe('runSearch — date-of-birth booster', () => {
   it('boosts, but does not require, a matching date of birth', async () => {
     allRecords = [
-      record({ id: 'PEP-1', primaryName: 'Vladimir Putin', datesOfBirth: ['1952-10-07'] }),
+      record({ id: 'PEP-1', names: namesOverride('Vladimir Putin'), birthDates: [{ raw: '1952-10-07' }] }),
     ];
     const withoutDob = await runSearch('Vladmir Putin');
     const withMatchingDob = await runSearch('Vladmir Putin', { dob: '1952' });
@@ -265,8 +269,8 @@ describe('runSearch — cross-instance index invalidation (issue #43)', () => {
 // just visible in a result that was already found some other way.
 describe('runSearch — overrides merged into the index (issue #35)', () => {
   it('finds a record by its OVERRIDDEN primaryName, not just the original', async () => {
-    allRecords = [record({ id: 'EU-1', primaryName: 'Original Name' })];
-    allOverrides = [override('EU-1', { primaryName: 'Wladimir Putin' })];
+    allRecords = [record({ id: 'EU-1', names: namesOverride('Original Name') })];
+    allOverrides = [override('EU-1', { names: namesOverride('Wladimir Putin') })];
 
     const byOriginal = await runSearch('Original Name');
     const byOverride = await runSearch('Wladimir Putin');
@@ -278,7 +282,7 @@ describe('runSearch — overrides merged into the index (issue #35)', () => {
   });
 
   it('reports overriddenFields on the result so the API can tell official from local data apart', async () => {
-    allRecords = [record({ id: 'EU-1', primaryName: 'Vladimir Putin', sanctionReason: 'Original reason' })];
+    allRecords = [record({ id: 'EU-1', names: namesOverride('Vladimir Putin'), sanctionReason: 'Original reason' })];
     allOverrides = [override('EU-1', { sanctionReason: 'Corrected reason' })];
 
     const { results } = await runSearch('Vladimir Putin');
@@ -287,15 +291,15 @@ describe('runSearch — overrides merged into the index (issue #35)', () => {
   });
 
   it('reports an empty overriddenFields array for a record with no override', async () => {
-    allRecords = [record({ id: 'EU-1', primaryName: 'Vladimir Putin' })];
+    allRecords = [record({ id: 'EU-1', names: namesOverride('Vladimir Putin') })];
     const { results } = await runSearch('Vladimir Putin');
     expect(results[0].overriddenFields).toEqual([]);
   });
 
   it('does not apply one entity’s override to a different entity', async () => {
     allRecords = [
-      record({ id: 'EU-1', primaryName: 'Vladimir Putin' }),
-      record({ id: 'EU-2', primaryName: 'Vladimir Putin' }),
+      record({ id: 'EU-1', names: namesOverride('Vladimir Putin') }),
+      record({ id: 'EU-2', names: namesOverride('Vladimir Putin') }),
     ];
     allOverrides = [override('EU-1', { sanctionReason: 'Only for EU-1' })];
 
@@ -308,7 +312,7 @@ describe('runSearch — overrides merged into the index (issue #35)', () => {
   });
 
   it('picks up a newly-saved override after invalidateSearchIndex() — no stale cache', async () => {
-    allRecords = [record({ id: 'EU-1', primaryName: 'Vladimir Putin', sanctionReason: 'Original' })];
+    allRecords = [record({ id: 'EU-1', names: namesOverride('Vladimir Putin'), sanctionReason: 'Original' })];
     await runSearch('Vladimir Putin'); // populate the cache with no override yet
 
     allOverrides = [override('EU-1', { sanctionReason: 'Corrected' })];

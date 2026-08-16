@@ -35,11 +35,11 @@ describe('parseCSVList — happy path', () => {
     expect(record.id).toBe('PEP-1');
     expect(record.source).toBe('PEP');
     expect(record.type).toBe('individual');
-    expect(record.primaryName).toBe('Lars Gunnar Karlsson');
-    expect(record.aliases).toEqual(['Gunnar Karlsson']);
-    expect(record.datesOfBirth).toEqual(['1965-04-12']);
+    expect(record.names[0].wholeName).toBe('Lars Gunnar Karlsson');
+    expect(record.names.slice(1).map((n) => n.wholeName)).toEqual(['Gunnar Karlsson']);
+    expect(record.birthDates!.map((b) => b.raw)).toEqual(['1965-04-12']);
     expect(record.citizenships).toEqual(['Sweden']);
-    expect(record.passports).toEqual(['Passport 998877']);
+    expect(record.identifications).toEqual([{ number: 'Passport 998877' }]);
     expect(record.sanctionReason).toBe('Riksdagsledamot');
     expect(record.addresses?.[0].fullAddress).toBe('Storgatan 12, Stockholm');
   });
@@ -60,10 +60,10 @@ describe('parseCSVList — happy path', () => {
     );
     const [record] = await parseCSVList(file, { separator: ';' });
 
-    expect(record.aliases).toEqual(['Alias One', 'Alias Two']);
-    expect(record.datesOfBirth).toEqual(['1970-01-01', '1971-02-02']);
+    expect(record.names.slice(1).map((n) => n.wholeName)).toEqual(['Alias One', 'Alias Two']);
+    expect(record.birthDates!.map((b) => b.raw)).toEqual(['1970-01-01', '1971-02-02']);
     expect(record.citizenships).toEqual(['Sweden', 'Norway']);
-    expect(record.passports).toEqual(['P1', 'P2']);
+    expect(record.identifications).toEqual([{ number: 'P1' }, { number: 'P2' }]);
   });
 
   it('omits optional multi-value fields entirely when blank', async () => {
@@ -75,9 +75,9 @@ describe('parseCSVList — happy path', () => {
 
     // undefined rather than [] — Firestore is configured with
     // ignoreUndefinedProperties, so these keys are simply not written.
-    expect(record.datesOfBirth).toBeUndefined();
+    expect(record.birthDates).toBeUndefined();
     expect(record.citizenships).toBeUndefined();
-    expect(record.passports).toBeUndefined();
+    expect(record.identifications).toBeUndefined();
     expect(record.addresses).toBeUndefined();
   });
 
@@ -104,13 +104,13 @@ describe('parseCSVList — header aliasing', () => {
   it('accepts alternative column names for the primary name', async () => {
     const file = await fixture('altname.csv', 'id;wholeName;source\n1;Alt Named;PEP\n');
     const [record] = await parseCSVList(file, { separator: ';' });
-    expect(record.primaryName).toBe('Alt Named');
+    expect(record.names[0].wholeName).toBe('Alt Named');
   });
 
   it('is case-insensitive about header spelling', async () => {
     const file = await fixture('caps.csv', 'ID;NAME;SOURCE\n1;Shouty Header;PEP\n');
     const [record] = await parseCSVList(file, { separator: ';' });
-    expect(record.primaryName).toBe('Shouty Header');
+    expect(record.names[0].wholeName).toBe('Shouty Header');
   });
 
   it('builds fullAddress from street/city/country when not given directly', async () => {
@@ -161,7 +161,7 @@ describe('parseCSVList — defaults and fallbacks', () => {
   it('defaults to the semicolon separator when none is given', async () => {
     const file = await fixture('defaultsep.csv', 'id;name\n1;Semicolon Default\n');
     const [record] = await parseCSVList(file);
-    expect(record.primaryName).toBe('Semicolon Default');
+    expect(record.names[0].wholeName).toBe('Semicolon Default');
   });
 
   it('synthesises a row-based id when the id column is missing', async () => {
@@ -177,7 +177,7 @@ describe('parseCSVList — defaults and fallbacks', () => {
     );
     const records = await parseCSVList(file, { separator: ';' });
     expect(records).toHaveLength(1);
-    expect(records[0].primaryName).toBe('Has Name');
+    expect(records[0].names[0].wholeName).toBe('Has Name');
   });
 });
 
@@ -194,7 +194,7 @@ describe('parseCSVList — malformed input', () => {
     const records = await parseCSVList(file, { separator: ';' });
 
     expect(records).toHaveLength(1);
-    expect(records[0].primaryName).toBe('Complete Row');
+    expect(records[0].names[0].wholeName).toBe('Complete Row');
   });
 
   it('accepts a row with more columns than the header, ignoring the extras', async () => {
@@ -204,7 +204,7 @@ describe('parseCSVList — malformed input', () => {
     );
     const records = await parseCSVList(file, { separator: ';' });
     expect(records).toHaveLength(1);
-    expect(records[0].primaryName).toBe('Extra Columns');
+    expect(records[0].names[0].wholeName).toBe('Extra Columns');
   });
 
   it('rejects a missing file by rejecting the promise', async () => {

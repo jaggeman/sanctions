@@ -140,13 +140,17 @@ function record(overrides: Partial<SanctionRecord> = {}): SanctionRecord {
     id: 'PEP-1',
     source: 'PEP',
     type: 'individual',
-    primaryName: 'Vladimir Putin',
-    aliases: [],
+    names: [{ wholeName: 'Vladimir Putin', strong: true }],
     searchNames: [],
     createdAt: '2024-01-01T00:00:00.000Z',
     updatedAt: '2024-01-01T00:00:00.000Z',
     ...overrides,
   } as SanctionRecord;
+}
+
+/** Builds a `names` override for a single primary name, matching this suite's `record()` shape. */
+function namesOverride(wholeName: string): SanctionRecord['names'] {
+  return [{ wholeName, strong: true }];
 }
 
 function getVersion(id: string, importId: string) {
@@ -184,11 +188,11 @@ describe('uploadRecords — soft delete fields + version trail', () => {
 
   it('writes an "updated" version when a field actually changes', async () => {
     await uploadRecords([record()], 'import-1');
-    await uploadRecords([record({ primaryName: 'Vladimir V. Putin' })], 'import-2');
+    await uploadRecords([record({ names: namesOverride('Vladimir V. Putin') })], 'import-2');
 
     const version = await getVersion('PEP-1', 'import-2');
     expect(version.changeType).toBe('updated');
-    expect(version.record.primaryName).toBe('Vladimir V. Putin');
+    expect(version.record.names[0].wholeName).toBe('Vladimir V. Putin');
   });
 
   it('preserves the original listedAt across updates', async () => {
@@ -196,7 +200,7 @@ describe('uploadRecords — soft delete fields + version trail', () => {
     const firstListedAt = store.get('PEP-1')!.data.listedAt;
     expect(firstListedAt).toBeTruthy();
 
-    await uploadRecords([record({ primaryName: 'Changed Name' })], 'import-2');
+    await uploadRecords([record({ names: namesOverride('Changed Name') })], 'import-2');
     expect(store.get('PEP-1')!.data.listedAt).toBe(firstListedAt);
   });
 
@@ -326,14 +330,14 @@ describe('uploadRecords — soft delete fields + version trail', () => {
   });
 
   it('reconstructs the record as of the first import from its version snapshot', async () => {
-    await uploadRecords([record({ primaryName: 'Original Name' })], 'import-1');
-    await uploadRecords([record({ primaryName: 'Updated Name' })], 'import-2');
+    await uploadRecords([record({ names: namesOverride('Original Name') })], 'import-1');
+    await uploadRecords([record({ names: namesOverride('Updated Name') })], 'import-2');
 
     const firstVersion = await getVersion('PEP-1', 'import-1');
-    expect(firstVersion.record.primaryName).toBe('Original Name');
+    expect(firstVersion.record.names[0].wholeName).toBe('Original Name');
 
     const current = store.get('PEP-1')!.data;
-    expect(current.primaryName).toBe('Updated Name');
+    expect(current.names[0].wholeName).toBe('Updated Name');
   });
 
   // --- issue #68 -----------------------------------------------------------
@@ -373,7 +377,7 @@ describe('uploadRecords — soft delete fields + version trail', () => {
       const firstUpdatedAt = store.get('PEP-1')!.data.updatedAt;
 
       vi.setSystemTime(new Date('2026-01-02T00:00:00.000Z'));
-      await uploadRecords([record({ primaryName: 'Changed Name' })], 'import-2');
+      await uploadRecords([record({ names: namesOverride('Changed Name') })], 'import-2');
 
       expect(store.get('PEP-1')!.data.updatedAt).not.toBe(firstUpdatedAt);
       expect(store.get('PEP-1')!.data.updatedAt).toBe('2026-01-02T00:00:00.000Z');
@@ -408,19 +412,27 @@ describe('uploadRecords — soft delete fields + version trail', () => {
 
   it('canonicalizes array element order before hashing, so a reordered source does not look like a content change', () => {
     const a = record({
-      aliases: ['Abu Ali', 'Abou Ali'],
+      names: [
+        { wholeName: 'Vladimir Putin', strong: true },
+        { wholeName: 'Abu Ali', strong: false },
+        { wholeName: 'Abou Ali', strong: false },
+      ],
       addresses: [{ fullAddress: 'A' }, { fullAddress: 'B' }],
     } as any);
     const b = record({
-      aliases: ['Abou Ali', 'Abu Ali'],
+      names: [
+        { wholeName: 'Vladimir Putin', strong: true },
+        { wholeName: 'Abou Ali', strong: false },
+        { wholeName: 'Abu Ali', strong: false },
+      ],
       addresses: [{ fullAddress: 'B' }, { fullAddress: 'A' }],
     } as any);
     expect(computeContentHash(a)).toBe(computeContentHash(b));
   });
 
   it('still detects a genuine content change, not just any hash difference', () => {
-    const a = record({ aliases: ['Abu Ali'] } as any);
-    const b = record({ aliases: ['Abu Ali', 'Someone Else'] } as any);
+    const a = record({ names: namesOverride('Abu Ali') } as any);
+    const b = record({ names: [...namesOverride('Abu Ali'), { wholeName: 'Someone Else', strong: false }] } as any);
     expect(computeContentHash(a)).not.toBe(computeContentHash(b));
   });
 });
@@ -465,9 +477,9 @@ describe('listRecordVersions (issue #12)', () => {
     // Fake timers so each write gets a distinguishable changedAt — three
     // synchronous writes can otherwise land on the identical millisecond.
     vi.useFakeTimers();
-    await uploadRecords([record({ primaryName: 'Original Name' })], 'import-1');
+    await uploadRecords([record({ names: namesOverride('Original Name') })], 'import-1');
     vi.advanceTimersByTime(1000);
-    await uploadRecords([record({ primaryName: 'Updated Name' })], 'import-2');
+    await uploadRecords([record({ names: namesOverride('Updated Name') })], 'import-2');
     vi.advanceTimersByTime(1000);
     await delistRecords(['PEP-1'], 'import-3');
     vi.useRealTimers();

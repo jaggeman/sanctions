@@ -34,7 +34,7 @@ describe('RecordDetail', () => {
   });
 
   it('shows the primary name and an Active status once loaded', async () => {
-    stubFetch({ id: 'EU-1', primaryName: 'Test Person', aliases: [], source: 'EU', type: 'individual' });
+    stubFetch({ id: 'EU-1', names: [{ wholeName: 'Test Person', strong: true }], source: 'EU', type: 'individual' });
     render(<RecordDetail recordId="EU-1" onClose={() => {}} />);
 
     await waitFor(() => expect(screen.getAllByText('Test Person').length).toBeGreaterThan(0));
@@ -44,8 +44,7 @@ describe('RecordDetail', () => {
   it('shows a Delisted status with the delistedAt date', async () => {
     stubFetch({
       id: 'EU-1',
-      primaryName: 'Test Person',
-      aliases: [],
+      names: [{ wholeName: 'Test Person', strong: true }],
       status: 'delisted',
       delistedAt: '2026-01-15T00:00:00.000Z',
     });
@@ -57,8 +56,6 @@ describe('RecordDetail', () => {
   it('renders structured names with the strong/weak distinction', async () => {
     stubFetch({
       id: 'EU-1',
-      primaryName: 'Test Person',
-      aliases: [],
       names: [
         { wholeName: 'Test Person', strong: true },
         { wholeName: 'Alias Person', strong: false },
@@ -74,8 +71,7 @@ describe('RecordDetail', () => {
   it('renders identifications with their reliability flags', async () => {
     stubFetch({
       id: 'EU-1',
-      primaryName: 'Test Person',
-      aliases: [],
+      names: [{ wholeName: 'Test Person', strong: true }],
       identifications: [{ number: 'X123456', typeDescription: 'Passport', knownFalse: true }],
     });
     render(<RecordDetail recordId="EU-1" onClose={() => {}} />);
@@ -87,8 +83,7 @@ describe('RecordDetail', () => {
   it('renders regulation info with a link to its publication URL', async () => {
     stubFetch({
       id: 'EU-1',
-      primaryName: 'Test Person',
-      aliases: [],
+      names: [{ wholeName: 'Test Person', strong: true }],
       regulation: { numberTitle: 'Council Regulation (EU) 269/2014', url: 'https://example.com/reg' },
     });
     render(<RecordDetail recordId="EU-1" onClose={() => {}} />);
@@ -100,7 +95,7 @@ describe('RecordDetail', () => {
 
   it('renders the version trail', async () => {
     stubFetch(
-      { id: 'EU-1', primaryName: 'Test Person', aliases: [] },
+      { id: 'EU-1', names: [{ wholeName: 'Test Person', strong: true }] },
       [
         { importId: 'import-2', changedAt: '2026-02-01T00:00:00.000Z', changeType: 'updated' },
         { importId: 'import-1', changedAt: '2026-01-01T00:00:00.000Z', changeType: 'created' },
@@ -113,7 +108,7 @@ describe('RecordDetail', () => {
   });
 
   it('calls onClose when the dialog is dismissed', async () => {
-    stubFetch({ id: 'EU-1', primaryName: 'Test Person', aliases: [] });
+    stubFetch({ id: 'EU-1', names: [{ wholeName: 'Test Person', strong: true }] });
     const onClose = vi.fn();
     render(<RecordDetail recordId="EU-1" onClose={onClose} />);
 

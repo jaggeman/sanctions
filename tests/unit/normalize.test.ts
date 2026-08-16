@@ -116,56 +116,64 @@ describe('transliterate — Cyrillic/Greek cross-script matching (issue #40, dec
   });
 });
 
+// issue #46: generateSearchTokens now takes the record's structured `names`
+// (NameAlias[]) directly rather than a separate (primaryName, aliases) pair
+// — every wholeName contributes tokens the same way, so this just builds the
+// array these tests need.
+function names(...wholeNames: string[]): { wholeName: string; strong: boolean }[] {
+  return wholeNames.map((wholeName, i) => ({ wholeName, strong: i === 0 }));
+}
+
 describe('generateSearchTokens', () => {
   it('splits a primary name into word tokens', () => {
-    expect(generateSearchTokens('Vladimir Putin')).toEqual(['vladimir', 'putin']);
+    expect(generateSearchTokens(names('Vladimir Putin'))).toEqual(['vladimir', 'putin']);
   });
 
   it('includes alias tokens alongside the primary name', () => {
-    const tokens = generateSearchTokens('Vladimir Putin', ['Vova Putin']);
+    const tokens = generateSearchTokens(names('Vladimir Putin', 'Vova Putin'));
     expect(tokens).toContain('vladimir');
     expect(tokens).toContain('putin');
     expect(tokens).toContain('vova');
   });
 
   it('de-duplicates tokens shared between the name and its aliases', () => {
-    const tokens = generateSearchTokens('Vladimir Putin', ['Vladimir Putin', 'V. Putin']);
+    const tokens = generateSearchTokens(names('Vladimir Putin', 'Vladimir Putin', 'V. Putin'));
     expect(tokens.filter((t) => t === 'putin')).toHaveLength(1);
     expect(tokens.filter((t) => t === 'vladimir')).toHaveLength(1);
   });
 
-  it('defaults to no aliases when the argument is omitted', () => {
-    expect(() => generateSearchTokens('Solo Name')).not.toThrow();
-    expect(generateSearchTokens('Solo Name')).toEqual(['solo', 'name']);
+  it('handles a single-entry names array', () => {
+    expect(() => generateSearchTokens(names('Solo Name'))).not.toThrow();
+    expect(generateSearchTokens(names('Solo Name'))).toEqual(['solo', 'name']);
   });
 
   it('normalises tokens, so an accented alias is findable by plain spelling', () => {
-    expect(generateSearchTokens('José Aznar')).toEqual(['jose', 'aznar']);
+    expect(generateSearchTokens(names('José Aznar'))).toEqual(['jose', 'aznar']);
   });
 
   it('drops single-character tokens', () => {
     // "V. Putin" → "v putin" → the initial "v" is below the 2-char index floor.
-    expect(generateSearchTokens('V. Putin')).toEqual(['putin']);
+    expect(generateSearchTokens(names('V. Putin'))).toEqual(['putin']);
   });
 
   it('KNOWN LIMITATION (unrelated to issue #40): the 2-character floor still applies', () => {
-    expect(generateSearchTokens('Xi')).toEqual(['xi']); // 2 chars — just makes it
-    expect(generateSearchTokens('Y Z')).toEqual([]);    // every token too short
+    expect(generateSearchTokens(names('Xi'))).toEqual(['xi']); // 2 chars — just makes it
+    expect(generateSearchTokens(names('Y Z'))).toEqual([]);    // every token too short
   });
 
   it('issue #40: a CJK name now yields its own token instead of none', () => {
-    expect(generateSearchTokens('习近平')).toEqual(['习近平']);
+    expect(generateSearchTokens(names('习近平'))).toEqual(['习近平']);
   });
 
   it('issue #40: a Cyrillic name yields both its own token and a transliterated one', () => {
-    const tokens = generateSearchTokens('Абу Нидал');
+    const tokens = generateSearchTokens(names('Абу Нидал'));
     expect(tokens).toContain('абу');
     expect(tokens).toContain('нидал');
     expect(tokens).toContain('abu');
     expect(tokens).toContain('nidal');
   });
 
-  it('handles an empty primary name without throwing', () => {
-    expect(generateSearchTokens('')).toEqual([]);
+  it('handles an empty names array without throwing', () => {
+    expect(generateSearchTokens([])).toEqual([]);
   });
 });

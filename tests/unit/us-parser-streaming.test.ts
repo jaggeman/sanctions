@@ -61,7 +61,7 @@ describe('parseUSListStreaming', () => {
       const seen: any[] = [];
       const count = await parseUSListStreaming(tmp, (record) => seen.push(record));
       expect(count).toBe(1);
-      expect(seen[0].primaryName).toBe('Solo');
+      expect(seen[0].names[0].wholeName).toBe('Solo');
     } finally {
       await fs.remove(tmp);
     }
