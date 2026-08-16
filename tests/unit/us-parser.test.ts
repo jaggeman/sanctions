@@ -29,15 +29,63 @@ describe('parseUSList', () => {
     expect(abbas!.birthDates!.map((b) => b.raw)).toEqual(['10 Dec 1948']);
   });
 
-  it('formats an id-list entry even when it is not really a passport number', async () => {
-    // KNOWN QUIRK: the SDN "Secondary sanctions risk:" idType is legal boilerplate,
-    // not an identity document, but the parser has no way to distinguish it from
-    // a real passport/national-id entry and stores it in `identifications` regardless.
+  it('issue #152: excludes non-identity entries (e.g. secondary sanctions risk, gender) from identifications', async () => {
     const records = await parseUSList(FIXTURE);
     const abbas = records.find((r) => r.id === 'US-SDN-2674');
-    expect(abbas!.identifications).toEqual([
-      { number: 'section 1(b) of Executive Order 13224', typeDescription: 'Secondary sanctions risk:', countryIso2: undefined, knownExpired: false },
+    // uid 2674 only has a "Secondary sanctions risk:" entry in idList, which is legal boilerplate,
+    // so identifications must remain undefined rather than storing it as a false identity document.
+    expect(abbas!.identifications).toBeUndefined();
+  });
+
+  it('issue #152: includes genuine identifiers in identifications with clean typeDescription', async () => {
+    const records = await parseUSList(FIXTURE);
+    const jelassi = records.find((r) => r.id === 'US-SDN-7254');
+    expect(jelassi!.identifications).toEqual([
+      {
+        number: 'L276046',
+        typeDescription: 'Passport',
+        countryIso2: undefined,
+        knownExpired: true,
+      },
     ]);
+
+    const dawood = records.find((r) => r.id === 'US-SDN-9758');
+    expect(dawood!.identifications).toEqual([
+      {
+        number: 'M-110522',
+        typeDescription: 'Passport',
+        countryIso2: 'India',
+        knownExpired: false,
+      },
+    ]);
+  });
+
+  it('issue #152: filters out gender, organization established date, and other non-ID entries from XML', async () => {
+    const os = await import('os');
+    const fs = await import('fs-extra');
+    const tmp = path.join((os as any).tmpdir(), `us-non-id-${process.pid}.xml`);
+    const xml = `<?xml version="1.0"?><sdnList><sdnEntry>
+      <uid>1001</uid>
+      <lastName>Test Person</lastName>
+      <sdnType>Individual</sdnType>
+      <idList>
+        <id><idType>Gender</idType><idNumber>Male</idNumber></id>
+        <id><idType>National ID No.</idType><idNumber>12345678</idNumber><idCountry>US</idCountry></id>
+        <id><idType>Organization Established Date</idType><idNumber>1990</idNumber></id>
+        <id><idType>Additional Sanctions Information -</idType><idNumber>Subject to Secondary Sanctions</idNumber></id>
+        <id><idType>Cedula No.</idType><idNumber>87654321</idNumber></id>
+      </idList>
+    </sdnEntry></sdnList>`;
+    await (fs as any).writeFile(tmp, xml, 'utf-8');
+    try {
+      const records = await parseUSList(tmp);
+      expect(records[0].identifications).toEqual([
+        { number: '12345678', typeDescription: 'National ID No.', countryIso2: 'US', knownExpired: false },
+        { number: '87654321', typeDescription: 'Cedula No.', countryIso2: undefined, knownExpired: false },
+      ]);
+    } finally {
+      await (fs as any).remove(tmp);
+    }
   });
 
   it('parses a vessel entry', async () => {
@@ -92,8 +140,8 @@ describe('parseUSList', () => {
 
   it('issue #168: does not flag [expired] for a document with no expirationDate at all', async () => {
     const records = await parseUSList(FIXTURE);
-    const abbas = records.find((r) => r.id === 'US-SDN-2674');
-    expect(abbas!.identifications?.[0].knownExpired).toBe(false);
+    const dawood = records.find((r) => r.id === 'US-SDN-9758');
+    expect(dawood!.identifications?.[0].knownExpired).toBe(false);
   });
 
   it('issue #168: does not flag [expired] when expirationDate is a real "DD Mon YYYY" date still in the future', async () => {

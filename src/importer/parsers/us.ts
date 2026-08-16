@@ -107,6 +107,173 @@ function toArray(val: any): any[] {
  */
 const SAFE_UID = /^[A-Za-z0-9._-]{1,200}$/;
 
+/**
+ * Issue #152: OFAC SDN exports use <idList><id> as an untyped bucket for everything
+ * from real passports to legal boilerplate ("Secondary sanctions risk:"), demographic
+ * markers ("Gender: Male"), organization dates ("Organization Established Date: 1994"),
+ * and sanctions directives ("Executive Order 13846 information:").
+ *
+ * This allow-list contains all genuine identity, tax, legal entity, registration,
+ * vessel/aircraft, and credential document types derived from the 171 distinct idTypes
+ * found in the real OFAC SDN export.
+ */
+const ALLOWED_US_ID_TYPES = new Set<string>([
+  // Passports & Travel Documents
+  'Passport',
+  'Diplomatic Passport',
+  'British National Overseas Passport',
+  'Stateless Person Passport',
+  'Travel Document Number',
+  'Refugee ID Card',
+  'Stateless Person ID Card',
+  "Seafarer's Identification Document",
+  'Immigration No.',
+  'Public Security and Immigration No.',
+  'VisaNumberID',
+
+  // National IDs, Civil IDs, Personal IDs
+  'National ID No.',
+  'National Foreign ID Number',
+  'Identification Number',
+  'Personal ID Card',
+  "Citizen's Card Number",
+  'Numero de Identidad',
+  'Tarjeta de Identidad',
+  'Credencial electoral',
+  'Electoral Registry No.',
+  'I.F.E.',
+  'D.N.I.',
+  'C.U.I.',
+  'C.U.I.P.',
+  'C.U.R.P.',
+  'CNP (Personal Numerical Code)',
+  'Tazkira National ID Card',
+  'Turkish Identification Number',
+  'Kenyan ID No.',
+  'Moroccan Personal ID No.',
+  'Bosnian Personal ID No.',
+  'UAE Identification',
+  'Birth Certificate Number',
+  'Cartilla de Servicio Militar Nacional',
+  'Military Registration Number',
+  'Romanian Permanent Resident',
+  'Residency Number',
+  'Federal ID Card',
+  'N.I.E.',
+  'SSN',
+
+  // Tax IDs, Business & Legal Entity IDs, Registration Numbers
+  'Tax ID No.',
+  'Registration Number',
+  'Business Registration Number',
+  'Business Registration Document #',
+  'Registration ID',
+  'Company Number',
+  'UK Company Number',
+  'Enterprise Number',
+  'Entity Code',
+  'Legal Entity Number',
+  'LE Number',
+  'Central Registration System Number',
+  'Commercial Registry Number',
+  'Romanian C.R.',
+  'C.R. No.',
+  'Public Registration Number',
+  'Certificate of Incorporation Number',
+  'Registration Certificate Number (Dubai)',
+  'Chamber of Commerce Number',
+  'Istanbul Chamber of Comm. No.',
+  'Dubai Chamber of Commerce Membership No.',
+  'Folio Mercantil No.',
+  'Matricula Mercantil No',
+  'Business Number',
+  'Branch Unit Number',
+  'Organization Code',
+  'United Social Credit Code Certificate (USCCC)',
+  'Unified Social Credit Code (USCC)',
+  'Chinese Commercial Code',
+  'Economic Register Number (CBLS)',
+  'Registered Charity No.',
+  'C.I.N.',
+  'US FEIN',
+  'D-U-N-S Number',
+  'Cedula No.',
+  'R.F.C.',
+  'RFC',
+  'RUC #',
+  'NIT #',
+  'RIF #',
+  'RTN',
+  'C.I.F.',
+  'C.U.I.T.',
+  'N.I.F.',
+  'Numero Unico de Identificacao Tributaria (NUIT)',
+  'Italian Fiscal Code',
+  'Paraguayan tax identification number',
+  'Romanian Tax Registration',
+  'Fiscal Code',
+  'V.A.T. Number',
+  'Russian State Individual Business Registration Number Pattern (OGRNIP)',
+  'Global Intermediary Identification Number',
+  'Government Gazette Number',
+  'File Number',
+  'Serial No.',
+  'Trade License No.',
+  'License',
+  'Permit Number',
+  'SRE Permit No.',
+  'Tourism License No.',
+  "Driver's License No.",
+  'Pilot License Number',
+  'MSB Registration Number',
+  'Afghan Money Service Provider License Number',
+  'Trademark number',
+
+  // Financial, Securities, Banking
+  'SWIFT/BIC',
+  'BIK (RU)',
+  'ISIN',
+  'MICEX Code',
+  'Equity Ticker',
+
+  // Vessel & Aircraft Identifiers
+  'Vessel Registration Identification',
+  'MMSI',
+  'Other Vessel Call Sign',
+  'Aircraft Tail Number',
+  'Previous Aircraft Tail Number',
+  "Aircraft Manufacturer's Serial Number (MSN)",
+  'Aircraft Construction Number (also called L/N or S/N or F/N)',
+  'Aircraft Serial Identification',
+  'Aircraft Mode S Transponder Code',
+
+  // Digital Currency Addresses
+  'Digital Currency Address - XBT',
+  'Digital Currency Address - TRX',
+  'Digital Currency Address - ETH',
+  'Digital Currency Address - USDT',
+  'Digital Currency Address - LTC',
+  'Digital Currency Address - XMR',
+  'Digital Currency Address - BCH',
+  'Digital Currency Address - DASH',
+  'Digital Currency Address - ZEC',
+  'Digital Currency Address - SOL',
+  'Digital Currency Address - USDC',
+  'Digital Currency Address - DOGE',
+  'Digital Currency Address - BTG',
+  'Digital Currency Address - ETC',
+  'Digital Currency Address - BSV',
+  'Digital Currency Address - XVG',
+  'Digital Currency Address - XRP',
+  'Digital Currency Address - ARB',
+  'Digital Currency Address - BSC',
+  'Digital Currency Address - BNB',
+]);
+
+function isAllowedIdType(idType: string): boolean {
+  return ALLOWED_US_ID_TYPES.has(idType.trim());
+}
+
 function mapEntryToRecord(entry: any): SanctionRecord | null {
   const uid = String(entry.uid ?? '').trim();
   if (!uid) return null;
@@ -177,15 +344,15 @@ function mapEntryToRecord(entry: any): SanctionRecord | null {
     }
   }
 
-  // Map IDs (passports, national ID, etc.) — issue #46 / #168
+  // Map IDs (passports, national ID, etc.) — issue #46 / #168 / #152
   const identifications: Identification[] = [];
   for (const idItem of toArray(entry.idList?.id)) {
-    const num = idItem.idNumber ? String(idItem.idNumber) : '';
-    const idType = idItem.idType ? String(idItem.idType) : '';
-    const country = idItem.idCountry ? String(idItem.idCountry) : '';
-    const expirationRaw = idItem.expirationDate ? String(idItem.expirationDate) : undefined;
+    const num = idItem.idNumber ? String(idItem.idNumber).trim() : '';
+    const idType = idItem.idType ? String(idItem.idType).trim() : '';
+    const country = idItem.idCountry ? String(idItem.idCountry).trim() : '';
+    const expirationRaw = idItem.expirationDate ? String(idItem.expirationDate).trim() : undefined;
     
-    if (!num) continue;
+    if (!num || !idType || !isAllowedIdType(idType)) continue;
 
     const knownExpired = isExpired(expirationRaw);
     identifications.push({
