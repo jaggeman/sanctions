@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import ApiTokensTab from './ApiTokensTab';
 import { setOnSessionExpired } from './apiFetch';
@@ -94,5 +94,74 @@ describe('ApiTokensTab access gating', () => {
     render(<ApiTokensTab />);
 
     await waitFor(() => expect(screen.getByText(/restricted to admins/i)).toBeInTheDocument());
+  });
+});
+
+describe('ApiTokensTab token creation error handling (issue #166)', () => {
+  it('falls back to a friendly error message when token creation returns a non-JSON error (e.g. 502 HTML)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('/api/auth/session')) {
+          return { ok: true, status: 200, json: async () => ({ email: 'admin@example.com', isAdmin: true }) } as Response;
+        }
+        if (url.includes('/api/admin/tokens') && init?.method === 'POST') {
+          return {
+            ok: false,
+            status: 502,
+            json: async () => {
+              throw new SyntaxError("Unexpected token '<', \"<html>...\" is not valid JSON");
+            },
+          } as unknown as Response;
+        }
+        if (url.includes('/api/admin/tokens')) {
+          return { ok: true, status: 200, json: async () => [] } as Response;
+        }
+        return { ok: true, status: 200, json: async () => ({}) } as Response;
+      }),
+    );
+
+    render(<ApiTokensTab />);
+    await waitFor(() => expect(screen.getByText('Create API Token')).toBeInTheDocument());
+
+    const input = screen.getByLabelText(/Token name/i);
+    fireEvent.change(input, { target: { value: 'Test Token' } });
+    fireEvent.click(screen.getByRole('button', { name: /Create Token/i }));
+
+    await waitFor(() => expect(screen.getByText('Failed to create token.')).toBeInTheDocument());
+    expect(screen.queryByText(/Unexpected token/i)).not.toBeInTheDocument();
+  });
+
+  it('surfaces the server error message when returned as JSON', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('/api/auth/session')) {
+          return { ok: true, status: 200, json: async () => ({ email: 'admin@example.com', isAdmin: true }) } as Response;
+        }
+        if (url.includes('/api/admin/tokens') && init?.method === 'POST') {
+          return {
+            ok: false,
+            status: 400,
+            json: async () => ({ error: 'Token name already in use' }),
+          } as unknown as Response;
+        }
+        if (url.includes('/api/admin/tokens')) {
+          return { ok: true, status: 200, json: async () => [] } as Response;
+        }
+        return { ok: true, status: 200, json: async () => ({}) } as Response;
+      }),
+    );
+
+    render(<ApiTokensTab />);
+    await waitFor(() => expect(screen.getByText('Create API Token')).toBeInTheDocument());
+
+    const input = screen.getByLabelText(/Token name/i);
+    fireEvent.change(input, { target: { value: 'Duplicate Token' } });
+    fireEvent.click(screen.getByRole('button', { name: /Create Token/i }));
+
+    await waitFor(() => expect(screen.getByText('Token name already in use')).toBeInTheDocument());
   });
 });
