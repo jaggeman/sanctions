@@ -21,6 +21,7 @@ export const SOURCE_URLS = {
   UN: 'https://scsanctions.un.org/resources/xml/en/consolidated.xml',
   US: 'https://www.treasury.gov/ofac/downloads/sdn.xml',
   UK: 'https://sanctionslist.fcdo.gov.uk/docs/UK-Sanctions-List.xml',
+  CH: 'https://www.sesam.search.admin.ch/sesam-search-web/pages/downloadXmlGesamtliste.xhtml?lang=en&action=downloadXmlGesamtlisteAction',
 };
 
 /**
@@ -116,6 +117,12 @@ export async function downloadAllSources(): Promise<Record<string, string>> {
     paths.UK = await downloadFile(SOURCE_URLS.UK, 'uk_sanctions.xml');
   } catch (error: any) {
     log.error('download.failed', { source: 'UK', error });
+  }
+
+  try {
+    paths.CH = await downloadFile(SOURCE_URLS.CH, 'ch_sanctions.xml');
+  } catch (error: any) {
+    log.error('download.failed', { source: 'CH', error });
   }
 
   return paths;

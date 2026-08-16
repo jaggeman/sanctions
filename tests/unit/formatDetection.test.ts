@@ -72,6 +72,13 @@ describe('detectFormat — UN and US XML (existing downloaded sources)', () => {
     expect(result.format).toBe('uk-xml');
     expect(result.fileGenerationDate).toBe('14/08/2026');
   });
+
+  it('detects the Swiss SECO XML and extracts date', () => {
+    const content = '<?xml version="1.0" encoding="UTF-8"?>\n<swiss-sanctions-list list-type="whole-list" date="2026-08-15">\n  <target ssid="5142">';
+    const result = detectFormat(content);
+    expect(result.format).toBe('ch-xml');
+    expect(result.fileGenerationDate).toBe('2026-08-15');
+  });
 });
 
 describe('detectFormat — generic / edge cases', () => {

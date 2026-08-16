@@ -1,4 +1,4 @@
-export type SanctionSource = 'EU' | 'UN' | 'US' | 'UK' | 'PEP' | 'CUSTOM';
+export type SanctionSource = 'EU' | 'UN' | 'US' | 'UK' | 'CH' | 'PEP' | 'CUSTOM';
 
 /**
  * Canonical internal vocabulary (issue #6). The EU FSD source uses
@@ -131,7 +131,7 @@ export interface OverrideHistoryEntry {
 }
 
 export type ImportStatus = 'pending' | 'parsing' | 'applied' | 'failed' | 'rejected';
-export type ImportFormat = 'eu-xml-1.1' | 'eu-csv-1.1' | 'eu-csv-1.0' | 'un-xml' | 'us-xml' | 'uk-xml' | 'csv';
+export type ImportFormat = 'eu-xml-1.1' | 'eu-csv-1.1' | 'eu-csv-1.0' | 'un-xml' | 'us-xml' | 'uk-xml' | 'ch-xml' | 'csv';
 
 // Audit trail for POST /api/upload (issue #7) AND POST /api/import (issue
 // #111) — one collection, two triggers, discriminated by `trigger`. For an

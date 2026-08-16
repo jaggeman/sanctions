@@ -5,6 +5,7 @@ import { parseEUListStreaming } from './parsers/eu';
 import { parseUNList } from './parsers/un';
 import { parseUSListStreaming } from './parsers/us';
 import { parseUKListStreaming } from './parsers/uk';
+import { parseChXmlStream } from './parsers/ch';
 import { parseCSVList } from './parsers/csv';
 import {
   startDiffSession,
@@ -21,7 +22,7 @@ import { validateCsvPath } from './csvPath';
 const log = logger.child({ module: 'importer.index' });
 
 export interface ImportOptions {
-  sources?: ('EU' | 'UN' | 'US' | 'UK')[];
+  sources?: ('EU' | 'UN' | 'US' | 'UK' | 'CH')[];
   csvPath?: string;
   csvSource?: 'PEP' | 'CUSTOM';
   csvSeparator?: string;
@@ -41,7 +42,7 @@ export interface ImportOptions {
    */
   uploadedFile?: {
     path: string;
-    format: 'eu-xml-1.1' | 'un-xml' | 'us-xml' | 'uk-xml' | 'csv';
+    format: 'eu-xml-1.1' | 'un-xml' | 'us-xml' | 'uk-xml' | 'ch-xml' | 'csv';
     source: SanctionSource;
   };
 }
@@ -135,7 +136,22 @@ async function runUploadedFileImport(
       await parseUKListStreaming(file.path, async (record) => {
         parsed++;
         buffer.push(record);
-        if (buffer.length >= EU_UPLOAD_CHUNK_SIZE) await flush();
+        if (buffer.length >= UK_UPLOAD_CHUNK_SIZE) await flush();
+      });
+      await flush();
+    } else if (file.format === 'ch-xml') {
+      let buffer: SanctionRecord[] = [];
+      const flush = async () => {
+        if (buffer.length === 0) return;
+        const chunk = buffer;
+        buffer = [];
+        const addedCount = await session.addChunk(chunk);
+        uploaded += addedCount;
+      };
+      await parseChXmlStream(file.path, async (record) => {
+        parsed++;
+        buffer.push(record);
+        if (buffer.length >= CH_UPLOAD_CHUNK_SIZE) await flush();
       });
       await flush();
     } else {
@@ -193,6 +209,9 @@ export const US_UPLOAD_CHUNK_SIZE = 500;
 /** Same rationale as `EU_UPLOAD_CHUNK_SIZE`, for the streamed UK Sanctions List parse (issue #99). */
 export const UK_UPLOAD_CHUNK_SIZE = 500;
 
+/** Same rationale as `EU_UPLOAD_CHUNK_SIZE`, for the streamed CH SECO Sanctions List parse (issue #140). */
+export const CH_UPLOAD_CHUNK_SIZE = 500;
+
 /**
  * Main import function that coordinates fetching, parsing, and uploading.
  *
@@ -216,7 +235,7 @@ export async function runImport(options: ImportOptions = {}): Promise<{
     return runUploadedFileImport(options.uploadedFile, options);
   }
 
-  const sources = options.sources || ['EU', 'UN', 'US', 'UK'];
+  const sources = options.sources || ['EU', 'UN', 'US', 'UK', 'CH'];
   const importedCounts: Record<string, number> = {};
   const diffs: StreamedDiffResult[] = [];
   let totalParsed = 0;
@@ -383,6 +402,46 @@ export async function runImport(options: ImportOptions = {}): Promise<{
       if (ukParseSucceeded) diffs.push(await session.finish());
 
       importedCounts.UK = parsed;
+      totalParsed += parsed;
+      totalUploaded += uploaded;
+    }
+
+    // 5. Process CH (SECO Sanctions List, issue #140). Streamed and
+    // chunk-uploaded like EU/US/UK — the real export (~40 MB) is the largest
+    // source ingested.
+    if (sources.includes('CH')) {
+      const session = await startDiffSession('CH', diffOptionsFrom(options));
+      let chParseSucceeded = false;
+      let buffer: SanctionRecord[] = [];
+      let parsed = 0;
+      let uploaded = 0;
+
+      const flush = async () => {
+        if (buffer.length === 0) return;
+        const chunk = buffer;
+        buffer = [];
+        uploaded += await session.addChunk(chunk);
+      };
+
+      try {
+        const filePath = await downloadFile(SOURCE_URLS.CH, 'ch_sanctions.xml');
+        await parseChXmlStream(filePath, async (record) => {
+          parsed++;
+          buffer.push(record);
+          if (buffer.length >= CH_UPLOAD_CHUNK_SIZE) {
+            await flush();
+          }
+        });
+        await flush();
+        chParseSucceeded = true;
+      } catch (error: any) {
+        await flush().catch(() => {});
+        diffs.push(session.abort());
+        log.error('import.source_failed', { source: 'CH', error });
+      }
+      if (chParseSucceeded) diffs.push(await session.finish());
+
+      importedCounts.CH = parsed;
       totalParsed += parsed;
       totalUploaded += uploaded;
     }

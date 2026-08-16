@@ -96,6 +96,23 @@ describe('processUpload — happy path', () => {
     );
   });
 
+  it('maps ch-xml format to source CH and runs streamed CH import', async () => {
+    detectFormat.mockReturnValue({ format: 'ch-xml', fileGenerationDate: '2026-08-15' });
+    runImport.mockResolvedValue({ success: true, importedCounts: { CH: 8664 } });
+
+    const result = await processUpload(baseOptions({ originalFilename: 'ch.xml' }));
+
+    expect(result.outcome).toBe('applied');
+    expect(runImport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        uploadedFile: expect.objectContaining({
+          format: 'ch-xml',
+          source: 'CH',
+        }),
+      }),
+    );
+  });
+
   it('infers the source from the detected format for EU/UN/US, ignoring the source hint', async () => {
     detectFormat.mockReturnValue({ format: 'eu-xml-1.1', fileGenerationDate: '2026-08-05T00:00:00Z' });
     runImport.mockResolvedValue({ success: true, importedCounts: { EU: 3 } });
