@@ -720,3 +720,52 @@ describe('runSearch — pruning must never drop a record the scorer accepts (iss
     expect([...truth].filter((id) => !pruned.has(id))).toEqual([]);
   });
 });
+
+/**
+ * Issue #294: long-word transliteration variants where JW >= 0.75 matches
+ * but Soundex, 3-grams (ng3:), and 2-char prefix (p2:) all disagree.
+ * The inverted index must provide a looser key class (ng2: 2-grams) on words
+ * with length > 6 so that candidate pruning does not silently drop them.
+ */
+describe('runSearch — long-word transliteration pruning key (issue #294)', () => {
+  beforeEach(async () => {
+    allRecords = [
+      record({ id: 'LONG-1', names: namesOverride('Souleiman Al-Masri') }),
+      record({ id: 'LONG-2', names: namesOverride('Irhayyim Al-Tikriti') }),
+      record({ id: 'LONG-3', names: namesOverride('Khaleel Ibrahim') }),
+      record({ id: 'LONG-4', names: namesOverride('Esmaeli Mohammadi') }),
+      record({ id: 'LONG-5', names: namesOverride('Mashhadani') }),
+    ];
+    await invalidateSearchIndex();
+  });
+
+  const LONG_PAIRS = [
+    { query: 'Sultani', expectedId: 'LONG-1', desc: 'sultani -> souleiman' },
+    { query: 'Ibrahim', expectedId: 'LONG-2', desc: 'ibrahim -> irhayyim' },
+    { query: 'Kakolele', expectedId: 'LONG-3', desc: 'kakolele -> khaleel' },
+    { query: 'Emmanuel', expectedId: 'LONG-4', desc: 'emmanuel -> esmaeli' },
+    { query: 'Mbarushimana', expectedId: 'LONG-5', desc: 'mbarushimana -> mashhadani' },
+  ];
+
+  it.each(LONG_PAIRS)('reaches real long-word transliteration match $desc', async ({ query, expectedId }) => {
+    const res = await runSearch(query, { threshold: 65 });
+    const matchIds = res.results.map((r) => r.id);
+    expect(matchIds).toContain(expectedId);
+  });
+
+  it('preserves the unpruned vs pruned superset invariant across all long-word test cases', async () => {
+    for (const { query } of LONG_PAIRS) {
+      const { results: unpruned } = await runSearch(query, { threshold: 0, limit: 100 });
+      const truth = new Set(unpruned.filter((r) => r.score >= 65).map((r) => r.id));
+      const { results: pruned } = await runSearch(query, { threshold: 65, limit: 100 });
+      const prunedSet = new Set(pruned.map((r) => r.id));
+
+      const dropped = [...truth].filter((id) => !prunedSet.has(id));
+      expect(
+        dropped,
+        `pruning dropped ${dropped.length} record(s) the scorer accepted at >= 65 for "${query}": ${dropped.join(', ')}`,
+      ).toEqual([]);
+    }
+  });
+});
+
