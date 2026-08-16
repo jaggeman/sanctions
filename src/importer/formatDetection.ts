@@ -1,4 +1,4 @@
-export type DetectedFormat = 'eu-xml-1.1' | 'eu-csv-1.1' | 'eu-csv-1.0' | 'un-xml' | 'us-xml' | 'uk-xml' | 'csv';
+export type DetectedFormat = 'eu-xml-1.1' | 'eu-csv-1.1' | 'eu-csv-1.0' | 'un-xml' | 'us-xml' | 'uk-xml' | 'ch-xml' | 'csv';
 
 export interface FormatDetectionResult {
   format: DetectedFormat;
@@ -46,6 +46,9 @@ export function detectFormat(rawContent: string): FormatDetectionResult {
     if (content.includes('<Designations')) {
       const match = content.match(/<DateGenerated>([^<]*)<\/DateGenerated>/);
       return { format: 'uk-xml', fileGenerationDate: match ? match[1] : null };
+    }
+    if (content.includes('<swiss-sanctions-list')) {
+      return { format: 'ch-xml', fileGenerationDate: extractXmlAttribute(content, '<swiss-sanctions-list', 'date') };
     }
     return { format: 'csv', fileGenerationDate: null }; // unrecognised XML — fall through safely
   }

@@ -101,6 +101,9 @@ export async function streamXmlRecords(
       if (!frame) return;
 
       const hasAttrs = Object.keys(frame.node).length > 0;
+      if (hasAttrs && frame.childCount === 0 && frame.text.trim()) {
+        frame.node['#text'] = frame.text.trim();
+      }
       const value: any = !hasAttrs && frame.childCount === 0 ? frame.text.trim() : frame.node;
 
       if (stack.length === 0) return; // closed the document root itself

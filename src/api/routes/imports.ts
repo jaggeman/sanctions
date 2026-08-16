@@ -15,7 +15,7 @@ import { isAdminEmail } from '../../auth/admins';
 
 const MAX_UPLOAD_BYTES = 64 * 1024 * 1024; // real EU FSD export is ~25 MB
 const ALLOWED_UPLOAD_EXTENSIONS = new Set(['.csv', '.xml']);
-const ALLOWED_SOURCES = new Set<SanctionSource>(['EU', 'UN', 'US', 'PEP', 'CUSTOM']);
+const ALLOWED_SOURCES = new Set<SanctionSource>(['EU', 'UN', 'US', 'UK', 'CH', 'PEP', 'CUSTOM']);
 
 const upload = multer({
   dest: os.tmpdir(),
