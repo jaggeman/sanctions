@@ -143,7 +143,7 @@ The guard **fails closed**: if `ALLOWED_EMAIL_DOMAINS` is unset in production, n
 
 Outside production (`NODE_ENV !== 'production'`), an unset list falls back to the dev test account `admin@sanctions.com` so local work isn't blocked. Setting `ALLOWED_EMAIL_DOMAINS` supersedes that fallback entirely — once configured, even the dev test account needs its own domain on the list.
 
-Membership is re-read on every request (not just at login), so removing a domain from the list revokes every session using it immediately, on that session's very next request — no separate step and no need to wait for sessions to expire. Both endpoints reject a disallowed address with the exact same response shape as an allowed one, so the login flow can't be used to probe which domains are permitted.
+Membership is re-read on every request (not just at login), so removing a domain from the list revokes every session using it immediately, on that session's very next request — and rejects any API tokens owned by addresses on that domain on their very next request (issue #158) — with no separate step and no need to wait for sessions to expire. Both endpoints reject a disallowed address with the exact same response shape as an allowed one, so the login flow can't be used to probe which domains are permitted.
 
 ### `ADMIN_EMAILS` — required in production
 

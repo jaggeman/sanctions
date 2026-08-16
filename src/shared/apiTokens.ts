@@ -1,5 +1,6 @@
 import * as crypto from 'crypto';
 import { db } from './firebase';
+import { isAllowedEmail } from '../auth/emailAllowlist';
 
 export type ApiTokenScope = 'read' | 'write';
 
@@ -20,7 +21,7 @@ export type ApiTokenPublic = Omit<ApiTokenRecord, 'tokenHash'>;
 
 export interface TokenVerificationResult {
   valid: boolean;
-  reason?: 'missing' | 'not_found' | 'revoked' | 'insufficient_scope' | 'no_owner_email';
+  reason?: 'missing' | 'not_found' | 'revoked' | 'insufficient_scope' | 'no_owner_email' | 'disallowed_owner';
   tokenId?: string;
   scopes?: ApiTokenScope[];
   ownerEmail?: string;
@@ -140,6 +141,14 @@ export async function verifyApiToken(
   // don't attribute anything, so they're let through unchanged.
   if (requiredScope === 'write' && !record.ownerEmail) {
     return { valid: false, reason: 'no_owner_email', tokenId: record.id, scopes: record.scopes };
+  }
+
+  // CLAUDE.md §6 / issue #158: guards should re-verify current state from the
+  // source of truth. If the token owner's domain was removed from
+  // ALLOWED_EMAIL_DOMAINS (or the user off-boarded), fail closed so an
+  // off-boarded user's tokens cannot keep access their session would immediately lose.
+  if (record.ownerEmail && !isAllowedEmail(record.ownerEmail)) {
+    return { valid: false, reason: 'disallowed_owner', tokenId: record.id, scopes: record.scopes };
   }
 
   // Fire-and-forget: don't make every authenticated request wait on this write.

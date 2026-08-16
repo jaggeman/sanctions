@@ -63,6 +63,7 @@ import {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'corp.test,example.com');
 });
 
 describe('generateRawToken', () => {
@@ -302,5 +303,24 @@ describe('verifyApiToken', () => {
     const result = await verifyApiToken('sanc_legacy_read', 'read');
 
     expect(result).toEqual({ valid: true, tokenId: 'tok-1', scopes: ['read'], ownerEmail: undefined });
+  });
+
+  it('rejects a token when the owner domain is removed from ALLOWED_EMAIL_DOMAINS (issue #158)', async () => {
+    vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'othercompany.com');
+    const stored = { id: 'tok-1', scopes: ['read', 'write'], revoked: false, ownerEmail: 'alice@partner.com' };
+    mockWhereLimitGet.mockResolvedValueOnce({
+      empty: false,
+      docs: [{ data: () => stored, ref: { update: mockDocUpdate } }],
+    });
+
+    const result = await verifyApiToken('sanc_partner', 'read');
+
+    expect(result).toEqual({
+      valid: false,
+      reason: 'disallowed_owner',
+      tokenId: 'tok-1',
+      scopes: ['read', 'write'],
+    });
+    expect(mockDocUpdate).not.toHaveBeenCalled();
   });
 });
