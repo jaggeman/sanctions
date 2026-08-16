@@ -18,6 +18,7 @@ import {
   DialogActions,
   Button,
 } from '@mui/material';
+import { apiFetch } from './apiFetch';
 
 interface ImportRecordData {
   importId: string;
@@ -55,7 +56,7 @@ export default function ImportHistoryTab({ focusImportId }: { focusImportId?: st
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch('/api/imports');
+        const res = await apiFetch('/api/imports');
         if (!res.ok) throw new Error(`Server returned ${res.status}`);
         const data = await res.json();
         const list = Array.isArray(data) ? data : [];

@@ -10,6 +10,8 @@ firestore-debug.log
 # Data files (Sanctions lists)
 data/
 downloads/
+lists/*
+!lists/README.md
 
 # Frontend
 frontend/node_modules/

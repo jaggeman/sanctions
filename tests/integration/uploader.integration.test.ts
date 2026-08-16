@@ -105,6 +105,37 @@ describe('uploadRecords — real Firestore write path', () => {
     const snap = await db.collection('sanctions').get();
     expect(snap.empty).toBe(true);
   });
+
+  // --- issue #39 -------------------------------------------------------
+
+  it('preserves the original createdAt across a genuine content update, against a real merge:true write', async () => {
+    await uploadRecords([record({ createdAt: '2020-01-01T00:00:00.000Z' })]);
+
+    // Simulates a real re-parse: every parser stamps createdAt fresh on
+    // every run, so the incoming record's createdAt is "now", not the
+    // original value.
+    await uploadRecords([
+      record({ primaryName: 'Changed Name', createdAt: new Date().toISOString() }),
+    ]);
+
+    const doc = await db.collection('sanctions').doc('PEP-int-1').get();
+    expect(doc.data()!.createdAt).toBe('2020-01-01T00:00:00.000Z');
+  });
+
+  it('clears a field that disappears from a later import, via a real FieldValue.delete()', async () => {
+    await uploadRecords([record({ addresses: [{ fullAddress: 'Old Address' }] } as any)]);
+    let doc = await db.collection('sanctions').doc('PEP-int-1').get();
+    expect(doc.data()!.addresses).toEqual([{ fullAddress: 'Old Address' }]);
+
+    // Next import's parse no longer includes an address at all for this
+    // entity (the key is simply absent, same shape every real parser
+    // produces) — merge:true alone would leave the stale address in place.
+    await uploadRecords([record()]);
+
+    doc = await db.collection('sanctions').doc('PEP-int-1').get();
+    expect(doc.data()!.addresses).toBeUndefined();
+    expect(doc.data()!.primaryName).toBe('Integration Person');
+  });
 });
 
 describe('soft delete + version history — real Firestore write path (issue #9)', () => {

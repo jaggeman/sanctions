@@ -124,6 +124,34 @@ programme, Iran's long range ballistic missile currently in service.</VALUE>
       <SORT_KEY/>
       <SORT_KEY_LAST_MOD/>
     </INDIVIDUAL>
+    <!--
+      Issue #168: real record carved verbatim (DATAID 6907995) — has both a
+      Low- and a Good-quality alias in the same entry, real proof QUALITY is
+      genuinely a reliability marker on INDIVIDUAL_ALIAS and the split isn't
+      0/N or N/0.
+    -->
+    <INDIVIDUAL>
+      <DATAID>6907995</DATAID>
+      <VERSIONNUM>1</VERSIONNUM>
+      <FIRST_NAME>GASTON</FIRST_NAME>
+      <SECOND_NAME>IYAMUREMYE</SECOND_NAME>
+      <UN_LIST_TYPE>DRC</UN_LIST_TYPE>
+      <REFERENCE_NUMBER>CDi.003</REFERENCE_NUMBER>
+      <LISTED_ON>2010-12-01</LISTED_ON>
+      <NATIONALITY>
+        <VALUE>Rwanda</VALUE>
+      </NATIONALITY>
+      <INDIVIDUAL_ALIAS>
+        <QUALITY>Low</QUALITY>
+        <ALIAS_NAME>Rumuli</ALIAS_NAME>
+      </INDIVIDUAL_ALIAS>
+      <INDIVIDUAL_ALIAS>
+        <QUALITY>Good</QUALITY>
+        <ALIAS_NAME>Byiringiro Victor Rumuli</ALIAS_NAME>
+      </INDIVIDUAL_ALIAS>
+      <SORT_KEY/>
+      <SORT_KEY_LAST_MOD/>
+    </INDIVIDUAL>
   </INDIVIDUALS>
   <ENTITIES>
     <ENTITY>
@@ -137,6 +165,47 @@ programme, Iran's long range ballistic missile currently in service.</VALUE>
       <ENTITY_ADDRESS>
         <CITY>Beni</CITY>
         <COUNTRY>Democratic Republic of the Congo</COUNTRY>
+      </ENTITY_ADDRESS>
+    </ENTITY>
+    <!--
+      Issue #168: real record carved verbatim (DATAID 6908026) — proves
+      ENTITY_ALIAS's QUALITY tag holds an alias-TYPE label ("a.k.a."), not a
+      reliability marker the way INDIVIDUAL_ALIAS's QUALITY does. Must NOT
+      be mapped to NameAlias.strong the same way.
+    -->
+    <ENTITY>
+      <DATAID>6908026</DATAID>
+      <VERSIONNUM>1</VERSIONNUM>
+      <FIRST_NAME>COMPAGNIE AERIENNE DES GRANDS LACS (CAGL)</FIRST_NAME>
+      <UN_LIST_TYPE>DRC</UN_LIST_TYPE>
+      <REFERENCE_NUMBER>CDe.003</REFERENCE_NUMBER>
+      <LISTED_ON>2007-03-29</LISTED_ON>
+      <ENTITY_ALIAS>
+        <QUALITY>a.k.a.</QUALITY>
+        <ALIAS_NAME>CAGL</ALIAS_NAME>
+      </ENTITY_ALIAS>
+      <ENTITY_ADDRESS>
+        <CITY>Goma</CITY>
+        <COUNTRY>Democratic Republic of the Congo</COUNTRY>
+      </ENTITY_ADDRESS>
+    </ENTITY>
+    <!-- Real record carved verbatim (DATAID 6908335) — an f.k.a.-quality
+         entity alias, same non-reliability meaning as a.k.a. above. -->
+    <ENTITY>
+      <DATAID>6908335</DATAID>
+      <VERSIONNUM>1</VERSIONNUM>
+      <FIRST_NAME>LOGARCHEO S.A.</FIRST_NAME>
+      <UN_LIST_TYPE>Iraq</UN_LIST_TYPE>
+      <REFERENCE_NUMBER>IQe.200</REFERENCE_NUMBER>
+      <LISTED_ON>2004-04-26</LISTED_ON>
+      <ENTITY_ALIAS>
+        <QUALITY>f.k.a.</QUALITY>
+        <ALIAS_NAME>LOGARCHEO AG</ALIAS_NAME>
+      </ENTITY_ALIAS>
+      <ENTITY_ADDRESS>
+        <STREET>Chemin du Carmel</STREET>
+        <CITY>1661 Le Paquier-Montbarry</CITY>
+        <COUNTRY>Switzerland</COUNTRY>
       </ENTITY_ADDRESS>
     </ENTITY>
   </ENTITIES>

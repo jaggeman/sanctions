@@ -215,6 +215,46 @@ describe('write-scoped bearer token attribution', () => {
   });
 });
 
+describe('invalidateSearchIndex ordering (issue #170)', () => {
+  // A controlled delayed promise stands in for real Firestore commit
+  // latency — the point of these tests is that the HANDLER awaits it, not
+  // that any particular timing occurs. Order is recorded rather than timed.
+  function deferredInvalidate() {
+    const order: string[] = [];
+    mockInvalidateSearchIndex.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          setTimeout(() => {
+            order.push('invalidated');
+            resolve();
+          }, 10);
+        }),
+    );
+    return order;
+  }
+
+  it('PUT /:id waits for invalidateSearchIndex to resolve before responding', async () => {
+    const order = deferredInvalidate();
+
+    await request(buildApp())
+      .put('/api/overrides/EU-1')
+      .set('Cookie', await authedCookie())
+      .send({ fields: { sanctionReason: 'Corrected' }, reason: 'Fix' });
+
+    order.push('responded');
+    expect(order).toEqual(['invalidated', 'responded']);
+  });
+
+  it('DELETE /:id waits for invalidateSearchIndex to resolve before responding', async () => {
+    const order = deferredInvalidate();
+
+    await request(buildApp()).delete('/api/overrides/EU-1').set('Cookie', await authedCookie());
+
+    order.push('responded');
+    expect(order).toEqual(['invalidated', 'responded']);
+  });
+});
+
 describe('id validation on /api/overrides/:id', () => {
   it('rejects a PUT with a URL-encoded slash in the id before touching Firestore or saveOverride', async () => {
     const res = await request(buildApp())

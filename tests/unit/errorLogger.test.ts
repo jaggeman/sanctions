@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { requestLogger } from '../../src/api/middleware/requestLogger';
+import { requestLogger, bindLogIdentity } from '../../src/api/middleware/requestLogger';
 import { errorLogger } from '../../src/api/middleware/errorLogger';
 
 function readJsonLines(spy: ReturnType<typeof vi.spyOn>): any[] {
@@ -17,6 +17,16 @@ function buildApp() {
   app.get('/already-sent', (req, res, next) => {
     res.status(200).json({ ok: true });
     next(new Error('too late'));
+  });
+  app.get('/throws-400', () => {
+    const err: any = new SyntaxError('Unexpected token b in JSON at position 1');
+    err.status = 400;
+    throw err;
+  });
+  app.get('/throws-statuscode-403', () => {
+    const err: any = new Error('Forbidden');
+    err.statusCode = 403;
+    throw err;
   });
   app.use(errorLogger);
   return app;
@@ -60,5 +70,59 @@ describe('errorLogger middleware', () => {
     // completes without an unhandled "ERR_HTTP_HEADERS_SENT" crash.
     const res = await request(buildApp()).get('/already-sent');
     expect(res.status).toBe(200);
+  });
+
+  // --- issue #110 ------------------------------------------------------
+
+  it('includes identity bound earlier in the pipeline by an auth middleware', async () => {
+    const app = express();
+    app.use(requestLogger);
+    app.get('/throws', (req, res) => {
+      bindLogIdentity(req, { userEmail: 'analyst@example.com' });
+      throw new Error('handler exploded');
+    });
+    app.use(errorLogger);
+
+    await request(app).get('/throws');
+    const entries = readJsonLines(errorSpy);
+    const errorLine = entries.find((e) => e.message === 'request.error');
+    expect(errorLine.userEmail).toBe('a***@example.com');
+  });
+
+  // issue #66: an unconditional 500 mislabels a client's own mistake (e.g. a
+  // body-parser SyntaxError, naturally a 400) as a server fault, and pollutes
+  // the error-level log stream with what's actually routine bad input.
+  it('respects err.status when present, instead of always returning 500', async () => {
+    const res = await request(buildApp()).get('/throws-400');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Unexpected token b in JSON at position 1');
+    expect(res.body.requestId).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('respects err.statusCode when err.status is absent', async () => {
+    const res = await request(buildApp()).get('/throws-statuscode-403');
+    expect(res.status).toBe(403);
+  });
+
+  it('logs a 4xx error at warn, not error, so genuine server failures stay findable by volume', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await request(buildApp()).get('/throws-400');
+
+    const warnEntries = readJsonLines(warnSpy);
+    expect(warnEntries.some((e) => e.message === 'request.error')).toBe(true);
+    const errorEntries = readJsonLines(errorSpy);
+    expect(errorEntries.some((e) => e.message === 'request.error')).toBe(false);
+  });
+
+  it('still logs a 500 (no status) at error level', async () => {
+    await request(buildApp()).get('/throws');
+    const errorEntries = readJsonLines(errorSpy);
+    expect(errorEntries.some((e) => e.message === 'request.error')).toBe(true);
+  });
+
+  it('defaults to 500 and the generic message when the error carries no status', async () => {
+    const res = await request(buildApp()).get('/throws');
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Internal server error');
   });
 });

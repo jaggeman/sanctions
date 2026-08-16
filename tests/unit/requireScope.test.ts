@@ -110,4 +110,32 @@ describe('requireScope', () => {
     );
     expect(next).not.toHaveBeenCalled();
   });
+
+  it('binds tokenId and the owner email into req.log when present (issue #110)', async () => {
+    mockVerifyApiToken.mockResolvedValueOnce({
+      valid: true,
+      tokenId: 'tok-1',
+      scopes: ['read'],
+      ownerEmail: 'owner@corp.test',
+    });
+    const req = makeReq('Bearer sanc_good') as any;
+    const childSpy = vi.fn();
+    req.log = { child: childSpy };
+    const res = makeRes();
+    const next = vi.fn() as NextFunction;
+
+    await requireScope('read')(req, res, next);
+
+    expect(childSpy).toHaveBeenCalledWith({ tokenId: 'tok-1', userEmail: 'owner@corp.test' });
+  });
+
+  it('does not touch req.log when it does not exist', async () => {
+    mockVerifyApiToken.mockResolvedValueOnce({ valid: true, tokenId: 'tok-1', scopes: ['read'] });
+    const req = makeReq('Bearer sanc_good') as any;
+    const res = makeRes();
+    const next = vi.fn() as NextFunction;
+
+    await expect(requireScope('read')(req, res, next)).resolves.toBeUndefined();
+    expect(req.log).toBeUndefined();
+  });
 });
