@@ -132,6 +132,68 @@ describe('SearchTab', () => {
   });
 });
 
+// Repo owner request: show how long a search took and how many source
+// databases it ran over, alongside the existing match count.
+describe('SearchTab — search duration and source count', () => {
+  it('shows the search duration and the number of databases searched', async () => {
+    stubFetch(() => ({
+      status: 200,
+      body: {
+        results: [{ id: 'EU-1', source: 'EU', type: 'individual', names: [{ wholeName: 'Test Person' }] }],
+        totalMatches: 1,
+        truncated: false,
+        tookMs: 42,
+        sourcesSearched: ['EU', 'UN', 'US'],
+      },
+    }));
+
+    render(<SearchTab onSelectRecord={vi.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText(/search by name/i), { target: { value: 'Test' } });
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }));
+
+    await waitFor(() => expect(screen.getByText(/42ms/)).toBeInTheDocument());
+    expect(screen.getByText(/3 databases/)).toBeInTheDocument();
+  });
+
+  it('formats a duration of a second or more in seconds rather than raw milliseconds', async () => {
+    stubFetch(() => ({
+      status: 200,
+      body: {
+        results: [{ id: 'EU-1', source: 'EU', type: 'individual', names: [{ wholeName: 'Test Person' }] }],
+        totalMatches: 1,
+        truncated: false,
+        tookMs: 1234,
+        sourcesSearched: ['EU'],
+      },
+    }));
+
+    render(<SearchTab onSelectRecord={vi.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText(/search by name/i), { target: { value: 'Test' } });
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }));
+
+    await waitFor(() => expect(screen.getByText(/1\.23s/)).toBeInTheDocument());
+    expect(screen.getByText(/1 database\b/)).toBeInTheDocument();
+  });
+
+  it('omits the duration/database line entirely when the server response predates it', async () => {
+    stubFetch(() => ({
+      status: 200,
+      body: {
+        results: [{ id: 'EU-1', source: 'EU', type: 'individual', names: [{ wholeName: 'Test Person' }] }],
+        totalMatches: 1,
+        truncated: false,
+      },
+    }));
+
+    render(<SearchTab onSelectRecord={vi.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText(/search by name/i), { target: { value: 'Test' } });
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }));
+
+    await waitFor(() => expect(screen.getByText('Test Person')).toBeInTheDocument());
+    expect(screen.queryByText(/database/)).not.toBeInTheDocument();
+  });
+});
+
 /**
  * Results are rendered as a dense table rather than a card grid. The card
  * layout put three hits per row and pushed everything else below the fold,

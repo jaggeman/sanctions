@@ -23,6 +23,8 @@ export interface SearchResponse {
   results: ScoredResult[];
   totalMatches: number; // count before the limit was applied
   truncated: boolean; // true if totalMatches > results.length — no silent cap
+  tookMs: number; // wall-clock time spent inside runSearch, for the UI's "search took Xms"
+  sourcesSearched: string[]; // distinct sources actually present in the index for this query (respects the `source` filter)
 }
 
 const DEFAULT_THRESHOLD = 65;
@@ -194,15 +196,24 @@ function matchesDob(record: SanctionRecord, dobQuery: string): boolean {
  * identically.
  */
 export async function runSearch(query: string, options: SearchOptions = {}): Promise<SearchResponse> {
+  const startedAt = Date.now();
   const trimmedQuery = (query || '').trim();
   if (!trimmedQuery) {
-    return { results: [], totalMatches: 0, truncated: false };
+    return { results: [], totalMatches: 0, truncated: false, tookMs: Date.now() - startedAt, sourcesSearched: [] };
   }
 
   const records = await getRecords();
   const sourcesFilter = options.source
     ? options.source.split(',').map((s) => s.trim().toUpperCase())
     : null;
+  // Distinct sources this query actually ran over — the full loaded index by
+  // default, narrowed to whichever of the requested `source` filter values
+  // actually have records. Backs the Search Entities tab's "searched across
+  // N databases" indicator alongside tookMs below.
+  const allSources = Array.from(new Set(records.map((r) => r.source))).sort();
+  const sourcesSearched = sourcesFilter
+    ? allSources.filter((s) => sourcesFilter.includes(s))
+    : allSources;
   const typeFilter = options.type ? options.type.trim().toLowerCase() : null;
   const rawThreshold = options.threshold !== undefined && !Number.isNaN(options.threshold)
     ? options.threshold
@@ -312,5 +323,11 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
   const totalMatches = scored.length;
   const results = scored.slice(0, limit);
 
-  return { results, totalMatches, truncated: results.length > 0 && totalMatches > results.length };
+  return {
+    results,
+    totalMatches,
+    truncated: results.length > 0 && totalMatches > results.length,
+    tookMs: Date.now() - startedAt,
+    sourcesSearched,
+  };
 }

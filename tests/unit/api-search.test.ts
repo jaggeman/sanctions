@@ -202,6 +202,20 @@ describe('GET /api/search', () => {
     expect(runSearch).toHaveBeenCalledWith('Vladimir', expect.not.objectContaining({ threshold: expect.anything() }));
   });
 
+  it('passes tookMs and sourcesSearched from runSearch through to the response body', async () => {
+    runSearch.mockResolvedValue({
+      results: [scoredRecord()],
+      totalMatches: 1,
+      truncated: false,
+      tookMs: 12,
+      sourcesSearched: ['EU', 'PEP'],
+    });
+    const res = await agent.get('/api/search').query({ q: 'Vladimir Putin' });
+
+    expect(res.body.tookMs).toBe(12);
+    expect(res.body.sourcesSearched).toEqual(['EU', 'PEP']);
+  });
+
   it('returns 500 with details when the search engine throws', async () => {
     runSearch.mockRejectedValue(new Error('boom'));
     const res = await agent.get('/api/search').query({ q: 'Vladimir' });

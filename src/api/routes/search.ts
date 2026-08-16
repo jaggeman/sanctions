@@ -74,7 +74,7 @@ searchRouter.get('/search', requireAuthOrScope('sanctions:read'), async (req, re
   }
 
   try {
-    const { results, totalMatches, truncated } = await runSearch(q, {
+    const { results, totalMatches, truncated, tookMs, sourcesSearched } = await runSearch(q, {
       source: typeof source === 'string' ? source : undefined,
       type: typeof type === 'string' ? type : undefined,
       limit: requestedLimit,
@@ -88,7 +88,7 @@ searchRouter.get('/search', requireAuthOrScope('sanctions:read'), async (req, re
       dob: typeof dob === 'string' ? dob : undefined,
     });
 
-    res.json({ results, totalMatches, truncated });
+    res.json({ results, totalMatches, truncated, tookMs, sourcesSearched });
 
     logSearchEvent({
       action: 'search',
