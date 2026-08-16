@@ -44,6 +44,22 @@ describe('parseUKList', () => {
     expect(fullDate![0].year).toBe(1967);
   });
 
+  it('issue #187: parses month-known/day-unknown (dd/09/1958) and bare-year (1985) DOB shapes', async () => {
+    const records = await parseUKList(FIXTURE);
+    const akram = records.find((r) => r.id === 'UK-AQD0128');
+    expect(akram).toBeDefined();
+
+    const monthKnown = akram!.birthDates?.find((b) => b.month === 9 && b.year === 1958);
+    expect(monthKnown).toBeDefined();
+    expect(monthKnown!.day).toBeUndefined();
+    expect(monthKnown!.raw).toBeUndefined();
+
+    const bareYear = akram!.birthDates?.find((b) => b.year === 1985 && b.month === undefined);
+    expect(bareYear).toBeDefined();
+    expect(bareYear!.day).toBeUndefined();
+    expect(bareYear!.raw).toBeUndefined();
+  });
+
   it('trims a passport number with stray leading whitespace from the real source', async () => {
     const records = await parseUKList(FIXTURE);
     const abdul = records.find((r) => r.id === 'UK-AFG0011');
