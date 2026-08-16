@@ -298,4 +298,90 @@ describe('POST /api/upload', () => {
       );
     });
   });
+
+  describe('dryRun and force boolean coercion / validation (issue #160)', () => {
+    it('dryRun:"false" performs a real upload and not a dry run', async () => {
+      processUpload.mockResolvedValue({ outcome: 'applied', importId: 'abc123', counts: { parsed: 1, uploaded: 1 } });
+      const res = await agent
+        .post('/api/upload')
+        .field('source', 'PEP')
+        .field('dryRun', 'false')
+        .attach('file', Buffer.from('id;name\n1;Test\n'), 'people.csv');
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('applied');
+      expect(processUpload).toHaveBeenCalledWith(
+        expect.objectContaining({ importOptions: expect.objectContaining({ dryRun: false }) })
+      );
+    });
+
+    it('dryRun:"true" performs a dry run preview', async () => {
+      processUpload.mockResolvedValue({ outcome: 'dry_run', importId: 'abc123', counts: { parsed: 1, uploaded: 0 }, diffs: [] });
+      const res = await agent
+        .post('/api/upload')
+        .field('source', 'PEP')
+        .field('dryRun', 'true')
+        .attach('file', Buffer.from('id;name\n1;Test\n'), 'people.csv');
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('dry_run');
+      expect(processUpload).toHaveBeenCalledWith(
+        expect.objectContaining({ importOptions: expect.objectContaining({ dryRun: true }) })
+      );
+    });
+
+    it('rejects invalid dryRun values with 400 and cleans up temp file', async () => {
+      const res = await agent
+        .post('/api/upload')
+        .field('source', 'PEP')
+        .field('dryRun', 'not_a_boolean')
+        .attach('file', Buffer.from('id;name\n1;Test\n'), 'people.csv');
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/dryRun.*boolean/i);
+      expect(processUpload).not.toHaveBeenCalled();
+      expect(removeMock).toHaveBeenCalled();
+    });
+
+    it('force:"false" passes force:false', async () => {
+      processUpload.mockResolvedValue({ outcome: 'applied', importId: 'abc123', counts: { parsed: 1, uploaded: 1 } });
+      const res = await agent
+        .post('/api/upload')
+        .field('source', 'PEP')
+        .field('force', 'false')
+        .attach('file', Buffer.from('id;name\n1;Test\n'), 'people.csv');
+
+      expect(res.status).toBe(200);
+      expect(processUpload).toHaveBeenCalledWith(
+        expect.objectContaining({ importOptions: expect.objectContaining({ force: false }) })
+      );
+    });
+
+    it('force:"true" passes force:true for admin session', async () => {
+      processUpload.mockResolvedValue({ outcome: 'applied', importId: 'abc123', counts: { parsed: 1, uploaded: 1 } });
+      const res = await agent
+        .post('/api/upload')
+        .field('source', 'PEP')
+        .field('force', 'true')
+        .attach('file', Buffer.from('id;name\n1;Test\n'), 'people.csv');
+
+      expect(res.status).toBe(200);
+      expect(processUpload).toHaveBeenCalledWith(
+        expect.objectContaining({ importOptions: expect.objectContaining({ force: true }) })
+      );
+    });
+
+    it('rejects invalid force values with 400 and cleans up temp file', async () => {
+      const res = await agent
+        .post('/api/upload')
+        .field('source', 'PEP')
+        .field('force', 'invalid_force')
+        .attach('file', Buffer.from('id;name\n1;Test\n'), 'people.csv');
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/force.*boolean/i);
+      expect(processUpload).not.toHaveBeenCalled();
+      expect(removeMock).toHaveBeenCalled();
+    });
+  });
 });

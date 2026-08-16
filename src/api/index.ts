@@ -101,6 +101,31 @@ const DOC_ID_PATTERN = /^[A-Za-z0-9_.-]{1,200}$/;
 const IMPORT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
 /**
+ * Helper to parse boolean fields that may arrive either as a real boolean
+ * (JSON payload) or as a literal string "true" / "false" (JSON or multipart form data)
+ * (issue #160).
+ *
+ * Rejects any other value (e.g. garbage strings, numbers, objects, arrays) with a
+ * descriptive error message instead of silently coercing via truthiness.
+ */
+function parseOptionalBoolean(value: any, fieldName: string): { value?: boolean; error?: string } {
+  if (value === undefined) {
+    return { value: undefined };
+  }
+  if (typeof value === 'boolean') {
+    return { value };
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim().toLowerCase();
+    if (trimmed === 'true') return { value: true };
+    if (trimmed === 'false') return { value: false };
+  }
+  return {
+    error: `"${fieldName}" must be a boolean or "true"/"false".`,
+  };
+}
+
+/**
  * `force: true` bypasses the diff engine's delist safety guard (issue #8) —
  * the one thing standing between a bad import and mass-delisting a whole
  * sanctions source. `requireAuthOrScope('write')` alone only proves the
@@ -589,7 +614,7 @@ app.get('/api/imports/:id', requireAuthOrScope('read'), async (req, res): Promis
  */
 app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<any> => {
   // mode/dryRun/force/importId drive the diff engine (issue #8).
-  const { sources, csvPath, mode, dryRun, force, importId } = req.body;
+  const { sources, csvPath, mode, importId } = req.body;
 
   // Validate sources if provided
   if (sources && !Array.isArray(sources)) {
@@ -601,7 +626,21 @@ app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<a
   if (importId !== undefined && !IMPORT_ID_PATTERN.test(importId)) {
     return res.status(400).json({ error: '"importId" must match ^[A-Za-z0-9_-]{1,128}$.' });
   }
-  if (!assertForceAllowed(req, res, !!force)) return;
+
+  // issue #160: strictly parse dryRun and force rather than relying on truthiness
+  const parsedDryRun = parseOptionalBoolean(req.body.dryRun, 'dryRun');
+  if (parsedDryRun.error) {
+    return res.status(400).json({ error: parsedDryRun.error });
+  }
+  const parsedForce = parseOptionalBoolean(req.body.force, 'force');
+  if (parsedForce.error) {
+    return res.status(400).json({ error: parsedForce.error });
+  }
+
+  const dryRun = parsedDryRun.value ?? false;
+  const force = parsedForce.value ?? false;
+
+  if (!assertForceAllowed(req, res, force)) return;
 
   // A dry run must leave no trace (same precedent as uploadPipeline.ts's
   // dry-run path) — no audit doc, since it never actually applies anything.
@@ -617,8 +656,8 @@ app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<a
     csvSource: 'PEP' as const,
     csvSeparator: ';',
     mode,
-    dryRun: !!dryRun,
-    force: !!force,
+    dryRun,
+    force,
     importId: resolvedImportId,
   };
 
@@ -644,7 +683,7 @@ app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<a
     importId: resolvedImportId,
     sources,
     mode,
-    force: !!force,
+    force,
     uploadedBy: (req as any).userEmail || null,
     uploadedAt: new Date().toISOString(),
   });
@@ -698,12 +737,23 @@ app.post('/api/upload', requireAuthOrScope('write'), uploadSingleFile('file'), a
     return res.status(400).json({ error: `"source" must be one of ${[...ALLOWED_SOURCES].join(', ')}.` });
   }
 
-  // Diff-engine controls (issue #8). Multipart fields always arrive as strings,
-  // unlike the JSON /api/import body, so the booleans are compared literally.
+  // Diff-engine controls (issue #8, issue #160). Validates and normalizes both
+  // JSON/multipart strings ("true"/"false") and booleans while rejecting invalid values with 400.
   // Validated before anything is written, and the temp file is cleaned up on
   // every rejection path rather than only the happy one.
-  const dryRun = req.body.dryRun === 'true';
-  const force = req.body.force === 'true';
+  const parsedDryRun = parseOptionalBoolean(req.body.dryRun, 'dryRun');
+  if (parsedDryRun.error) {
+    await fs.remove(req.file.path).catch((e) => console.error('Failed to cleanup temp file', e));
+    return res.status(400).json({ error: parsedDryRun.error });
+  }
+  const parsedForce = parseOptionalBoolean(req.body.force, 'force');
+  if (parsedForce.error) {
+    await fs.remove(req.file.path).catch((e) => console.error('Failed to cleanup temp file', e));
+    return res.status(400).json({ error: parsedForce.error });
+  }
+
+  const dryRun = parsedDryRun.value ?? false;
+  const force = parsedForce.value ?? false;
 
   if (mode !== undefined && mode !== 'sync' && mode !== 'append') {
     await fs.remove(req.file.path).catch((e) => console.error('Failed to cleanup temp file', e));

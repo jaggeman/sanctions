@@ -210,4 +210,91 @@ describe('POST /api/import', () => {
       expect.objectContaining({ force: true }),
     );
   });
+
+  describe('dryRun and force boolean coercion / validation (issue #160)', () => {
+    it('dryRun:"false" (string) does NOT run a dry run and enqueues the real import task', async () => {
+      const res = await agent.post('/api/import').send({ sources: ['EU'], dryRun: 'false' });
+      expect(res.status).toBe(202);
+      expect(enqueueImportTask).toHaveBeenCalledWith(
+        expect.objectContaining({ dryRun: false })
+      );
+      expect(runImportMock).not.toHaveBeenCalled();
+    });
+
+    it('dryRun:false (boolean) does NOT run a dry run and enqueues the real import task', async () => {
+      const res = await agent.post('/api/import').send({ sources: ['EU'], dryRun: false });
+      expect(res.status).toBe(202);
+      expect(enqueueImportTask).toHaveBeenCalledWith(
+        expect.objectContaining({ dryRun: false })
+      );
+      expect(runImportMock).not.toHaveBeenCalled();
+    });
+
+    it('dryRun:"true" (string) runs a dry run synchronously with 200', async () => {
+      runImportMock.mockResolvedValueOnce({ success: true, importedCounts: { EU: 5 }, diffs: [] });
+      const res = await agent.post('/api/import').send({ sources: ['EU'], dryRun: 'true' });
+      expect(res.status).toBe(200);
+      expect(runImportMock).toHaveBeenCalledWith(
+        expect.objectContaining({ dryRun: true })
+      );
+      expect(enqueueImportTask).not.toHaveBeenCalled();
+    });
+
+    it('dryRun:true (boolean) runs a dry run synchronously with 200', async () => {
+      runImportMock.mockResolvedValueOnce({ success: true, importedCounts: { EU: 5 }, diffs: [] });
+      const res = await agent.post('/api/import').send({ sources: ['EU'], dryRun: true });
+      expect(res.status).toBe(200);
+      expect(runImportMock).toHaveBeenCalledWith(
+        expect.objectContaining({ dryRun: true })
+      );
+      expect(enqueueImportTask).not.toHaveBeenCalled();
+    });
+
+    it('rejects invalid dryRun values with 400', async () => {
+      const res = await agent.post('/api/import').send({ sources: ['EU'], dryRun: 'invalid_boolean' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/dryRun.*boolean/i);
+      expect(enqueueImportTask).not.toHaveBeenCalled();
+      expect(runImportMock).not.toHaveBeenCalled();
+    });
+
+    it('force:"false" (string) does not trigger admin force checks or set force:true', async () => {
+      const res = await agent.post('/api/import').send({ sources: ['EU'], force: 'false' });
+      expect(res.status).toBe(202);
+      expect(enqueueImportTask).toHaveBeenCalledWith(
+        expect.objectContaining({ force: false })
+      );
+    });
+
+    it('force:false (boolean) does not trigger admin force checks or set force:true', async () => {
+      const res = await agent.post('/api/import').send({ sources: ['EU'], force: false });
+      expect(res.status).toBe(202);
+      expect(enqueueImportTask).toHaveBeenCalledWith(
+        expect.objectContaining({ force: false })
+      );
+    });
+
+    it('force:"true" (string) sets force:true for admin session', async () => {
+      const res = await agent.post('/api/import').send({ sources: ['PEP'], force: 'true' });
+      expect(res.status).toBe(202);
+      expect(enqueueImportTask).toHaveBeenCalledWith(
+        expect.objectContaining({ force: true })
+      );
+    });
+
+    it('force:true (boolean) sets force:true for admin session', async () => {
+      const res = await agent.post('/api/import').send({ sources: ['PEP'], force: true });
+      expect(res.status).toBe(202);
+      expect(enqueueImportTask).toHaveBeenCalledWith(
+        expect.objectContaining({ force: true })
+      );
+    });
+
+    it('rejects invalid force values with 400', async () => {
+      const res = await agent.post('/api/import').send({ sources: ['EU'], force: 123 });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/force.*boolean/i);
+      expect(enqueueImportTask).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -266,12 +266,12 @@
                     "description": "Issue #8: 'sync' behandlar filen som fullständig sanning för källan och avlistar aktiva poster som saknas i filen. 'append' (standard) avlistar aldrig — rätt för PEP/CUSTOM/kompletterande filer."
                   },
                   "dryRun": {
-                    "type": "boolean",
-                    "description": "Kör klassificeringen (added/updated/unchanged/delisted) utan att skriva något. Svarar synkront med resultatet istället för 202."
+                    "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["true", "false"] }],
+                    "description": "Kör klassificeringen (added/updated/unchanged/delisted) utan att skriva något. Accepterar boolean eller \"true\"/\"false\". Svarar synkront med resultatet istället för 202."
                   },
                   "force": {
-                    "type": "boolean",
-                    "description": "Kringgå 20%-spärren mot att avlista en for stor andel av en källas aktiva poster."
+                    "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["true", "false"] }],
+                    "description": "Kringgå 20%-spärren mot att avlista en för stor andel av en källas aktiva poster. Accepterar boolean eller \"true\"/\"false\". Kräver administratörssession."
                   },
                   "importId": {
                     "type": "string",
@@ -320,7 +320,7 @@
             }
           },
           "400": {
-            "description": "Ogiltiga \"sources\" (måste vara en array) eller ogiltigt \"mode\"/\"importId\""
+            "description": "Ogiltiga \"sources\" (måste vara en array), ogiltigt \"mode\"/\"importId\", eller ogiltigt värde för boolean-fält (\"dryRun\"/\"force\")"
           },
           "401": {
             "description": "Ingen giltig session eller API-token"
@@ -354,6 +354,24 @@
                   "source": {
                     "type": "string",
                     "enum": ["EU", "UN", "US", "PEP", "CUSTOM"]
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": ["sync", "append"],
+                    "default": "append",
+                    "description": "Issue #8: 'sync' eller 'append'"
+                  },
+                  "dryRun": {
+                    "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["true", "false"] }],
+                    "description": "Förhandsgranska utan att skriva något. Accepterar boolean eller \"true\"/\"false\"."
+                  },
+                  "force": {
+                    "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["true", "false"] }],
+                    "description": "Kringgå 20%-spärren mot att avlista. Accepterar boolean eller \"true\"/\"false\". Kräver administratörssession."
+                  },
+                  "importId": {
+                    "type": "string",
+                    "description": "Valfritt explicit import-ID"
                   }
                 },
                 "required": ["file", "source"]
@@ -362,31 +380,45 @@
           }
         },
         "responses": {
-          "202": {
-            "description": "Fil mottagen, import startad i bakgrunden",
+          "200": {
+            "description": "Synkront utfall (tillämpad eller dry-run förhandsgranskning)",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "status": { "type": "string" },
-                    "message": { "type": "string" }
+                    "status": { "type": "string", "enum": ["applied", "dry_run"] },
+                    "importId": { "type": "string" },
+                    "counts": { "type": "object" },
+                    "diffs": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/DiffResult" }
+                    }
                   }
                 }
               }
             }
           },
           "400": {
-            "description": "Ingen fil bifogad, ogiltig filtyp, eller okänt \"source\"-värde"
+            "description": "Ingen fil bifogad, ogiltig filtyp, okänt \"source\"-värde, eller ogiltigt värde för boolean-fält (\"dryRun\"/\"force\")"
           },
           "401": {
             "description": "Ingen giltig session eller API-token"
           },
           "403": {
-            "description": "API-token saknar write-scope"
+            "description": "API-token saknar write-scope eller obehörig force"
+          },
+          "409": {
+            "description": "Duplicerad fil eller pågående import"
           },
           "413": {
             "description": "Filen överskrider 64 MB-gränsen"
+          },
+          "422": {
+            "description": "Icke stödd filformat"
+          },
+          "500": {
+            "description": "Import misslyckades"
           }
         }
       }
