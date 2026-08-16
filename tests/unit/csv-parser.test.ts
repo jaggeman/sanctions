@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import * as fs from 'fs-extra';
 import * as os from 'os';
 import * as path from 'path';
 import { parseCSVList } from '../../src/importer/parsers/csv';
+import { logger } from '../../src/shared/logger';
 
 let tmpDir: string;
 
@@ -214,29 +215,117 @@ describe('parseCSVList — malformed input', () => {
   });
 });
 
-describe('parseCSVList — untrusted input reaches the document id', () => {
-  // --- Characterisation of a real security finding (CLAUDE.md §6). ---
-  // `source` is read straight off the CSV with a bare `as SanctionSource` cast
-  // and no allow-list check, then interpolated into the record id, which the
-  // uploader passes directly to collectionRef.doc(). Nothing validates it.
+describe('parseCSVList — ID and source validation (issue #167)', () => {
+  it('rejects a row whose source disagrees with the invoked defaultSource, preventing cross-source overwrite', async () => {
+    const file = await fixture(
+      'cross-source.csv',
+      'id;name;source\n13;Genuine EU Impersonator;EU\n14;Valid PEP;PEP\n',
+    );
+    const records = await parseCSVList(file, { separator: ';', defaultSource: 'PEP' });
 
-  it('KNOWN GAP: an arbitrary source string is accepted unvalidated', async () => {
-    const file = await fixture('badsource.csv', 'id;name;source\n1;Bad Source;NOT_A_REAL_SOURCE\n');
-    const [record] = await parseCSVList(file, { separator: ';' });
-
-    // Should be rejected or coerced to the default; today it is taken verbatim.
-    expect(record.source).toBe('NOT_A_REAL_SOURCE');
-    expect(record.id).toBe('NOT_A_REAL_SOURCE-1');
+    // EU row must be rejected/skipped; PEP row must be imported as PEP-14
+    expect(records).toHaveLength(1);
+    expect(records[0].id).toBe('PEP-14');
+    expect(records[0].source).toBe('PEP');
+    expect(records.find((r) => r.id.startsWith('EU-'))).toBeUndefined();
   });
 
-  it('KNOWN GAP: a slash in the id column becomes a Firestore path separator', async () => {
-    const file = await fixture('pathinject.csv', 'id;name;source\na/b/c;Path Injection;PEP\n');
-    const [record] = await parseCSVList(file, { separator: ';' });
+  it('rejects rows with invalid or arbitrary source strings', async () => {
+    const file = await fixture(
+      'badsource.csv',
+      'id;name;source\n1;Bad Source;NOT_A_REAL_SOURCE\n',
+    );
+    const records = await parseCSVList(file, { separator: ';', defaultSource: 'PEP' });
+    expect(records).toHaveLength(0);
+  });
 
-    // "PEP-a/b/c" addresses a nested document, not a document literally named
-    // "PEP-a/b/c" — a malicious or malformed CSV can write outside the intended
-    // collection shape.
-    expect(record.id).toBe('PEP-a/b/c');
-    expect(record.id.split('/').length).toBeGreaterThan(1);
+  it('rejects path-injected IDs (e.g. a/b/c, ../x)', async () => {
+    const file = await fixture(
+      'pathinject.csv',
+      'id;name;source\na/b/c;Path Injection;PEP\n../x;DotDot Injection;PEP\nvalid-1;Valid Record;PEP\n',
+    );
+    const records = await parseCSVList(file, { separator: ';', defaultSource: 'PEP' });
+
+    expect(records).toHaveLength(1);
+    expect(records[0].id).toBe('PEP-valid-1');
+  });
+
+  it('rejects empty IDs when id column is present in the file', async () => {
+    const file = await fixture(
+      'emptyid.csv',
+      'id;name;source\n;Empty ID;PEP\nvalid-2;Valid Record;PEP\n',
+    );
+    const records = await parseCSVList(file, { separator: ';', defaultSource: 'PEP' });
+
+    expect(records).toHaveLength(1);
+    expect(records[0].id).toBe('PEP-valid-2');
+  });
+
+  it('rejects Firestore-reserved IDs like __proto__', async () => {
+    const file = await fixture(
+      'reservedid.csv',
+      'id;name;source\n__proto__;Proto ID;PEP\nvalid-3;Valid Record;PEP\n',
+    );
+    const records = await parseCSVList(file, { separator: ';', defaultSource: 'PEP' });
+
+    expect(records).toHaveLength(1);
+    expect(records[0].id).toBe('PEP-valid-3');
+  });
+
+  it('aggregates parsed record count vs skipped/rejected count in complete log (CLAUDE.md §1)', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const file = await fixture(
+      'mixed.csv',
+      'id;name;source\n' +
+      '1;Valid One;PEP\n' +
+      'a/b/c;Invalid ID;PEP\n' +
+      ';Missing ID;PEP\n' +
+      '2;Valid Two;PEP\n' +
+      '3;Wrong Source;EU\n',
+    );
+    const records = await parseCSVList(file, { separator: ';', defaultSource: 'PEP' });
+
+    expect(records).toHaveLength(2);
+    expect(records.map((r) => r.id)).toEqual(['PEP-1', 'PEP-2']);
+
+    const warnCalls = warnSpy.mock.calls.map((c) => JSON.parse(c[0] as string));
+    const logCalls = logSpy.mock.calls.map((c) => JSON.parse(c[0] as string));
+
+    expect(warnCalls).toContainEqual(
+      expect.objectContaining({
+        message: 'parse.row_skipped_invalid_id',
+        rawId: 'a/b/c',
+      }),
+    );
+    expect(warnCalls).toContainEqual(
+      expect.objectContaining({
+        message: 'parse.row_skipped_invalid_id',
+        rawId: '',
+      }),
+    );
+    expect(warnCalls).toContainEqual(
+      expect.objectContaining({
+        message: 'parse.row_skipped_source_mismatch',
+        rowSource: 'EU',
+        expectedSource: 'PEP',
+      }),
+    );
+
+    expect(logCalls).toContainEqual(
+      expect.objectContaining({
+        message: 'parse.complete',
+        recordCount: 2,
+        skippedCount: 3,
+        skipReasons: {
+          invalidId: 2,
+          sourceMismatch: 1,
+        },
+      }),
+    );
+
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
   });
 });
