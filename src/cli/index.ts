@@ -181,27 +181,56 @@ program
   .action(async (options) => {
     try {
       console.log('🔄 Initierar import...');
-      const sources = (options.sources 
+      const sources = (options.sources
         ? options.sources.split(',').map((s: string) => s.trim().toUpperCase())
         : ['EU', 'UN', 'US', 'UK']) as ('EU' | 'UN' | 'US' | 'UK')[];
 
-      const result = await runImport({
-        sources,
-        csvPath: options.csv,
-        csvSource: options.csvSource,
-        csvSeparator: options.csvSeparator,
-      });
-
-      if (result.success) {
-        console.log('\n✅ Importen slutfördes utan fel!');
-        console.log('Statistik över importerade rader:');
-        console.table(result.importedCounts);
-        process.exit(0);
-      } else {
-        console.error(`❌ Importen misslyckades: ${result.error}`);
-        process.exit(1);
+      // issue #192: --csv is a genuine local file, so it goes through
+      // processUpload() — sha256 dedup, the in-flight lock, and a durable
+      // `imports` audit record — instead of being bundled into the
+      // official-sources runImport() call below, which has none of that.
+      // A bare --csv (no --sources) means "just import this file": skip the
+      // official-sources download entirely rather than silently triggering
+      // it too.
+      let sourcesFailed = false;
+      if (options.sources || !options.csv) {
+        const result = await runImport({ sources });
+        if (result.success) {
+          console.log('\n✅ Importen slutfördes utan fel!');
+          console.log('Statistik över importerade rader:');
+          console.table(result.importedCounts);
+        } else {
+          console.error(`❌ Importen misslyckades: ${result.error}`);
+          sourcesFailed = true;
+        }
       }
 
+      let csvFailed = false;
+      if (options.csv) {
+        const csvResult = await processUpload({
+          filePath: options.csv,
+          originalFilename: path.basename(options.csv),
+          sourceHint: options.csvSource,
+          uploadedBy: 'cli',
+          importOptions: { csvSeparator: options.csvSeparator },
+        });
+
+        if (csvResult.outcome === 'applied') {
+          console.log(`\n✅ CSV-import applicerad: #${csvResult.importId}`);
+        } else if (csvResult.outcome === 'rejected') {
+          console.log(`\n⚪ CSV-import hoppades över: dubblett av #${csvResult.duplicateOfImportId}`);
+        } else if (csvResult.outcome === 'in_flight') {
+          console.log(`\n⏳ CSV-import pågår redan som #${csvResult.importId}`);
+        } else if (csvResult.outcome === 'unsupported_format') {
+          console.error(`❌ CSV-import: format stöds ej: ${csvResult.format}`);
+          csvFailed = true;
+        } else if (csvResult.outcome === 'failed') {
+          console.error(`❌ CSV-import misslyckades: ${csvResult.error}`);
+          csvFailed = true;
+        }
+      }
+
+      process.exit(sourcesFailed || csvFailed ? 1 : 0);
     } catch (error: any) {
       console.error('❌ Ett oväntat fel uppstod under importen:', error.message);
       process.exit(1);

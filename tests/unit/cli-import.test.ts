@@ -60,24 +60,6 @@ describe('CLI import command — argument parsing / wiring to runImport', () => 
     expect(runImport).toHaveBeenCalledWith(expect.objectContaining({ sources: ['EU', 'UN'] }));
   });
 
-  it('passes --csv/--csv-source/--csv-separator through to runImport', async () => {
-    runImport.mockResolvedValue({ success: true, importedCounts: {} });
-    await runCli(['import', '--csv', './people.csv', '--csv-source', 'CUSTOM', '--csv-separator', ',']);
-
-    expect(runImport).toHaveBeenCalledWith(expect.objectContaining({
-      csvPath: './people.csv',
-      csvSource: 'CUSTOM',
-      csvSeparator: ',',
-    }));
-  });
-
-  it('defaults --csv-source to PEP and --csv-separator to ";" when omitted', async () => {
-    runImport.mockResolvedValue({ success: true, importedCounts: {} });
-    await runCli(['import', '--csv', './people.csv']);
-
-    expect(runImport).toHaveBeenCalledWith(expect.objectContaining({ csvSource: 'PEP', csvSeparator: ';' }));
-  });
-
   it('on success: exits 0 and prints the per-source counts as a table', async () => {
     runImport.mockResolvedValue({ success: true, importedCounts: { EU: 12, UN: 3 } });
     await runCli(['import']);
@@ -103,6 +85,89 @@ describe('CLI import command — argument parsing / wiring to runImport', () => 
 
     expect(exitCode).toBe(1);
     expect(errors.join('\n')).toMatch(/network down/);
+  });
+});
+
+// issue #192: --csv is a genuine local file, exactly what processUpload()
+// wants — routing it there instead of bundling csvPath into the runImport()
+// call gives a script/CLI-triggered custom import the same sha256 dedup,
+// in-flight lock, and durable `imports` audit record that POST /api/upload
+// already has, instead of none of it.
+describe('CLI import command — --csv routes through processUpload (issue #192)', () => {
+  it('given only --csv (no --sources), calls processUpload and never calls runImport', async () => {
+    processUpload.mockResolvedValue({ outcome: 'applied', importId: 'imp_1', counts: { parsed: 5, uploaded: 5 } });
+    await runCli(['import', '--csv', './people.csv', '--csv-source', 'CUSTOM', '--csv-separator', ',']);
+
+    expect(processUpload).toHaveBeenCalledWith({
+      filePath: './people.csv',
+      originalFilename: 'people.csv',
+      sourceHint: 'CUSTOM',
+      uploadedBy: 'cli',
+      importOptions: { csvSeparator: ',' },
+    });
+    expect(runImport).not.toHaveBeenCalled();
+  });
+
+  it('defaults --csv-source to PEP and --csv-separator to ";" when omitted', async () => {
+    processUpload.mockResolvedValue({ outcome: 'applied', importId: 'imp_1', counts: { parsed: 1, uploaded: 1 } });
+    await runCli(['import', '--csv', './people.csv']);
+
+    expect(processUpload).toHaveBeenCalledWith(expect.objectContaining({
+      sourceHint: 'PEP',
+      importOptions: { csvSeparator: ';' },
+    }));
+  });
+
+  it('given both --sources and --csv, calls runImport for the sources and processUpload for the csv file', async () => {
+    runImport.mockResolvedValue({ success: true, importedCounts: { EU: 4 } });
+    processUpload.mockResolvedValue({ outcome: 'applied', importId: 'imp_1', counts: { parsed: 2, uploaded: 2 } });
+
+    await runCli(['import', '--sources', 'EU', '--csv', './people.csv']);
+
+    expect(runImport).toHaveBeenCalledWith(expect.objectContaining({ sources: ['EU'] }));
+    expect(processUpload).toHaveBeenCalledWith(expect.objectContaining({ filePath: './people.csv' }));
+  });
+
+  it('on outcome "applied": exits 0 and reports the import id', async () => {
+    processUpload.mockResolvedValue({ outcome: 'applied', importId: 'imp_1', counts: { parsed: 5, uploaded: 5 } });
+    await runCli(['import', '--csv', './people.csv']);
+
+    expect(exitCode).toBe(0);
+    expect(logs.join('\n')).toContain('imp_1');
+  });
+
+  it('on outcome "rejected" (duplicate): still exits 0, reports which import it duplicates', async () => {
+    processUpload.mockResolvedValue({ outcome: 'rejected', importId: 'imp_2', duplicateOfImportId: 'imp_1' });
+    await runCli(['import', '--csv', './people.csv']);
+
+    expect(exitCode).toBe(0);
+    expect(logs.join('\n')).toContain('imp_1');
+  });
+
+  it('on outcome "failed": exits 1 and reports the error', async () => {
+    processUpload.mockResolvedValue({ outcome: 'failed', importId: 'imp_3', error: 'boom' });
+    await runCli(['import', '--csv', './people.csv']);
+
+    expect(exitCode).toBe(1);
+    expect(errors.join('\n')).toContain('boom');
+  });
+
+  it('on outcome "unsupported_format": exits 1 and reports the format', async () => {
+    processUpload.mockResolvedValue({ outcome: 'unsupported_format', importId: 'imp_4', format: 'eu-csv-1.0' });
+    await runCli(['import', '--csv', './people.csv']);
+
+    expect(exitCode).toBe(1);
+    expect(errors.join('\n')).toContain('eu-csv-1.0');
+  });
+
+  it('when both sources and csv run: a sources failure exits 1 even if the csv upload applied cleanly', async () => {
+    runImport.mockResolvedValue({ success: false, importedCounts: {}, error: 'download failed' });
+    processUpload.mockResolvedValue({ outcome: 'applied', importId: 'imp_1', counts: { parsed: 1, uploaded: 1 } });
+
+    await runCli(['import', '--sources', 'EU', '--csv', './people.csv']);
+
+    expect(exitCode).toBe(1);
+    expect(errors.join('\n')).toContain('download failed');
   });
 });
 

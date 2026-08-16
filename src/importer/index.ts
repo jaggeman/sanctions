@@ -156,7 +156,7 @@ async function runUploadedFileImport(
       await flush();
     } else {
       const records = await parseCSVList(file.path, {
-        separator: ';',
+        separator: options.csvSeparator || ';',
         defaultSource: file.source as 'PEP' | 'CUSTOM',
       });
       parsed = records.length;

@@ -6,8 +6,10 @@ import {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
+import * as path from 'path';
 import { db } from '../shared/firebase';
 import { runImport } from '../importer';
+import { processUpload } from '../importer/uploadPipeline';
 import { runSearch } from '../search';
 import { getOverride } from '../overrides';
 import { listDecisionsForEntity } from '../decisions';
@@ -410,25 +412,59 @@ export async function handleRunDatabaseImport(args: any) {
   const sources = args?.sources as ('EU' | 'UN' | 'US')[] | undefined;
   const csvPath = args?.csvPath as string | undefined;
 
-  // Run import synchronously so we can return the result to the caller
-  const result = await runImport({
-    sources,
-    csvPath,
-  });
+  // issue #192: csvPath is a genuine local file, so it goes through
+  // processUpload() — sha256 dedup, the in-flight lock, and a durable
+  // `imports` audit record — instead of being bundled into the
+  // official-sources runImport() call, which has none of that. A bare
+  // csvPath (no sources) means "just import this file": skip the
+  // official-sources download entirely rather than silently triggering it
+  // too via runImport's own default-to-all-sources fallback.
+  let sourcesResult: Awaited<ReturnType<typeof runImport>> | undefined;
+  if (sources || !csvPath) {
+    sourcesResult = await runImport({ sources });
+  }
 
-  if (result.success) {
+  let csvResult: Awaited<ReturnType<typeof processUpload>> | undefined;
+  if (csvPath) {
+    csvResult = await processUpload({
+      filePath: csvPath,
+      originalFilename: path.basename(csvPath),
+      sourceHint: 'PEP',
+      uploadedBy: null,
+      importOptions: {},
+    });
+  }
+
+  const csvFailed = csvResult?.outcome === 'failed' || csvResult?.outcome === 'unsupported_format';
+  if ((sourcesResult && !sourcesResult.success) || csvFailed) {
+    const parts: string[] = [];
+    if (sourcesResult && !sourcesResult.success) parts.push(sourcesResult.error || 'Källimport misslyckades');
+    if (csvResult?.outcome === 'failed') parts.push(csvResult.error);
+    if (csvResult?.outcome === 'unsupported_format') parts.push(`CSV-format stöds ej: ${csvResult.format}`);
     return {
-      content: [{
-        type: 'text',
-        text: `Import slutförd framgångsrikt!\nAntal poster importerade per källa:\n${JSON.stringify(result.importedCounts, null, 2)}`,
-      }],
-    };
-  } else {
-    return {
-      content: [{ type: 'text', text: `Import misslyckades: ${result.error}` }],
+      content: [{ type: 'text', text: `Import misslyckades: ${parts.join('; ')}` }],
       isError: true,
     };
   }
+
+  const lines: string[] = [];
+  if (sourcesResult) {
+    lines.push(
+      'Import slutförd framgångsrikt!',
+      'Antal poster importerade per källa:',
+      JSON.stringify(sourcesResult.importedCounts, null, 2),
+    );
+  }
+  if (csvResult) {
+    if (csvResult.outcome === 'applied') {
+      lines.push(`CSV-import applicerad: #${csvResult.importId}`);
+    } else if (csvResult.outcome === 'rejected') {
+      lines.push(`CSV-import hoppades över: dubblett av #${csvResult.duplicateOfImportId}`);
+    } else if (csvResult.outcome === 'in_flight') {
+      lines.push(`CSV-import pågår redan som #${csvResult.importId}`);
+    }
+  }
+  return { content: [{ type: 'text', text: lines.join('\n') }] };
 }
 
 /**

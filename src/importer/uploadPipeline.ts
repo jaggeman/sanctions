@@ -26,6 +26,8 @@ export interface ProcessUploadOptions {
     dryRun?: boolean;
     force?: boolean;
     importId?: string;
+    /** CSV field separator (issue #192) — only meaningful when the uploaded file is a CSV; defaults to ';'. */
+    csvSeparator?: string;
   };
 }
 
