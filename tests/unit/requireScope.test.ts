@@ -111,6 +111,26 @@ describe('requireScope', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
+  it('responds 401 with an authorization message when token owner is disallowed (issue #158)', async () => {
+    mockVerifyApiToken.mockResolvedValueOnce({
+      valid: false,
+      reason: 'disallowed_owner',
+      tokenId: 'tok-1',
+      scopes: ['read', 'write'],
+    });
+    const req = makeReq('Bearer sanc_disallowed');
+    const res = makeRes();
+    const next = vi.fn() as NextFunction;
+
+    await requireScope('read')(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.stringMatching(/no longer authorized/i) })
+    );
+    expect(next).not.toHaveBeenCalled();
+  });
+
   it('binds tokenId and the owner email into req.log when present (issue #110)', async () => {
     mockVerifyApiToken.mockResolvedValueOnce({
       valid: true,
