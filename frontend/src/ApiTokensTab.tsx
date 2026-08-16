@@ -28,7 +28,9 @@ import {
 } from '@mui/material';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DeleteIcon from '@mui/icons-material/DeleteOutlined';
+import SmartToyOutlinedIcon from '@mui/icons-material/SmartToyOutlined';
 import { apiFetch } from './apiFetch';
+import McpClientGuide from './components/McpClientGuide';
 
 const SESSION_EXPIRED_MESSAGE = 'Your session has expired. Please sign in again.';
 
@@ -62,6 +64,7 @@ export default function ApiTokensTab() {
   const [creating, setCreating] = useState(false);
 
   const [revealedToken, setRevealedToken] = useState<string | null>(null);
+  const [activeGuideToken, setActiveGuideToken] = useState<string>('');
   const [copied, setCopied] = useState(false);
   const [pendingRevoke, setPendingRevoke] = useState<ApiToken | null>(null);
   const [revoking, setRevoking] = useState(false);
@@ -133,6 +136,7 @@ export default function ApiTokensTab() {
       const data = await res.json();
 
       setRevealedToken(data.token);
+      setActiveGuideToken(data.token);
       setName('');
       setScopeRead(true);
       setScopeWrite(false);
@@ -240,7 +244,7 @@ export default function ApiTokensTab() {
         </CardContent>
       </Card>
 
-      <Card sx={{ p: 2 }}>
+      <Card sx={{ p: 2, mb: 4 }}>
         <CardContent>
           <Typography variant="h5" gutterBottom>
             Existing Tokens
@@ -290,6 +294,22 @@ export default function ApiTokensTab() {
                         />
                       </TableCell>
                       <TableCell align="right">
+                        <Tooltip title="View MCP configuration">
+                          <IconButton
+                            size="small"
+                            color="primary"
+                            onClick={() => {
+                              // If this token was created in this session and full token matches preview prefix
+                              if (revealedToken && revealedToken.startsWith(t.tokenPreview.split('...')[0])) {
+                                setActiveGuideToken(revealedToken);
+                              } else {
+                                setActiveGuideToken('');
+                              }
+                            }}
+                          >
+                            <SmartToyOutlinedIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
                         <Tooltip title={t.revoked ? 'Already revoked' : 'Revoke this token'}>
                           <span>
                             <IconButton
@@ -311,6 +331,9 @@ export default function ApiTokensTab() {
           )}
         </CardContent>
       </Card>
+
+      {/* MCP & AI Client Connection Guide Card */}
+      <McpClientGuide initialToken={activeGuideToken || revealedToken || ''} />
 
       {/* One-time token reveal */}
       <Dialog open={!!revealedToken} onClose={() => { setRevealedToken(null); setCopied(false); }} maxWidth="sm" fullWidth>

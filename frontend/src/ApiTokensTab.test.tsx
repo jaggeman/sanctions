@@ -61,7 +61,10 @@ describe('ApiTokensTab — session expiry (issue #38)', () => {
         if (url.includes('/api/auth/session')) {
           return { ok: true, status: 200, json: async () => ({ email: 'admin@example.com', isAdmin: true }) } as Response;
         }
-        return { ok: false, status: 401, json: async () => ({ error: 'Authentication required' }) } as Response;
+        if (url.includes('/api/admin/tokens')) {
+          return { ok: false, status: 401, json: async () => ({ error: 'Authentication required' }) } as Response;
+        }
+        return { ok: true, status: 200, json: async () => ({}) } as Response;
       }),
     );
 
@@ -79,14 +82,16 @@ describe('ApiTokensTab access gating', () => {
 
     await waitFor(() => expect(screen.getByText(/restricted to admins/i)).toBeInTheDocument());
     expect(screen.queryByText('Create API Token')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Connect to AI Clients/i)).not.toBeInTheDocument();
   });
 
-  it('shows the token management UI when isAdmin is true', async () => {
+  it('shows the token management UI and MCP guide when isAdmin is true', async () => {
     stubFetch({ ok: true, body: { email: 'admin@example.com', isAdmin: true } });
     render(<ApiTokensTab />);
 
     await waitFor(() => expect(screen.getByText('Create API Token')).toBeInTheDocument());
     expect(screen.queryByText(/restricted to admins/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/Connect to AI Clients/i)).toBeInTheDocument();
   });
 
   it('treats a failed session check (e.g. 401) as denied rather than throwing', async () => {
@@ -163,5 +168,47 @@ describe('ApiTokensTab token creation error handling (issue #166)', () => {
     fireEvent.click(screen.getByRole('button', { name: /Create Token/i }));
 
     await waitFor(() => expect(screen.getByText('Token name already in use')).toBeInTheDocument());
+  });
+
+  it('populates newly created token into MCP client guide snippet', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('/api/auth/session')) {
+          return { ok: true, status: 200, json: async () => ({ email: 'admin@example.com', isAdmin: true }) } as Response;
+        }
+        if (url.includes('/api/admin/tokens') && init?.method === 'POST') {
+          return {
+            ok: true,
+            status: 201,
+            json: async () => ({
+              id: 'tok-1',
+              token: 'sanc_full_new_secret_key_789',
+              tokenPreview: 'sanc_...789',
+              name: 'Claude Agent',
+              scopes: ['read', 'write'],
+              createdAt: new Date().toISOString(),
+            }),
+          } as unknown as Response;
+        }
+        if (url.includes('/api/admin/tokens')) {
+          return { ok: true, status: 200, json: async () => [] } as Response;
+        }
+        return { ok: true, status: 200, json: async () => ({}) } as Response;
+      }),
+    );
+
+    render(<ApiTokensTab />);
+    await waitFor(() => expect(screen.getByText('Create API Token')).toBeInTheDocument());
+
+    const input = screen.getByLabelText(/Token name/i);
+    fireEvent.change(input, { target: { value: 'Claude Agent' } });
+    fireEvent.click(screen.getByRole('button', { name: /Create Token/i }));
+
+    await waitFor(() => expect(screen.getByText(/Token created/i)).toBeInTheDocument());
+
+    const mcpSnippet = screen.getByTestId('mcp-config-snippet');
+    expect(mcpSnippet.textContent).toContain('"MCP_API_TOKEN": "sanc_full_new_secret_key_789"');
   });
 });
