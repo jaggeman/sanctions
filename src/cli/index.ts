@@ -28,14 +28,16 @@ program
     try {
       console.log(`Söker efter "${queryStr}"...`);
 
-      // issue #37: `|| 10` treats an explicit --limit 0 the same as "not
-      // provided". Check for NaN explicitly so a real 0 survives.
+      // issue #37 & issue #161: `|| 10` treats an explicit --limit 0 the same as "not
+      // provided". Check for NaN and negative values explicitly — negative or NaN falls back to default 10,
+      // while preserving explicit limit=0.
       const parsedLimit = parseInt(options.limit, 10);
+      const limit = Number.isNaN(parsedLimit) || parsedLimit < 0 ? 10 : parsedLimit;
 
       const { results, totalMatches, truncated } = await runSearch(queryStr, {
         source: options.sources,
         type: options.type ? options.type.toLowerCase() : undefined,
-        limit: Number.isNaN(parsedLimit) ? 10 : parsedLimit,
+        limit,
       });
 
       if (results.length === 0) {

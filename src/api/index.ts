@@ -414,10 +414,14 @@ app.get('/api/search', requireAuthOrScope('read'), async (req, res): Promise<any
     return res.status(400).json({ error: 'Query parameter "q" is required.' });
   }
 
-  // issue #37: `|| 20` treats an explicit limit=0 the same as "not provided".
-  // Check for NaN explicitly so a real 0 survives.
+  // issue #37 & issue #161: `|| 20` treats an explicit limit=0 the same as "not provided".
+  // Check for NaN and negative values explicitly — negative or NaN falls back to default 20,
+  // while preserving explicit limit=0.
   const parsedLimit = parseInt(limit as string, 10);
-  const requestedLimit = Math.min(Number.isNaN(parsedLimit) ? 20 : parsedLimit, 100);
+  const requestedLimit =
+    Number.isNaN(parsedLimit) || parsedLimit < 0
+      ? 20
+      : Math.min(parsedLimit, 100);
 
   // issue #148: guard against NaN and clamp threshold to [0, 100]
   let parsedThreshold: number | undefined;

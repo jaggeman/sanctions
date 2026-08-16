@@ -49,10 +49,12 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Max antal träffar (standard 20, max 100)",
+            "description": "Max antal träffar (standard 20, min 0, max 100)",
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
+              "maximum": 100,
               "default": 20
             }
           },

@@ -55,6 +55,16 @@ describe('CLI search command', () => {
     expect(runSearch).toHaveBeenCalledWith('Vladimir Putin', expect.objectContaining({ limit: 0 }));
   });
 
+  it('issue #161: falls back to the default limit of 10 when --limit is negative', async () => {
+    runSearch.mockResolvedValue({ results: [], totalMatches: 0, truncated: false });
+    await runCli(['search', 'Vladimir Putin', '--limit', '-1']);
+
+    expect(runSearch).toHaveBeenCalledWith('Vladimir Putin', expect.objectContaining({ limit: 10 }));
+
+    await runCli(['search', 'Vladimir Putin', '--limit', '-40']);
+    expect(runSearch).toHaveBeenCalledWith('Vladimir Putin', expect.objectContaining({ limit: 10 }));
+  });
+
   it('falls back to the default limit of 10 when --limit is omitted entirely', async () => {
     runSearch.mockResolvedValue({ results: [], totalMatches: 0, truncated: false });
     await runCli(['search', 'Vladimir Putin']);

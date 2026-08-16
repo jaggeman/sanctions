@@ -376,3 +376,31 @@ describe('runSearch — threshold validation & NaN resilience (issue #148)', () 
   });
 });
 
+describe('runSearch — limit validation & negative resilience (issue #161)', () => {
+  beforeEach(() => {
+    allRecords = [
+      record({ id: 'EU-1', names: namesOverride('Vladimir Putin') }),
+      record({ id: 'EU-2', names: namesOverride('Vladimir Lenin') }),
+    ];
+    invalidateSearchIndex();
+  });
+
+  it('falls back to DEFAULT_LIMIT when options.limit is negative (-1, -40)', async () => {
+    const resMinusOne = await runSearch('Vladimir', { limit: -1 });
+    expect(resMinusOne.results.length).toBeGreaterThan(0);
+    expect(resMinusOne.results[0].id).toBe('EU-1');
+
+    const resMinusForty = await runSearch('Vladimir', { limit: -40 });
+    expect(resMinusForty.results.length).toBeGreaterThan(0);
+    expect(resMinusForty.results[0].id).toBe('EU-1');
+  });
+
+  it('honors limit=0 without setting truncated to true when results are empty', async () => {
+    const res = await runSearch('Vladimir', { limit: 0 });
+    expect(res.results).toEqual([]);
+    expect(res.totalMatches).toBe(2);
+    expect(res.truncated).toBe(false);
+  });
+});
+
+
