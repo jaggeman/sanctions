@@ -80,19 +80,45 @@ describe('POST /api/import', () => {
   });
 
   it('enqueues a Cloud Task instead of running the import in-process, and responds 202', async () => {
-    const res = await agent.post('/api/import').send({ sources: ['EU', 'UN'], csvPath: '/tmp/pep.csv' });
+    const res = await agent.post('/api/import').send({ sources: ['EU', 'UN'], csvPath: 'pep.csv' });
 
     expect(res.status).toBe(202);
     expect(enqueueImportTask).toHaveBeenCalledWith(
       expect.objectContaining({
         sources: ['EU', 'UN'],
-        csvPath: '/tmp/pep.csv',
+        csvPath: 'pep.csv',
         csvSource: 'PEP',
         csvSeparator: ';',
       })
     );
     // The old fire-and-forget in-process call must be gone entirely.
     expect(runImportMock).not.toHaveBeenCalled();
+  });
+
+  describe('csvPath validation (issue #157 / CLAUDE.md §6)', () => {
+    it('rejects path traversal in csvPath before touching the task queue', async () => {
+      const res = await agent.post('/api/import').send({ sources: ['PEP'], csvPath: '../../etc/passwd' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/Path traversal detected/);
+      expect(enqueueImportTask).not.toHaveBeenCalled();
+    });
+
+    it('rejects absolute paths outside the permitted directory', async () => {
+      const res = await agent.post('/api/import').send({ sources: ['PEP'], csvPath: '/tmp/secret.csv' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/Path traversal detected/);
+      expect(enqueueImportTask).not.toHaveBeenCalled();
+    });
+
+    it('rejects null bytes in csvPath', async () => {
+      const res = await agent.post('/api/import').send({ sources: ['PEP'], csvPath: 'pep.csv\0.txt' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/null byte/i);
+      expect(enqueueImportTask).not.toHaveBeenCalled();
+    });
   });
 
   it('responds 500, not 202, when enqueueing itself fails — the 202 must not lie about a job that was never actually queued', async () => {

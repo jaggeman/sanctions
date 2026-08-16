@@ -16,6 +16,7 @@ import {
 import { invalidateSearchIndex } from '../search';
 import { SanctionRecord, SanctionSource } from '../shared/types';
 import { logger } from '../shared/logger';
+import { validateCsvPath } from './csvPath';
 
 const log = logger.child({ module: 'importer.index' });
 
@@ -389,7 +390,12 @@ export async function runImport(options: ImportOptions = {}): Promise<{
     // 5. Process CSV (PEP / Custom)
     if (options.csvPath) {
       try {
-        const absoluteCsvPath = path.resolve(options.csvPath);
+        const validation = validateCsvPath(options.csvPath);
+        if (!validation.valid) {
+          log.error('import.csv_forbidden_path', { path: options.csvPath, error: validation.error });
+          throw new Error(`Forbidden csvPath: ${validation.error}`);
+        }
+        const absoluteCsvPath = validation.absolutePath!;
         if (await fs.pathExists(absoluteCsvPath)) {
           const csvSource = options.csvSource || 'PEP';
           const separator = options.csvSeparator || ';';

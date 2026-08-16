@@ -13,6 +13,7 @@ import { enqueueImportTask } from '../importer/taskQueue';
 import { runImport } from '../importer';
 import { processUpload } from '../importer/uploadPipeline';
 import { listImports, findImportBySha256, createFetchImportRecord, markImportFailed } from '../importer/importRecord';
+import { validateCsvPath } from '../importer/csvPath';
 import { listRecordVersions, generateImportId } from '../importer/uploader';
 import { tokensRouter } from './routes/tokens';
 import { decisionsRouter } from './routes/decisions';
@@ -600,6 +601,12 @@ app.post('/api/import', requireAuthOrScope('write'), async (req, res): Promise<a
   }
   if (importId !== undefined && !IMPORT_ID_PATTERN.test(importId)) {
     return res.status(400).json({ error: '"importId" must match ^[A-Za-z0-9_-]{1,128}$.' });
+  }
+  if (csvPath !== undefined) {
+    const csvValidation = validateCsvPath(csvPath);
+    if (!csvValidation.valid) {
+      return res.status(400).json({ error: csvValidation.error });
+    }
   }
   if (!assertForceAllowed(req, res, !!force)) return;
 
