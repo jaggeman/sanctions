@@ -416,13 +416,12 @@ app.get('/api/imports/:id', requireAuthOrScope('read'), async (req, res): Promis
  * POST /api/import
  * Queue a full import (issue #43). Handed off to `runImportTask`, a Cloud
  * Tasks-dispatched function with its own instance/timeout budget, instead of
- * running in-process here: `api` is pinned to maxInstances: 1 (issue #16),
- * so a multi-minute import awaited in this same function would freeze
- * login/search for everyone, and a bare fire-and-forget call is not
- * guaranteed to run to completion if this instance freezes/recycles right
- * after the response is sent. Cloud Tasks durably persists and retries the
- * job independent of this request's own fate, so the 202 below is now
- * actually true rather than merely optimistic.
+ * running in-process here: a multi-minute import awaited in this same
+ * function would tie up a request-serving instance for the duration, and a
+ * bare fire-and-forget call is not guaranteed to run to completion if this
+ * instance freezes/recycles right after the response is sent. Cloud Tasks
+ * durably persists and retries the job independent of this request's own
+ * fate, so the 202 below is now actually true rather than merely optimistic.
  *
  * Accepts either a logged-in session or a `write`-scoped API token (issue #36).
  */
@@ -596,17 +595,19 @@ if (require.main === module) {
 // sessions lived in an in-memory Map, which fragmented across concurrent
 // instances. Issue #63 moved that storage to Firestore
 // (src/auth/otpStore.ts, src/auth/session.ts), shared across every instance
-// and durable across a cold start — that half of the reason is gone.
+// and durable across a cold start.
 //
-// The pin stays for now regardless: src/search/index.ts's `cachedRecords` is
-// its own separate in-memory, per-instance cache, invalidated only within
-// the process that ran the import. With a single instance that's trivially
-// consistent; with maxInstances > 1, a search served by a different
-// instance than the one that just imported would silently return stale
-// results. Issue #43 is adding a Firestore-backed invalidation marker for
-// exactly that — this pin should come out once #43 lands, in a follow-up
-// PR that removes it explicitly rather than as a side effect of this one.
-export const api = functions.https.onRequest({ maxInstances: 1 }, app);
+// The pin then stayed for a second reason: src/search/index.ts's
+// `cachedRecords` was its own separate in-memory, per-instance cache,
+// invalidated only within the process that ran the import — with more than
+// one instance, a search served by an instance that didn't just import
+// would silently return stale results. Issue #43 added a Firestore-backed
+// `meta/searchIndex.version` counter that `getRecords()` checks against its
+// local cache on every call, so every instance now picks up an invalidation
+// regardless of which one ran the import.
+//
+// Both reasons are gone — no longer pinned (issue #101).
+export const api = functions.https.onRequest(app);
 
 // Both re-exported so their deployable Cloud Functions are discovered:
 // `dist/api/index.js` (package.json's `main`) is the sole file Firebase

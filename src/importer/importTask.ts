@@ -23,9 +23,10 @@ export const runImportTask = onTaskDispatched<ImportOptions>(
     timeoutSeconds: 540,
     memory: '512MiB',
     retryConfig: { maxAttempts: 3 },
-    // Decoupled from `api`'s maxInstances: 1 (issue #16) — this function
-    // has nothing to do with the in-memory OTP/session state that pin
-    // exists for, so it gets its own independent instance budget.
+    // Its own independent instance/concurrency budget, separate from `api`
+    // (which is no longer instance-pinned either, per issue #101) — one
+    // import running at a time avoids two concurrent runs racing on the
+    // same collections.
     rateLimits: { maxConcurrentDispatches: 1 },
   },
   async (request) => {
