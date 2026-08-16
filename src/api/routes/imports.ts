@@ -129,7 +129,15 @@ export const importsRouter = Router();
  * List import audit records, newest first (issue #12 — import history view).
  */
 importsRouter.get('/imports', requireAuthOrScope('imports:read'), async (req, res): Promise<any> => {
-  const requestedLimit = Math.min(parseInt(req.query.limit as string) || 20, 100);
+  // issue #261, mirroring issue #37/#161's fix in search.ts: `|| 20` treats an
+  // explicit limit=0 the same as "not provided". Check for NaN and negative
+  // values explicitly — negative or NaN falls back to default 20, while
+  // preserving explicit limit=0.
+  const parsedLimit = parseInt(req.query.limit as string, 10);
+  const requestedLimit =
+    Number.isNaN(parsedLimit) || parsedLimit < 0
+      ? 20
+      : Math.min(parsedLimit, 100);
 
   try {
     const imports = await listImports(requestedLimit);
