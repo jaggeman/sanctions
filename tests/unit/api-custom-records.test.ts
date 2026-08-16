@@ -34,6 +34,7 @@ vi.mock('../../src/shared/firebase', () => ({ db: fakeDb }));
 const { customRecordsRouter } = await import('../../src/api/routes/customRecords');
 const { createSession } = await import('../../src/auth/session');
 const { SESSION_COOKIE_NAME } = await import('../../src/auth/middleware');
+const { createApiToken } = await import('../../src/shared/apiTokens');
 
 const ADMIN_EMAIL = 'admin@corp.test';
 const NON_ADMIN_EMAIL = 'regular.user@corp.test';
@@ -91,6 +92,47 @@ describe('admin gate on /api/admin/custom-records', () => {
       .send({ id: 'CUSTOM-1', type: 'individual', primaryName: 'x' });
 
     expect(mockCreateCustomRecord).not.toHaveBeenCalled();
+  });
+
+  describe('bearer token admin demotion (issue #297)', () => {
+    it('authorizes custom record creation with a valid token when owner is in ADMIN_EMAILS', async () => {
+      process.env.ADMIN_EMAILS = ADMIN_EMAIL;
+      process.env.ALLOWED_EMAIL_DOMAINS = 'corp.test';
+      const { token } = await createApiToken('admin token', ['custom:write'], ADMIN_EMAIL);
+
+      mockCreateCustomRecord.mockResolvedValueOnce({
+        id: 'CUSTOM-1',
+        source: 'CUSTOM',
+        type: 'individual',
+        primaryName: 'Jane Doe',
+      });
+
+      const res = await request(buildApp())
+        .post('/api/admin/custom-records')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ id: 'CUSTOM-1', type: 'individual', primaryName: 'Jane Doe' });
+
+      expect(res.status).toBe(201);
+      expect(mockCreateCustomRecord).toHaveBeenCalled();
+    });
+
+    it('rejects custom record operations with 403 when the token owner is removed from ADMIN_EMAILS', async () => {
+      process.env.ADMIN_EMAILS = ADMIN_EMAIL;
+      process.env.ALLOWED_EMAIL_DOMAINS = 'corp.test';
+      const { token } = await createApiToken('admin token', ['custom:write'], ADMIN_EMAIL);
+
+      // Owner is demoted: removed from ADMIN_EMAILS, but stays in ALLOWED_EMAIL_DOMAINS
+      process.env.ADMIN_EMAILS = 'otheradmin@corp.test';
+
+      const res = await request(buildApp())
+        .post('/api/admin/custom-records')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ id: 'CUSTOM-1', type: 'individual', primaryName: 'Jane Doe' });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toMatch(/no longer an administrator/i);
+      expect(mockCreateCustomRecord).not.toHaveBeenCalled();
+    });
   });
 });
 

@@ -389,6 +389,73 @@ describe('verifyApiToken', () => {
     expect(mockDocUpdate).not.toHaveBeenCalled();
   });
 
+  describe('admin role re-verification on admin-gated calls (issue #297)', () => {
+    it('rejects an admin-gated call when the token owner is demoted from ADMIN_EMAILS', async () => {
+      vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'corp.test');
+      vi.stubEnv('ADMIN_EMAILS', 'otheradmin@corp.test'); // owner is NOT in ADMIN_EMAILS
+
+      const stored = { id: 'tok-1', scopes: ['custom:write'], revoked: false, ownerEmail: 'formeradmin@corp.test' };
+      mockWhereLimitGet.mockResolvedValueOnce({
+        empty: false,
+        docs: [{ data: () => stored, ref: { update: mockDocUpdate } }],
+      });
+
+      const result = await verifyApiToken('sanc_custom_write', 'custom:write', { requireAdmin: true });
+
+      expect(result).toEqual({
+        valid: false,
+        reason: 'disallowed_admin',
+        tokenId: 'tok-1',
+        scopes: ['custom:write'],
+      });
+      expect(mockDocUpdate).not.toHaveBeenCalled();
+    });
+
+    it('accepts an admin-gated call when the token owner is currently in ADMIN_EMAILS', async () => {
+      vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'corp.test');
+      vi.stubEnv('ADMIN_EMAILS', 'admin@corp.test');
+
+      const stored = { id: 'tok-1', scopes: ['custom:write'], revoked: false, ownerEmail: 'admin@corp.test' };
+      mockDocUpdate.mockResolvedValueOnce(undefined);
+      mockWhereLimitGet.mockResolvedValueOnce({
+        empty: false,
+        docs: [{ data: () => stored, ref: { update: mockDocUpdate } }],
+      });
+
+      const result = await verifyApiToken('sanc_custom_write', 'custom:write', { requireAdmin: true });
+
+      expect(result).toEqual({
+        valid: true,
+        tokenId: 'tok-1',
+        scopes: ['custom:write'],
+        ownerEmail: 'admin@corp.test',
+      });
+      expect(mockDocUpdate).toHaveBeenCalled();
+    });
+
+    it('allows a demoted admin to continue using the token for non-admin routes for its granted scope', async () => {
+      vi.stubEnv('ALLOWED_EMAIL_DOMAINS', 'corp.test');
+      vi.stubEnv('ADMIN_EMAILS', 'otheradmin@corp.test'); // owner is NOT in ADMIN_EMAILS
+
+      const stored = { id: 'tok-1', scopes: ['sanctions:read'], revoked: false, ownerEmail: 'formeradmin@corp.test' };
+      mockDocUpdate.mockResolvedValueOnce(undefined);
+      mockWhereLimitGet.mockResolvedValueOnce({
+        empty: false,
+        docs: [{ data: () => stored, ref: { update: mockDocUpdate } }],
+      });
+
+      const result = await verifyApiToken('sanc_read_token', 'sanctions:read'); // non-admin call
+
+      expect(result).toEqual({
+        valid: true,
+        tokenId: 'tok-1',
+        scopes: ['sanctions:read'],
+        ownerEmail: 'formeradmin@corp.test',
+      });
+      expect(mockDocUpdate).toHaveBeenCalled();
+    });
+  });
+
   describe('token expiry', () => {
     it('rejects a token whose expiresAt is in the past', async () => {
       vi.useFakeTimers();

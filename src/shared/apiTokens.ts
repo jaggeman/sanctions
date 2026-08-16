@@ -1,6 +1,7 @@
 import * as crypto from 'crypto';
 import { db } from './firebase';
 import { isAllowedEmail } from '../auth/emailAllowlist';
+import { isAdminEmail } from '../auth/admins';
 
 export type GranularApiTokenScope =
   | 'sanctions:read'
@@ -36,7 +37,7 @@ export type ApiTokenPublic = Omit<ApiTokenRecord, 'tokenHash'>;
 
 export interface TokenVerificationResult {
   valid: boolean;
-  reason?: 'missing' | 'not_found' | 'revoked' | 'expired' | 'insufficient_scope' | 'no_owner_email' | 'disallowed_owner';
+  reason?: 'missing' | 'not_found' | 'revoked' | 'expired' | 'insufficient_scope' | 'no_owner_email' | 'disallowed_owner' | 'disallowed_admin';
   tokenId?: string;
   scopes?: ApiTokenScope[];
   ownerEmail?: string;
@@ -183,7 +184,8 @@ export async function revokeApiToken(id: string): Promise<ApiTokenPublic | null>
 
 export async function verifyApiToken(
   rawToken: string | undefined,
-  requiredScope: ApiTokenScope | ApiTokenScope[]
+  requiredScope: ApiTokenScope | ApiTokenScope[],
+  options?: { requireAdmin?: boolean }
 ): Promise<TokenVerificationResult> {
   if (!rawToken) {
     return { valid: false, reason: 'missing' };
@@ -233,6 +235,13 @@ export async function verifyApiToken(
   // off-boarded user's tokens cannot keep access their session would immediately lose.
   if (record.ownerEmail && !isAllowedEmail(record.ownerEmail)) {
     return { valid: false, reason: 'disallowed_owner', tokenId: record.id, scopes: record.scopes };
+  }
+
+  // CLAUDE.md §6 / issue #297: re-verify admin rights from the source of truth on admin-gated calls.
+  // If the token owner was removed from ADMIN_EMAILS (demoted/role change), fail closed
+  // so a demoted admin's tokens cannot keep admin-only access their session would immediately lose.
+  if (options?.requireAdmin && (!record.ownerEmail || !isAdminEmail(record.ownerEmail))) {
+    return { valid: false, reason: 'disallowed_admin', tokenId: record.id, scopes: record.scopes };
   }
 
   // Fire-and-forget: don't make every authenticated request wait on this write.

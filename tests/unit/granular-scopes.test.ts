@@ -86,7 +86,7 @@ describe('Granular Scope Enforcement on API Routes (Issue #221)', () => {
         .set('Authorization', 'Bearer sanc_search')
         .send({ name: 'Test Entity' });
 
-      expect(mockVerifyApiToken).toHaveBeenCalledWith('sanc_search', 'custom:write');
+      expect(mockVerifyApiToken).toHaveBeenCalledWith('sanc_search', 'custom:write', { requireAdmin: true });
       expect(res.status).toBe(403);
     });
   });

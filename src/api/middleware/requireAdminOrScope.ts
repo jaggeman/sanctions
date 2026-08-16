@@ -13,7 +13,7 @@ import { ApiTokenScope } from '../../shared/apiTokens';
 export function requireAdminOrScope(scope: ApiTokenScope | ApiTokenScope[]): RequestHandler {
   return (req: Request, res: Response, next: NextFunction): void => {
     if (req.header('authorization') !== undefined) {
-      requireScope(scope)(req, res, next);
+      requireScope(scope, { requireAdmin: true })(req, res, next);
       return;
     }
     requireAdmin(req, res, next);
