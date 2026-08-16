@@ -1,7 +1,13 @@
 node_modules/
 dist/
 coverage/
-.env
+# .env* covers .env, .env.local, .env.<project-id> etc — Firebase's own CLI
+# reads whichever of these exist in the functions source dir and injects
+# them as the deployed function's env vars (except .env.local, which it
+# deliberately keeps local-only). .env.example is the one exception: it's
+# meant to be committed as documentation and never carries real values.
+.env*
+!.env.example
 firebase-debug.log
 firebase-debug.*.log
 firestore-debug.log
