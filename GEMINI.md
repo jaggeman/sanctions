@@ -93,6 +93,8 @@ Anything left to do — a follow-up, a known gap, a "we should build X later," a
 - When you finish work, close the loop: tick the tracker item / close the issue, referencing the PR that did it.
 
 5. Deploy/release safety (if the project has a deploy step)
+- Always specify the target Firebase project explicitly (`firebase deploy --project sanctions-app-dev-01` or `npm run deploy`). Never run unparameterized `firebase deploy` commands that could rely on a stale global active project context.
+- `.firebaserc` default project MUST remain locked to `sanctions-app-dev-01`.
 - Batch large deploys with a cooldown rather than pushing every unit of work at once, if the target infra has any kind of per-project rate/quota ceiling that many simultaneous updates could transiently exceed — small batches with a pause between them keep concurrent in-flight changes below the ceiling even when steady-state usage is low.
 - Prefer incremental "what changed since last deploy" over full redeploys for day-to-day changes — walk the real dependency graph from changed files to find what's actually affected, rather than "changed file == redeploy everything" or a naive one-to-one mapping. Reserve full redeploys for infrequent large batches, and use a literal-diff-since-a-known-baseline approach (not a dependency-graph walk) when catching up a large batch of already-merged work at once — a graph walk from many disparate changes can fan out through a shared "hub" module to nearly everything, which a literal-baseline-diff avoids.
 - Track deploy state OUTSIDE any single git worktree/checkout — a shared, per-machine (or per-environment) state file, not something inside a worktree that gets recreated fresh per task and would otherwise always look like "never deployed."

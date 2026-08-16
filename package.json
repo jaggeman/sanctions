@@ -18,7 +18,11 @@
     "test:coverage": "vitest run tests/unit --coverage --exclude '**/regression-real-data.test.ts'",
     "test:rules": "firebase emulators:exec --only firestore \"vitest run tests/rules\"",
     "test:integration": "firebase emulators:exec --only firestore \"vitest run tests/integration\"",
-    "test:watch": "vitest watch tests/unit"
+    "test:watch": "vitest watch tests/unit",
+    "deploy": "firebase deploy --project sanctions-app-dev-01",
+    "deploy:hosting": "firebase deploy --only hosting --project sanctions-app-dev-01",
+    "deploy:functions": "firebase deploy --only functions --project sanctions-app-dev-01",
+    "deploy:firestore": "firebase deploy --only firestore --project sanctions-app-dev-01"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.1",
