@@ -73,6 +73,61 @@
       <vesselFlag>Cuba</vesselFlag>
     </vesselInfo>
   </sdnEntry>
+  <!-- Real entry (uid 306, BANCO NACIONAL DE CUBA), carved verbatim from the
+       real OFAC SDN export for issue #168: has both a weak- and a
+       strong-category aka in the same entry, real proof the split isn't
+       0/N or N/0. -->
+  <sdnEntry>
+    <uid>306</uid>
+    <lastName>BANCO NACIONAL DE CUBA</lastName>
+    <sdnType>Entity</sdnType>
+    <programList>
+      <program>CUBA</program>
+    </programList>
+    <akaList>
+      <aka>
+        <uid>219</uid>
+        <type>a.k.a.</type>
+        <category>weak</category>
+        <lastName>BNC</lastName>
+      </aka>
+      <aka>
+        <uid>220</uid>
+        <type>a.k.a.</type>
+        <category>strong</category>
+        <lastName>NATIONAL BANK OF CUBA</lastName>
+      </aka>
+    </akaList>
+  </sdnEntry>
+  <!-- Real entry (uid 7254, JELASSI), carved verbatim for issue #168: a
+       passport with a real expirationDate (30 Jun 2001) that is genuinely
+       in the past — proof the "[expired]" caveat is date-aware, not just
+       "has an expirationDate field". -->
+  <sdnEntry>
+    <uid>7254</uid>
+    <firstName>Riadh Ben Belkassem Ben Mohamed</firstName>
+    <lastName>JELASSI</lastName>
+    <sdnType>Individual</sdnType>
+    <programList>
+      <program>SDGT</program>
+    </programList>
+    <idList>
+      <id>
+        <uid>4063</uid>
+        <idType>Passport</idType>
+        <idNumber>L276046</idNumber>
+        <issueDate>01 Jul 1996</issueDate>
+        <expirationDate>30 Jun 2001</expirationDate>
+      </id>
+    </idList>
+    <nationalityList>
+      <nationality>
+        <uid>4405</uid>
+        <country>Tunisia</country>
+        <mainEntry>true</mainEntry>
+      </nationality>
+    </nationalityList>
+  </sdnEntry>
   <!-- issue #169: carved verbatim from the real 29 MB OFAC SDN export
        (uid 9758) — the one real entry found with BOTH nationalityList and
        citizenshipList populated, where the same country (India) appears in
