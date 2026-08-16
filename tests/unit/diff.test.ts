@@ -1,20 +1,38 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SanctionRecord } from '../../src/shared/types';
 
-const { mockGet, mockSelect, mockWhere, mockCollection, mockUploadRecords, mockDelistRecords } =
+const { mockGet, mockSelect, mockWhere, mockCollection, mockRunTransaction, mockUploadRecords, mockDelistRecords } =
   vi.hoisted(() => {
     const mockGet = vi.fn();
     const mockSelect = vi.fn(() => ({ get: mockGet }));
     const mockWhere = vi.fn(() => ({ select: mockSelect }));
-    const mockCollection = vi.fn(() => ({ where: mockWhere }));
+    const mockDocRef = {
+      get: vi.fn(async () => ({ exists: false })),
+      set: vi.fn(async () => {}),
+      delete: vi.fn(async () => {}),
+    };
+    const mockCollection = vi.fn((name?: string) => {
+      if (name === 'sanctions') return { where: mockWhere };
+      return {
+        doc: vi.fn(() => mockDocRef),
+        where: mockWhere,
+      };
+    });
+    const mockRunTransaction = vi.fn(async (updateFn: any) =>
+      updateFn({
+        get: vi.fn(async () => ({ exists: false })),
+        set: vi.fn(),
+        delete: vi.fn(),
+      }),
+    );
     const mockUploadRecords = vi.fn();
     const mockDelistRecords = vi.fn();
-    return { mockGet, mockSelect, mockWhere, mockCollection, mockUploadRecords, mockDelistRecords };
+    return { mockGet, mockSelect, mockWhere, mockCollection, mockRunTransaction, mockUploadRecords, mockDelistRecords };
   });
 
 vi.mock('../../src/shared/firebase', () => ({
-  db: { collection: mockCollection },
-  default: { collection: mockCollection },
+  db: { collection: mockCollection, runTransaction: mockRunTransaction },
+  default: { collection: mockCollection, runTransaction: mockRunTransaction },
 }));
 
 vi.mock('../../src/importer/uploader', async (importOriginal) => {
