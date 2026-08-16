@@ -54,6 +54,7 @@ export function createFakeDb() {
         const coll = getCollectionMap(name);
         const docs = Array.from(coll.entries()).map(([id, data]) => ({
           id,
+          ref: makeDocRef(name, id),
           data: () => data,
         }));
         return {
@@ -63,6 +64,30 @@ export function createFakeDb() {
           forEach: (fn: (doc: any) => void) => docs.forEach(fn),
         };
       },
+      where: (field: string, op: string, val: any) => ({
+        limit: (n: number) => ({
+          get: async () => {
+            const coll = getCollectionMap(name);
+            const matching = Array.from(coll.entries())
+              .filter(([_, data]) => {
+                if (op === '==') return data?.[field] === val;
+                return false;
+              })
+              .slice(0, n)
+              .map(([id, data]) => ({
+                id,
+                ref: makeDocRef(name, id),
+                data: () => data,
+              }));
+            return {
+              empty: matching.length === 0,
+              size: matching.length,
+              docs: matching,
+              forEach: (fn: (doc: any) => void) => matching.forEach(fn),
+            };
+          },
+        }),
+      }),
     }),
     // Minimal, non-isolated shim: just runs the callback against the same
     // doc refs (get/set), so offline unit tests can exercise the

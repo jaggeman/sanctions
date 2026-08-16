@@ -151,6 +151,27 @@ describe('requireScope', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
+  it('responds 403 with an admin message when token owner is demoted from admin (issue #297)', async () => {
+    mockVerifyApiToken.mockResolvedValueOnce({
+      valid: false,
+      reason: 'disallowed_admin',
+      tokenId: 'tok-1',
+      scopes: ['custom:write'],
+    });
+    const req = makeReq('Bearer sanc_demoted');
+    const res = makeRes();
+    const next = vi.fn() as NextFunction;
+
+    await requireScope('custom:write', { requireAdmin: true })(req, res, next);
+
+    expect(mockVerifyApiToken).toHaveBeenCalledWith('sanc_demoted', 'custom:write', { requireAdmin: true });
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.stringMatching(/no longer an administrator/i) })
+    );
+    expect(next).not.toHaveBeenCalled();
+  });
+
   it('binds tokenId and the owner email into req.log when present (issue #110)', async () => {
     mockVerifyApiToken.mockResolvedValueOnce({
       valid: true,

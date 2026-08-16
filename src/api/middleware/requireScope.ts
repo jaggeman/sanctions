@@ -33,18 +33,25 @@ function messageFor(reason: TokenVerificationResult['reason']): string {
       return 'This API token predates owner-attribution support and cannot be used for write access. Revoke it and mint a new token.';
     case 'disallowed_owner':
       return 'The owner of this API token is no longer authorized.';
+    case 'disallowed_admin':
+      return 'The owner of this API token is no longer an administrator.';
     default:
       return 'Unauthorized.';
   }
 }
 
-export function requireScope(scope: ApiTokenScope | ApiTokenScope[]): RequestHandler {
+export function requireScope(
+  scope: ApiTokenScope | ApiTokenScope[],
+  options?: { requireAdmin?: boolean }
+): RequestHandler {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const rawToken = extractBearerToken(req);
-    const result = await verifyApiToken(rawToken, scope);
+    const result = options !== undefined
+      ? await verifyApiToken(rawToken, scope, options)
+      : await verifyApiToken(rawToken, scope);
 
     if (!result.valid) {
-      const status = result.reason === 'insufficient_scope' ? 403 : 401;
+      const status = (result.reason === 'insufficient_scope' || result.reason === 'disallowed_admin') ? 403 : 401;
       res.status(status).json({ error: messageFor(result.reason) });
       return;
     }
