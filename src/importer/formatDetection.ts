@@ -5,9 +5,9 @@ export interface FormatDetectionResult {
   fileGenerationDate: string | null;
 }
 
-const BOM = '﻿';
+export const BOM = '\uFEFF';
 
-function stripBom(s: string): string {
+export function stripBom(s: string): string {
   return s.startsWith(BOM) ? s.slice(1) : s;
 }
 

@@ -329,3 +329,67 @@ describe('parseCSVList — ID and source validation (issue #167)', () => {
     warnSpy.mockRestore();
   });
 });
+
+describe('parseCSVList — UTF-8 BOM handling (issue #298)', () => {
+  const BOM = '\uFEFF';
+
+  it('correctly maps the first column when it is "id" and file starts with a UTF-8 BOM', async () => {
+    const file = await fixture(
+      'bom-id-first.csv',
+      `${BOM}id;name;type;source\n101;Test Person;individual;PEP\n102;Entity Ltd;entity;PEP\n`,
+    );
+
+    const records = await parseCSVList(file, { separator: ';' });
+
+    expect(records).toHaveLength(2);
+    // Crucial: Must parse genuine id "PEP-101", not fallback synthetic "PEP-row-1"
+    expect(records[0].id).toBe('PEP-101');
+    expect(records[0].names[0].wholeName).toBe('Test Person');
+    expect(records[0].type).toBe('individual');
+
+    expect(records[1].id).toBe('PEP-102');
+    expect(records[1].names[0].wholeName).toBe('Entity Ltd');
+    expect(records[1].type).toBe('entity');
+  });
+
+  it('correctly maps the first column when it is "name" and file starts with a UTF-8 BOM', async () => {
+    const file = await fixture(
+      'bom-name-first.csv',
+      `${BOM}name;type;source\nAnna Svensson;individual;PEP\nNordic Holdings;entity;PEP\n`,
+    );
+
+    const records = await parseCSVList(file, { separator: ';' });
+
+    expect(records).toHaveLength(2);
+    // When name is first column, it must NOT be skipped as missing name
+    expect(records[0].names[0].wholeName).toBe('Anna Svensson');
+    expect(records[0].type).toBe('individual');
+    expect(records[1].names[0].wholeName).toBe('Nordic Holdings');
+    expect(records[1].type).toBe('entity');
+  });
+
+  it('parses identically with and without a UTF-8 BOM across all fields and aggregate counts', async () => {
+    const csvContent =
+      'id;name;aliases;type;source;datesOfBirth;citizenships;passports;fullAddress;reason\n' +
+      '1;Person One;Alias A|Alias B;individual;PEP;1980-01-01;Sweden;P123;Street 1;MP\n' +
+      '2;Company Two;;entity;PEP;;;;Street 2;State owned\n' +
+      '3;Person Three;;individual;PEP;1990-05-05;Norway;P456;Street 3;Diplomat\n';
+
+    const fileWithoutBom = await fixture('no-bom.csv', csvContent);
+    const fileWithBom = await fixture('with-bom.csv', `${BOM}${csvContent}`);
+
+    const recordsWithoutBom = await parseCSVList(fileWithoutBom, { separator: ';' });
+    const recordsWithBom = await parseCSVList(fileWithBom, { separator: ';' });
+
+    const stripTimestamps = (records: any[]) => records.map(({ createdAt, updatedAt, ...rest }) => rest);
+    expect(recordsWithBom).toHaveLength(3);
+    expect(stripTimestamps(recordsWithBom)).toEqual(stripTimestamps(recordsWithoutBom));
+
+    const typeSplitWithBom = {
+      individual: recordsWithBom.filter((r) => r.type === 'individual').length,
+      entity: recordsWithBom.filter((r) => r.type === 'entity').length,
+    };
+    expect(typeSplitWithBom).toEqual({ individual: 2, entity: 1 });
+  });
+});
+
