@@ -143,7 +143,7 @@ describe('POST /api/auth/verify-otp', () => {
       .post('/api/auth/verify-otp')
       .send({ email: 'admin@sanctions.com', code: '123456' });
     expect(res.status).toBe(200);
-    expect(res.headers['set-cookie']?.[0]).toMatch(/^sid=/);
+    expect(res.headers['set-cookie']?.[0]).toMatch(/^__session=/);
   });
 
   it('rejects the test account with a wrong code', async () => {
@@ -160,7 +160,7 @@ describe('POST /api/auth/verify-otp', () => {
 
     const res = await request(api).post('/api/auth/verify-otp').send({ email: 'user@example.com', code });
     expect(res.status).toBe(200);
-    expect(res.headers['set-cookie']?.[0]).toMatch(/^sid=/);
+    expect(res.headers['set-cookie']?.[0]).toMatch(/^__session=/);
   });
 
   it('rejects an unknown/expired code', async () => {

@@ -665,7 +665,7 @@
       "cookieAuth": {
         "type": "apiKey",
         "in": "cookie",
-        "name": "sid",
+        "name": "__session",
         "description": "Session-cookie satt av POST /api/auth/verify-otp efter lyckad e-post-OTP-inloggning. Krävs av alla /api/*-rutter förutom auth-rutterna själva och /api/admin/tokens/* (endast admin-session, se requireAdmin)."
       },
       "apiTokenAuth": {
