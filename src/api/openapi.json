@@ -339,7 +339,7 @@
     "/api/upload": {
       "post": {
         "summary": "Ladda upp en CSV- eller XML-fil för import",
-        "description": "Laddar upp en fil för en angiven källa och startar en bakgrundsimport. Kräver antingen en inloggad session eller en API-token med write-scope (issue #36).",
+        "description": "Laddar upp en fil för en angiven källa och startar en import. Körs synkront och returnerar utfallet direkt (issue #7, issue #162). Kräver antingen en inloggad session eller en API-token med write-scope (issue #36).",
         "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
         "requestBody": {
           "required": true,
@@ -355,7 +355,28 @@
                   },
                   "source": {
                     "type": "string",
-                    "enum": ["EU", "UN", "US", "PEP", "CUSTOM"]
+                    "enum": ["EU", "UN", "US", "PEP", "CUSTOM"],
+                    "description": "Sanktionskälla"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": ["sync", "append"],
+                    "default": "append",
+                    "description": "Issue #8: 'sync' behandlar filen som fullständig sanning för källan och avlistar aktiva poster som saknas i filen. 'append' (standard) avlistar aldrig — rätt för PEP/CUSTOM/kompletterande filer."
+                  },
+                  "dryRun": {
+                    "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["true", "false"] }],
+                    "default": "false",
+                    "description": "Förhandsgranska utan att skriva något. Svarar med status 'dry_run' och diff-förhandsgranskning. Accepterar boolean eller \"true\"/\"false\"."
+                  },
+                  "force": {
+                    "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["true", "false"] }],
+                    "default": "false",
+                    "description": "Kringgå 20%-spärren mot att avlista en för stor andel av en källas aktiva poster. Accepterar boolean eller \"true\"/\"false\". Kräver administratörssession."
+                  },
+                  "importId": {
+                    "type": "string",
+                    "description": "Valfritt explicit import-ID för versionshistorik; genereras annars automatiskt."
                   }
                 },
                 "required": ["file", "source"]
@@ -364,31 +385,165 @@
           }
         },
         "responses": {
-          "202": {
-            "description": "Fil mottagen, import startad i bakgrunden",
+          "200": {
+            "description": "Synkront utfall (tillämpad import eller dry-run förhandsgranskning)",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "status": { "type": "string" },
-                    "message": { "type": "string" }
-                  }
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "description": "Utfall vid 'applied'",
+                      "required": ["status", "importId", "counts"],
+                      "properties": {
+                        "status": { "type": "string", "enum": ["applied"] },
+                        "importId": { "type": "string" },
+                        "counts": {
+                          "type": "object",
+                          "properties": {
+                            "parsed": { "type": "integer" },
+                            "uploaded": { "type": "integer" }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "description": "Utfall vid 'dry_run'",
+                      "required": ["status", "importId", "counts", "diffs"],
+                      "properties": {
+                        "status": { "type": "string", "enum": ["dry_run"] },
+                        "importId": { "type": "string" },
+                        "counts": {
+                          "type": "object",
+                          "properties": {
+                            "parsed": { "type": "integer" },
+                            "uploaded": { "type": "integer" }
+                          }
+                        },
+                        "diffs": {
+                          "type": "array",
+                          "items": { "$ref": "#/components/schemas/DiffResult" }
+                        }
+                      }
+                    }
+                  ]
                 }
               }
             }
           },
           "400": {
-            "description": "Ingen fil bifogad, ogiltig filtyp, eller okänt \"source\"-värde"
+            "description": "Ingen fil bifogad, ogiltig filtyp, okänt \"source\"-värde, eller ogiltigt \"mode\"/\"importId\"",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["error"],
+                  "properties": {
+                    "error": { "type": "string" }
+                  }
+                }
+              }
+            }
           },
           "401": {
-            "description": "Ingen giltig session eller API-token"
+            "description": "Ingen giltig session eller API-token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["error"],
+                  "properties": {
+                    "error": { "type": "string" }
+                  }
+                }
+              }
+            }
           },
           "403": {
-            "description": "API-token saknar write-scope"
+            "description": "API-token saknar write-scope eller obehörig force",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["error"],
+                  "properties": {
+                    "error": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Duplicerad fil som redan importerats eller pågående import för samma fil",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "description": "Exakt duplicerad fil som redan importerats",
+                      "required": ["error", "duplicateOfImportId"],
+                      "properties": {
+                        "error": { "type": "string" },
+                        "duplicateOfImportId": { "type": "string", "description": "ID för den tidigare importen med samma filinnehåll" }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "description": "Identisk fil behandlas redan samtidigt",
+                      "required": ["error"],
+                      "properties": {
+                        "error": { "type": "string" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
           },
           "413": {
-            "description": "Filen överskrider 64 MB-gränsen"
+            "description": "Filen överskrider 64 MB-gränsen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["error"],
+                  "properties": {
+                    "error": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Detekterat men icke stött filformat",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["error"],
+                  "properties": {
+                    "error": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Import eller bearbetning misslyckades",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["error"],
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": { "type": "string" }
+                  }
+                }
+              }
+            }
           }
         }
       }
