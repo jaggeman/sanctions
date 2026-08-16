@@ -102,8 +102,20 @@ beforeEach(async () => {
 describe('runSearch — basic behaviour', () => {
   it('returns nothing, without throwing, for an empty or whitespace query', async () => {
     allRecords = [record()];
-    expect(await runSearch('')).toEqual({ results: [], totalMatches: 0, truncated: false });
-    expect(await runSearch('   ')).toEqual({ results: [], totalMatches: 0, truncated: false });
+    expect(await runSearch('')).toEqual({
+      results: [],
+      totalMatches: 0,
+      truncated: false,
+      tookMs: expect.any(Number),
+      sourcesSearched: [],
+    });
+    expect(await runSearch('   ')).toEqual({
+      results: [],
+      totalMatches: 0,
+      truncated: false,
+      tookMs: expect.any(Number),
+      sourcesSearched: [],
+    });
   });
 
   it('finds a fuzzy match at or above the default threshold', async () => {
@@ -400,6 +412,43 @@ describe('runSearch — limit validation & negative resilience (issue #161)', ()
     expect(res.results).toEqual([]);
     expect(res.totalMatches).toBe(2);
     expect(res.truncated).toBe(false);
+  });
+});
+
+// Search Entities tab wants to show "how long did this take" and "how many
+// databases did this search over" (repo owner request, no issue filed yet) —
+// both computed here since only runSearch has the full record set loaded.
+describe('runSearch — duration and source reporting', () => {
+  it('reports tookMs as a non-negative number', async () => {
+    allRecords = [record({ id: 'PEP-1' })];
+    const { tookMs } = await runSearch('Vladimir Putin');
+    expect(typeof tookMs).toBe('number');
+    expect(tookMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('reports the distinct sources present in the index as sourcesSearched', async () => {
+    allRecords = [
+      record({ id: 'EU-1', source: 'EU', names: namesOverride('Test Person') }),
+      record({ id: 'US-1', source: 'US', names: namesOverride('Test Person') }),
+      record({ id: 'US-2', source: 'US', names: namesOverride('Test Person') }),
+    ];
+    const { sourcesSearched } = await runSearch('Test Person');
+    expect(sourcesSearched).toEqual(['EU', 'US']);
+  });
+
+  it('narrows sourcesSearched to the requested source filter, dropping a filtered source with no records', async () => {
+    allRecords = [
+      record({ id: 'EU-1', source: 'EU', names: namesOverride('Test Person') }),
+      record({ id: 'US-1', source: 'US', names: namesOverride('Test Person') }),
+    ];
+    const { sourcesSearched } = await runSearch('Test Person', { source: 'EU,UN' });
+    expect(sourcesSearched).toEqual(['EU']);
+  });
+
+  it('reports an empty sourcesSearched array when the index has no records at all', async () => {
+    allRecords = [];
+    const { sourcesSearched } = await runSearch('Test Person');
+    expect(sourcesSearched).toEqual([]);
   });
 });
 

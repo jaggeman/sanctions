@@ -31,6 +31,10 @@ import { apiFetch } from './apiFetch';
 interface NameAliasLike { wholeName: string }
 interface BirthDateLike { raw?: string; year?: number; month?: number; day?: number; yearRangeFrom?: number; yearRangeTo?: number }
 
+function formatDuration(ms: number): string {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms}ms`;
+}
+
 function primaryNameOf(names: NameAliasLike[] | undefined): string {
   return names?.[0]?.wholeName || 'Unknown Name';
 }
@@ -86,6 +90,8 @@ export default function SearchTab({ onSelectRecord }: SearchTabProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [tookMs, setTookMs] = useState<number | null>(null);
+  const [sourcesSearched, setSourcesSearched] = useState<string[]>([]);
 
   const handleSearch = async () => {
     if (!searchQuery) return;
@@ -110,6 +116,8 @@ export default function SearchTab({ onSelectRecord }: SearchTabProps) {
       setResults(Array.isArray(data.results) ? data.results : []);
       setTotalMatches(typeof data.totalMatches === 'number' ? data.totalMatches : 0);
       setTruncated(Boolean(data.truncated));
+      setTookMs(typeof data.tookMs === 'number' ? data.tookMs : null);
+      setSourcesSearched(Array.isArray(data.sourcesSearched) ? data.sourcesSearched : []);
     } catch (err) {
       console.error(err);
       setSearchError('Search failed. Please try again.');
@@ -216,6 +224,12 @@ export default function SearchTab({ onSelectRecord }: SearchTabProps) {
             {truncated
               ? `Showing ${results.length} of ${totalMatches} matches — narrow your search or raise the limit to see more.`
               : `${totalMatches} match${totalMatches === 1 ? '' : 'es'}`}
+            {tookMs !== null &&
+              ` · search took ${formatDuration(tookMs)}${
+                sourcesSearched.length > 0
+                  ? ` across ${sourcesSearched.length} database${sourcesSearched.length === 1 ? '' : 's'}`
+                  : ''
+              }`}
           </Typography>
           <Button
             variant="outlined"

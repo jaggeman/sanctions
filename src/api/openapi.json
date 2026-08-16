@@ -1092,7 +1092,7 @@
       "SearchResponse": {
         "type": "object",
         "description": "Faktiskt svar från GET /api/search (src/api/index.ts) — inte en bar array, till skillnad från hur det tidigare stod i denna spec.",
-        "required": ["results", "totalMatches", "truncated"],
+        "required": ["results", "totalMatches", "truncated", "tookMs", "sourcesSearched"],
         "properties": {
           "results": {
             "type": "array",
@@ -1105,6 +1105,15 @@
           "truncated": {
             "type": "boolean",
             "description": "true om totalMatches är fler än vad 'results' innehåller, dvs fler träffar finns än vad som returnerades."
+          },
+          "tookMs": {
+            "type": "integer",
+            "description": "Tid i millisekunder som runSearch tog att exekvera."
+          },
+          "sourcesSearched": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Distinkta källor (EU/UN/US/UK/CH/PEP/CUSTOM) som faktiskt fanns i indexet för den här sökningen, begränsat av ett ev. 'source'-filter."
           }
         }
       },
