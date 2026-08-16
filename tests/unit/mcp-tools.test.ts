@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const runImport = vi.fn();
+const processUpload = vi.fn();
 const docGet = vi.fn();
 const countGet = vi.fn();
 const whereCountGet = vi.fn();
@@ -21,6 +22,7 @@ const fakeDb = {
 vi.mock('../../src/search', () => ({ runSearch: vi.fn(), invalidateSearchIndex: vi.fn() }));
 vi.mock('../../src/shared/firebase', () => ({ db: fakeDb }));
 vi.mock('../../src/importer', () => ({ runImport }));
+vi.mock('../../src/importer/uploadPipeline', () => ({ processUpload }));
 vi.mock('@modelcontextprotocol/sdk/server/index.js', () => ({
   Server: class {
     setRequestHandler() {}
@@ -65,12 +67,13 @@ describe('handleGetSanctionDetails — MCP get_sanction_details tool', () => {
 });
 
 describe('handleRunDatabaseImport — MCP run_database_import tool', () => {
-  it('delegates to runImport with the given sources and csvPath', async () => {
+  it('with only sources: delegates to runImport and never calls processUpload', async () => {
     runImport.mockResolvedValue({ success: true, importedCounts: { EU: 5 } });
 
-    await handleRunDatabaseImport({ sources: ['EU'], csvPath: '/tmp/pep.csv' });
+    await handleRunDatabaseImport({ sources: ['EU'] });
 
-    expect(runImport).toHaveBeenCalledWith({ sources: ['EU'], csvPath: '/tmp/pep.csv' });
+    expect(runImport).toHaveBeenCalledWith({ sources: ['EU'] });
+    expect(processUpload).not.toHaveBeenCalled();
   });
 
   it('surfaces success with the imported counts to the caller', async () => {
@@ -90,6 +93,67 @@ describe('handleRunDatabaseImport — MCP run_database_import tool', () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('download failed');
+  });
+
+  // issue #192: a script/AI-driven call to run_database_import with only
+  // csvPath (no sources) previously still triggered a full, undedup'd,
+  // unaudited EU/UN/US/UK/CH download+import as a side effect of runImport's
+  // own default-to-all-sources fallback. csvPath is a genuine local file, so
+  // it now routes through processUpload() — sha256 dedup, in-flight lock,
+  // durable audit record — instead, and no longer drags in an unrelated
+  // full refresh the caller never asked for.
+  describe('csvPath routes through processUpload (issue #192)', () => {
+    it('with only csvPath (no sources): calls processUpload and never calls runImport', async () => {
+      processUpload.mockResolvedValue({ outcome: 'applied', importId: 'imp_1', counts: { parsed: 5, uploaded: 5 } });
+
+      await handleRunDatabaseImport({ csvPath: '/tmp/pep.csv' });
+
+      expect(processUpload).toHaveBeenCalledWith({
+        filePath: '/tmp/pep.csv',
+        originalFilename: 'pep.csv',
+        sourceHint: 'PEP',
+        uploadedBy: null,
+        importOptions: {},
+      });
+      expect(runImport).not.toHaveBeenCalled();
+    });
+
+    it('with both sources and csvPath: calls both runImport and processUpload', async () => {
+      runImport.mockResolvedValue({ success: true, importedCounts: { EU: 5 } });
+      processUpload.mockResolvedValue({ outcome: 'applied', importId: 'imp_1', counts: { parsed: 2, uploaded: 2 } });
+
+      await handleRunDatabaseImport({ sources: ['EU'], csvPath: '/tmp/pep.csv' });
+
+      expect(runImport).toHaveBeenCalledWith({ sources: ['EU'] });
+      expect(processUpload).toHaveBeenCalledWith(expect.objectContaining({ filePath: '/tmp/pep.csv' }));
+    });
+
+    it('reports the csv import outcome to the caller on success', async () => {
+      processUpload.mockResolvedValue({ outcome: 'applied', importId: 'imp_1', counts: { parsed: 5, uploaded: 5 } });
+
+      const result = await handleRunDatabaseImport({ csvPath: '/tmp/pep.csv' });
+
+      expect(result.isError).toBeFalsy();
+      expect(result.content[0].text).toContain('imp_1');
+    });
+
+    it('marks the result as an error when the csv upload fails', async () => {
+      processUpload.mockResolvedValue({ outcome: 'failed', importId: 'imp_1', error: 'boom' });
+
+      const result = await handleRunDatabaseImport({ csvPath: '/tmp/pep.csv' });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('boom');
+    });
+
+    it('does not mark it as an error for a rejected (duplicate) csv upload', async () => {
+      processUpload.mockResolvedValue({ outcome: 'rejected', importId: 'imp_2', duplicateOfImportId: 'imp_1' });
+
+      const result = await handleRunDatabaseImport({ csvPath: '/tmp/pep.csv' });
+
+      expect(result.isError).toBeFalsy();
+      expect(result.content[0].text).toContain('imp_1');
+    });
   });
 });
 
