@@ -30,15 +30,33 @@ afterEach(() => {
 });
 
 describe('sendOtpEmail — no SMTP configured', () => {
-  it('logs the code instead of sending, and never touches nodemailer', async () => {
+  it('issue #156: logs the code with redacted domain in non-production, and never touches nodemailer', async () => {
+    process.env.NODE_ENV = 'development';
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     await sendOtpEmail('user@example.com', '123456');
 
     expect(mockCreateTransport).not.toHaveBeenCalled();
     expect(mockSendMail).not.toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('123456'));
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('user@example.com'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('*@example.com'));
+    expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('user@example.com'));
     logSpy.mockRestore();
+  });
+
+  it('issue #156: throws in production when SMTP is not configured, and never logs the secret code or email', async () => {
+    process.env.NODE_ENV = 'production';
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(sendOtpEmail('user@example.com', '123456')).rejects.toThrow(/SMTP.*production/i);
+
+    expect(mockCreateTransport).not.toHaveBeenCalled();
+    expect(mockSendMail).not.toHaveBeenCalled();
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(errSpy).not.toHaveBeenCalled();
+
+    logSpy.mockRestore();
+    errSpy.mockRestore();
   });
 });
 
