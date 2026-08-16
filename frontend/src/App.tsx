@@ -10,14 +10,10 @@ import {
   Box,
   Tabs,
   Tab,
-  Card,
-  CardContent,
-  Button,
   CircularProgress,
   IconButton,
 } from '@mui/material';
 import type { PaletteMode } from '@mui/material';
-import SearchIcon from '@mui/icons-material/Search';
 import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Brightness7Icon from '@mui/icons-material/Brightness7';
 import ShieldOutlinedIcon from '@mui/icons-material/ShieldOutlined';
