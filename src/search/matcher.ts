@@ -143,6 +143,39 @@ const PHONETIC_CORROBORATION_MIN_JW = 0.8;
  */
 const FIRST_CHAR_MISMATCH_PENALTY = 0.9;
 
+/**
+ * ...but a differing initial is ALSO the dominant transliteration axis in
+ * sanctions data (O/U, V/W, Y/J, G/J), and issue #252 measured what a blanket
+ * penalty costs: "Osama bin Laden" missed the UN's `USAMA BIN LADEN`, and
+ * "Wagner" missed OFAC's real `CHVK VAGNER` alias records. Both of the
+ * matcher's mechanisms share this blind spot — Russell Soundex retains the
+ * first letter verbatim, and a first-char change costs a short name ~0.11 of
+ * JW while also forfeiting the Winkler prefix bonus — so they fail together
+ * rather than covering for each other, producing a score of 0 rather than a
+ * low one.
+ *
+ * Raw JW cannot separate the two situations; measured, they interleave:
+ *
+ *   yevgeny/evgeny  0.9524  a real variant   (scored 98 before #239)
+ *   linda/inda      0.9333  noise            (the reported vessel)
+ *   zaiz/aziz       0.9167  a real variant
+ *
+ * What DOES separate them is what the initial change leaves behind. A
+ * SUBSTITUTED initial leaves the rest of the word intact ("osama"/"usama" ->
+ * "sama"/"sama"); a DROPPED one does not ("linda"/"inda" -> "inda"/"nda").
+ * So a first-char difference counts as a transliteration variant only when
+ * the Soundex DIGITS agree — the phonetic body is identical, only the
+ * retained initial differs — AND either the tail after the initial matches
+ * exactly, or JW is high enough to carry it alone.
+ */
+const INITIAL_VARIANT_SCORE = 0.92;
+const INITIAL_VARIANT_MIN_JW = 0.95;
+
+/** Soundex minus its retained leading letter — the purely phonetic body. */
+function soundexDigits(code: string): string {
+  return code.slice(1);
+}
+
 // Jaro-Winkler is known to be noisy on short-to-medium strings: two unrelated
 // words can share enough characters within the matching window to score
 // 0.5-0.6 by pure chance (e.g. "angela"/"jong" ≈ 0.61). A raw JW score is
@@ -213,11 +246,26 @@ function pairScore(token: TokenizedWord, candidate: TokenizedWord): number {
   // and JW is by far the most expensive part of it.
   if (!soundexAgrees && !canUseEditDistance) return 0;
 
+  const rawJw = jaroWinkler(token.text, candidate.text);
+
+  // A differing initial over an identical phonetic body is a transliteration
+  // variant, not a different name — but only when what follows the initial
+  // corroborates it (issue #252). Checked before the penalty below, which
+  // would otherwise push these exact pairs under the bar.
+  if (
+    token.text[0] !== candidate.text[0]
+    && token.soundex !== ''
+    && soundexDigits(token.soundex) === soundexDigits(candidate.soundex)
+    && (token.text.slice(1) === candidate.text.slice(1) || rawJw >= INITIAL_VARIANT_MIN_JW)
+  ) {
+    return INITIAL_VARIANT_SCORE;
+  }
+
   // The first-character penalty applies before every threshold comparison
   // below, not after, so a name that only resembles the query once its initial
   // is ignored fails the bar outright rather than landing just under it as a
   // weak partial signal (issue #239).
-  const jw = jaroWinkler(token.text, candidate.text)
+  const jw = rawJw
     * (token.text[0] === candidate.text[0] ? 1 : FIRST_CHAR_MISMATCH_PENALTY);
 
   const phoneticScore = !soundexAgrees

@@ -474,3 +474,58 @@ describe('first-character disagreement (issue #239)', () => {
     expect(scoreNameMatch('Nasser', ['Nassar']).score).toBeGreaterThan(0);
   });
 });
+
+/**
+ * First-letter transliteration variants (issue #252).
+ *
+ * A single-character difference in the FIRST letter scored 0 — not low, zero
+ * — because both mechanisms share that blind spot and so failed together
+ * instead of covering for each other: Soundex retains the first letter
+ * verbatim (Russell Soundex is defined that way), and a first-char change
+ * costs a short name ~0.11 of Jaro-Winkler while also forfeiting the Winkler
+ * prefix bonus, landing it just under #104's 0.9 short-word bar.
+ *
+ * This is the dominant transliteration axis in sanctions data (O/U, V/W,
+ * Y/J, G/J), and these are real list entries, not hypothetical spellings:
+ * `CHVK VAGNER` and `CHASTNAYA VOENNAYA KOMPANIYA 'VAGNER'` are alias
+ * records on the OFAC SDN list, so a user screening "Wagner" missed them.
+ *
+ * The rule: a first-character difference is a transliteration variant when
+ * the Soundex DIGITS agree (i.e. the phonetic body is identical, only the
+ * retained initial differs) AND either the tail after the initial is
+ * identical, or Jaro-Winkler is very high. That deliberately does NOT
+ * readmit linda/inda from #239 — dropping an initial leaves a tail that
+ * does not match ("inda" vs "nda") and JW 0.9333 is below the bar.
+ */
+describe('first-letter transliteration variants (issue #252)', () => {
+  it('matches the real OFAC/UN spellings a screening user would miss', () => {
+    // Every pair here is a real listed spelling vs. the common rendering.
+    expect(scoreNameMatch('Osama bin Laden', ['USAMA BIN LADEN']).score).toBeGreaterThanOrEqual(65);
+    expect(scoreNameMatch('Wagner Group', ['Vagner Group']).score).toBeGreaterThanOrEqual(65);
+    expect(scoreNameMatch('Yusuf Ahmed', ['Jusuf Ahmed']).score).toBeGreaterThanOrEqual(65);
+    expect(scoreNameMatch('Osama', ['USAMA']).score).toBeGreaterThanOrEqual(65);
+  });
+
+  it('does not regress the control cases that already worked', () => {
+    expect(scoreNameMatch('Usama bin Laden', ['USAMA BIN LADEN']).score).toBe(100);
+    // This one scored 98 before #239 and must not be collateral damage of
+    // the first-character penalty that issue introduced.
+    expect(scoreNameMatch('Yevgeny Prigozhin', ['Evgeny PRIGOZHIN']).score).toBeGreaterThanOrEqual(65);
+  });
+
+  it('still rejects a dropped initial whose tail does not survive (issue #239)', () => {
+    // The distinction that makes both issues satisfiable at once: a
+    // SUBSTITUTED initial leaves the rest of the word intact, a DROPPED one
+    // does not. linda/inda must stay out; it is why "linda" returned a
+    // vessel instead of a person.
+    expect(scoreNameMatch('linda', ['INDA']).score).toBeLessThan(65);
+    expect(scoreNameMatch('linda', ['LAMD']).score).toBeLessThan(65);
+  });
+
+  it('does not manufacture matches from a shared soundex body alone', () => {
+    // Same soundex digits, first char differs, but neither tail nor JW
+    // supports it — must stay rejected.
+    expect(scoreNameMatch('Qusay', ['Musa']).score).toBe(0);
+    expect(scoreNameMatch('musa', ['MZEE']).score).toBeLessThan(65);
+  });
+});
