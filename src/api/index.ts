@@ -409,12 +409,21 @@ app.get('/api/search', requireAuthOrScope('read'), async (req, res): Promise<any
   const parsedLimit = parseInt(limit as string, 10);
   const requestedLimit = Math.min(Number.isNaN(parsedLimit) ? 20 : parsedLimit, 100);
 
+  // issue #148: guard against NaN and clamp threshold to [0, 100]
+  let parsedThreshold: number | undefined;
+  if (threshold !== undefined) {
+    const rawVal = parseInt(threshold as string, 10);
+    if (!Number.isNaN(rawVal)) {
+      parsedThreshold = Math.max(0, Math.min(rawVal, 100));
+    }
+  }
+
   try {
     const { results, totalMatches, truncated } = await runSearch(q, {
       source: typeof source === 'string' ? source : undefined,
       type: typeof type === 'string' ? type : undefined,
       limit: requestedLimit,
-      threshold: threshold !== undefined ? parseInt(threshold as string) : undefined,
+      threshold: parsedThreshold,
       // Delisted records are excluded by default (issue #9); ?includeDelisted=true
       // opts in. Filtered inside runSearch rather than here, so a delisted record
       // never enters the matcher and cannot surface as a scored hit.
@@ -433,7 +442,7 @@ app.get('/api/search', requireAuthOrScope('read'), async (req, res): Promise<any
       filters: {
         source: typeof source === 'string' ? source : undefined,
         type: typeof type === 'string' ? type : undefined,
-        threshold: threshold !== undefined ? parseInt(threshold as string) : undefined,
+        threshold: parsedThreshold,
         includeDelisted: includeDelisted === 'true',
         dob: typeof dob === 'string' ? dob : undefined,
       },
