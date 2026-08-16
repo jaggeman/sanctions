@@ -36,7 +36,7 @@ function messageFor(reason: TokenVerificationResult['reason']): string {
   }
 }
 
-export function requireScope(scope: ApiTokenScope): RequestHandler {
+export function requireScope(scope: ApiTokenScope | ApiTokenScope[]): RequestHandler {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const rawToken = extractBearerToken(req);
     const result = await verifyApiToken(rawToken, scope);

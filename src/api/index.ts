@@ -118,13 +118,14 @@ app.use('/api/auth', authRouter);
 app.use('/api/admin/tokens', requireAuth, tokensRouter);
 
 /**
- * POST/PUT/DELETE/GET /api/admin/custom-records
+ * POST/PUT/DELETE/GET /api/custom-records & /api/admin/custom-records
  * Internal watchlist entries (source: 'CUSTOM') the official lists don't
  * cover (issue #172). Auth is enforced inside customRecordsRouter itself
- * (requireAdmin) — no middleware needed at this mount site. See
+ * (requireAuthOrScope('custom:write') / ('custom:read')). See
  * src/api/routes/customRecords.ts.
  */
 app.use('/api/admin/custom-records', customRecordsRouter);
+app.use('/api/custom-records', customRecordsRouter);
 
 /**
  * PUT/DELETE /api/overrides/:id

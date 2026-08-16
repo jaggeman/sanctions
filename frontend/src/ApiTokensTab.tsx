@@ -40,12 +40,25 @@ interface ApiToken {
   id: string;
   name: string;
   tokenPreview: string;
-  scopes: Array<'read' | 'write'>;
+  scopes: string[];
   createdAt: string;
   lastUsedAt: string | null;
   revoked: boolean;
   revokedAt: string | null;
 }
+
+const GRANULAR_SCOPE_OPTIONS = [
+  { id: 'sanctions:read', label: 'Search & Sanctions (Read)', group: 'Screening' },
+  { id: 'custom:read', label: 'Custom Records (Read)', group: 'Watchlists' },
+  { id: 'custom:write', label: 'Custom Records (Write)', group: 'Watchlists' },
+  { id: 'overrides:read', label: 'Overrides (Read)', group: 'Data Quality' },
+  { id: 'overrides:write', label: 'Overrides (Write)', group: 'Data Quality' },
+  { id: 'decisions:read', label: 'Compliance Decisions (Read)', group: 'Compliance' },
+  { id: 'decisions:write', label: 'Compliance Decisions (Write)', group: 'Compliance' },
+  { id: 'imports:read', label: 'Imports (Read)', group: 'Pipelines' },
+  { id: 'imports:write', label: 'Imports & Uploads (Write)', group: 'Pipelines' },
+  { id: 'system:read', label: 'System Diagnostics (Read)', group: 'System' },
+];
 
 function formatDate(value: string | null): string {
   if (!value) return 'Never';
@@ -61,6 +74,8 @@ export default function ApiTokensTab() {
   const [name, setName] = useState('');
   const [scopeRead, setScopeRead] = useState(true);
   const [scopeWrite, setScopeWrite] = useState(false);
+  const [useGranular, setUseGranular] = useState(false);
+  const [selectedGranularScopes, setSelectedGranularScopes] = useState<string[]>(['sanctions:read']);
   const [creating, setCreating] = useState(false);
 
   const [revealedToken, setRevealedToken] = useState<string | null>(null);
@@ -106,11 +121,20 @@ export default function ApiTokensTab() {
     if (accessState === 'admin') loadTokens();
   }, [accessState, loadTokens]);
 
+  const toggleGranularScope = (scopeId: string) => {
+    setSelectedGranularScopes((prev) =>
+      prev.includes(scopeId) ? prev.filter((s) => s !== scopeId) : [...prev, scopeId]
+    );
+  };
+
   const handleCreate = async () => {
     if (!name.trim()) return;
-    const scopes = [scopeRead && 'read', scopeWrite && 'write'].filter(Boolean) as string[];
+    const scopes = useGranular
+      ? selectedGranularScopes
+      : ([scopeRead && 'read', scopeWrite && 'write'].filter(Boolean) as string[]);
+
     if (scopes.length === 0) {
-      setError('Select at least one scope (read or write).');
+      setError('Select at least one scope.');
       return;
     }
 
@@ -140,6 +164,7 @@ export default function ApiTokensTab() {
       setName('');
       setScopeRead(true);
       setScopeWrite(false);
+      setSelectedGranularScopes(['sanctions:read']);
       await loadTokens();
     } catch (err: any) {
       console.error(err);
@@ -207,33 +232,73 @@ export default function ApiTokensTab() {
             The full token is shown once, right after creation. Only a hash is stored — if it's lost, revoke it and create a new one.
           </Typography>
 
-          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
-            <TextField
-              label="Token name"
-              placeholder="e.g. CI pipeline"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              disabled={creating}
-              sx={{ minWidth: 260 }}
-            />
-            <FormGroup row>
-              <FormControlLabel
-                control={<Checkbox checked={scopeRead} onChange={(e) => setScopeRead(e.target.checked)} disabled={creating} />}
-                label="Read"
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+              <TextField
+                label="Token name"
+                placeholder="e.g. CI pipeline"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                disabled={creating}
+                sx={{ minWidth: 260 }}
               />
-              <FormControlLabel
-                control={<Checkbox checked={scopeWrite} onChange={(e) => setScopeWrite(e.target.checked)} disabled={creating} />}
-                label="Write"
-              />
-            </FormGroup>
-            <Button
-              variant="contained"
-              onClick={handleCreate}
-              disabled={creating || !name.trim()}
-              startIcon={creating ? <CircularProgress size={18} color="inherit" /> : undefined}
-            >
-              Create Token
-            </Button>
+              {!useGranular ? (
+                <FormGroup row>
+                  <FormControlLabel
+                    control={<Checkbox checked={scopeRead} onChange={(e) => setScopeRead(e.target.checked)} disabled={creating} />}
+                    label="Read"
+                  />
+                  <FormControlLabel
+                    control={<Checkbox checked={scopeWrite} onChange={(e) => setScopeWrite(e.target.checked)} disabled={creating} />}
+                    label="Write"
+                  />
+                </FormGroup>
+              ) : null}
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={() => setUseGranular(!useGranular)}
+                disabled={creating}
+              >
+                {useGranular ? 'Simple Scopes (Read/Write)' : 'Granular Permissions'}
+              </Button>
+              <Button
+                variant="contained"
+                onClick={handleCreate}
+                disabled={creating || !name.trim()}
+                startIcon={creating ? <CircularProgress size={18} color="inherit" /> : undefined}
+              >
+                Create Token
+              </Button>
+            </Box>
+
+            {useGranular && (
+              <Paper variant="outlined" sx={{ p: 2, bgcolor: 'action.hover' }}>
+                <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+                  Granular Resource Scopes (Least Privilege Access):
+                </Typography>
+                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: '1fr 1fr 1fr' }, gap: 1 }}>
+                  {GRANULAR_SCOPE_OPTIONS.map((opt) => (
+                    <FormControlLabel
+                      key={opt.id}
+                      control={
+                        <Checkbox
+                          size="small"
+                          checked={selectedGranularScopes.includes(opt.id)}
+                          onChange={() => toggleGranularScope(opt.id)}
+                          disabled={creating}
+                        />
+                      }
+                      label={
+                        <Typography variant="body2">
+                          <strong>{opt.label}</strong>
+                        </Typography>
+                      }
+                    />
+                  ))}
+                </Box>
+              </Paper>
+            )}
           </Box>
 
           {error && (

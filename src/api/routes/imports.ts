@@ -128,7 +128,7 @@ export const importsRouter = Router();
  * GET /api/imports
  * List import audit records, newest first (issue #12 — import history view).
  */
-importsRouter.get('/imports', requireAuthOrScope('read'), async (req, res): Promise<any> => {
+importsRouter.get('/imports', requireAuthOrScope('imports:read'), async (req, res): Promise<any> => {
   const requestedLimit = Math.min(parseInt(req.query.limit as string) || 20, 100);
 
   try {
@@ -144,7 +144,7 @@ importsRouter.get('/imports', requireAuthOrScope('read'), async (req, res): Prom
  * GET /api/imports/:id
  * Retrieve a single import's detail (issue #12).
  */
-importsRouter.get('/imports/:id', requireAuthOrScope('read'), async (req, res): Promise<any> => {
+importsRouter.get('/imports/:id', requireAuthOrScope('imports:read'), async (req, res): Promise<any> => {
   const { id } = req.params;
   if (!DOC_ID_PATTERN.test(id)) {
     return res.status(400).json({ error: 'Invalid import ID.' });
@@ -175,7 +175,7 @@ importsRouter.get('/imports/:id', requireAuthOrScope('read'), async (req, res): 
  *
  * Accepts either a logged-in session or a `write`-scoped API token (issue #36).
  */
-importsRouter.post('/import', requireAuthOrScope('write'), async (req, res): Promise<any> => {
+importsRouter.post('/import', requireAuthOrScope('imports:write'), async (req, res): Promise<any> => {
   // mode/dryRun/force/importId drive the diff engine (issue #8).
   const { sources, csvPath, mode, importId } = req.body;
 
@@ -291,7 +291,7 @@ importsRouter.post('/import', requireAuthOrScope('write'), async (req, res): Pro
  * #36) — checked before multer touches the request body, so an
  * unauthenticated caller can't even get a file accepted.
  */
-importsRouter.post('/upload', requireAuthOrScope('write'), uploadSingleFile('file'), async (req, res): Promise<any> => {
+importsRouter.post('/upload', requireAuthOrScope('imports:write'), uploadSingleFile('file'), async (req, res): Promise<any> => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }

@@ -3,7 +3,7 @@ import { processUpload, ProcessUploadResult } from './uploadPipeline';
 import { SanctionSource } from '../shared/types';
 
 export interface ScheduledSource {
-  source: Extract<SanctionSource, 'EU' | 'UN' | 'US' | 'UK'>;
+  source: Extract<SanctionSource, 'EU' | 'UN' | 'US' | 'UK' | 'CH'>;
   filename: string;
 }
 
@@ -12,6 +12,7 @@ export const SCHEDULED_SOURCES: ScheduledSource[] = [
   { source: 'UN', filename: 'un_sanctions.xml' },
   { source: 'US', filename: 'us_sdn.xml' },
   { source: 'UK', filename: 'uk_sanctions.xml' },
+  { source: 'CH', filename: 'ch_sanctions.xml' },
 ];
 
 export interface ScheduledFetchOutcome {
