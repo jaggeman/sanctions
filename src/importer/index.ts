@@ -40,7 +40,7 @@ export interface ImportOptions {
    */
   uploadedFile?: {
     path: string;
-    format: 'eu-xml-1.1' | 'un-xml' | 'us-xml' | 'csv';
+    format: 'eu-xml-1.1' | 'un-xml' | 'us-xml' | 'uk-xml' | 'csv';
     source: SanctionSource;
   };
 }
@@ -117,6 +117,21 @@ async function runUploadedFileImport(
         uploaded += addedCount;
       };
       await parseUSListStreaming(file.path, async (record) => {
+        parsed++;
+        buffer.push(record);
+        if (buffer.length >= EU_UPLOAD_CHUNK_SIZE) await flush();
+      });
+      await flush();
+    } else if (file.format === 'uk-xml') {
+      let buffer: SanctionRecord[] = [];
+      const flush = async () => {
+        if (buffer.length === 0) return;
+        const chunk = buffer;
+        buffer = [];
+        const addedCount = await session.addChunk(chunk);
+        uploaded += addedCount;
+      };
+      await parseUKListStreaming(file.path, async (record) => {
         parsed++;
         buffer.push(record);
         if (buffer.length >= EU_UPLOAD_CHUNK_SIZE) await flush();

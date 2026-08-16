@@ -65,6 +65,13 @@ describe('detectFormat — UN and US XML (existing downloaded sources)', () => {
     expect(result.format).toBe('us-xml');
     expect(result.fileGenerationDate).toBe('08/07/2026');
   });
+
+  it('detects the UK Sanctions List XML and extracts DateGenerated', async () => {
+    const content = await head('uk_sanctions.xml');
+    const result = detectFormat(content);
+    expect(result.format).toBe('uk-xml');
+    expect(result.fileGenerationDate).toBe('14/08/2026');
+  });
 });
 
 describe('detectFormat — generic / edge cases', () => {

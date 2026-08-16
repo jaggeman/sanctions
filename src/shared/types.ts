@@ -131,7 +131,7 @@ export interface OverrideHistoryEntry {
 }
 
 export type ImportStatus = 'pending' | 'parsing' | 'applied' | 'failed' | 'rejected';
-export type ImportFormat = 'eu-xml-1.1' | 'eu-csv-1.1' | 'eu-csv-1.0' | 'un-xml' | 'us-xml' | 'csv';
+export type ImportFormat = 'eu-xml-1.1' | 'eu-csv-1.1' | 'eu-csv-1.0' | 'un-xml' | 'us-xml' | 'uk-xml' | 'csv';
 
 // Audit trail for POST /api/upload (issue #7) AND POST /api/import (issue
 // #111) — one collection, two triggers, discriminated by `trigger`. For an

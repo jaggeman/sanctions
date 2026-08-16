@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { Readable, PassThrough } from 'stream';
+import { Readable, PassThrough } from 'node:stream';
 import * as path from 'path';
 
 const ensureDir = vi.fn(async () => {});

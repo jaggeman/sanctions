@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs-extra';
+import * as os from 'os';
+import * as path from 'path';
 
 const runImport = vi.fn();
+const processUpload = vi.fn();
 vi.mock('../../src/importer', () => ({ runImport }));
+vi.mock('../../src/importer/uploadPipeline', () => ({ processUpload }));
 vi.mock('../../src/shared/firebase', () => ({ db: { collection: vi.fn() } }));
 vi.mock('../../src/search', () => ({ runSearch: vi.fn() }));
 
@@ -41,11 +46,11 @@ async function runCli(argv: string[]) {
 }
 
 describe('CLI import command — argument parsing / wiring to runImport', () => {
-  it('defaults to all three sources when --sources is omitted', async () => {
+  it('defaults to all four sources when --sources is omitted', async () => {
     runImport.mockResolvedValue({ success: true, importedCounts: {} });
     await runCli(['import']);
 
-    expect(runImport).toHaveBeenCalledWith(expect.objectContaining({ sources: ['EU', 'UN', 'US'] }));
+    expect(runImport).toHaveBeenCalledWith(expect.objectContaining({ sources: ['EU', 'UN', 'US', 'UK'] }));
   });
 
   it('parses a comma-separated --sources list, uppercased and trimmed', async () => {
@@ -98,5 +103,52 @@ describe('CLI import command — argument parsing / wiring to runImport', () => 
 
     expect(exitCode).toBe(1);
     expect(errors.join('\n')).toMatch(/network down/);
+  });
+});
+
+describe('CLI import-dir command', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = path.join(os.tmpdir(), `cli-import-dir-${Date.now()}`);
+    await fs.ensureDir(tmpDir);
+  });
+
+  afterEach(async () => {
+    await fs.remove(tmpDir);
+  });
+
+  it('exits 1 if directory does not exist', async () => {
+    await runCli(['import-dir', path.join(tmpDir, 'nonexistent')]);
+
+    expect(exitCode).toBe(1);
+    expect(errors.join('\n')).toMatch(/hittades inte/i);
+  });
+
+  it('exits 0 with notice if directory contains no .xml or .csv files', async () => {
+    await fs.writeFile(path.join(tmpDir, 'readme.txt'), 'hello');
+    await runCli(['import-dir', tmpDir]);
+
+    expect(exitCode).toBe(0);
+    expect(logs.join('\n')).toMatch(/Inga \.xml eller \.csv-filer hittades/i);
+  });
+
+  it('iterates over files and calls processUpload for each XML and CSV file', async () => {
+    await fs.writeFile(path.join(tmpDir, 'eu.xml'), '<export/>');
+    await fs.writeFile(path.join(tmpDir, 'un.xml'), '<CONSOLIDATED_LIST/>');
+
+    processUpload
+      .mockResolvedValueOnce({ outcome: 'applied', importId: 'imp_1' })
+      .mockResolvedValueOnce({ outcome: 'rejected', duplicateOfImportId: 'imp_0' });
+
+    await runCli(['import-dir', tmpDir]);
+
+    expect(exitCode).toBe(0);
+    expect(processUpload).toHaveBeenCalledTimes(2);
+    expect(tables).toHaveLength(1);
+    expect(tables[0]).toEqual([
+      { file: 'eu.xml', outcome: 'Applied', details: 'Import #imp_1' },
+      { file: 'un.xml', outcome: 'Skipped (Duplicate)', details: 'Matches #imp_0' },
+    ]);
   });
 });

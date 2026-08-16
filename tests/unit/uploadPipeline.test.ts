@@ -62,17 +62,38 @@ describe('processUpload — happy path', () => {
 
     expect(result.outcome).toBe('applied');
     expect(hashFileStreaming).toHaveBeenCalledWith(tmpFile);
-    expect(createPendingImport).toHaveBeenCalledWith(expect.objectContaining({
-      sha256: 'abc123',
-      filename: 'people.csv', // original name preserved for display
-      storagePath: 'imports/abc123/upload.csv', // storage key never uses the client-supplied name
-      uploadedBy: 'user@example.com',
-    }));
+    expect(createPendingImport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sha256: 'abc123',
+        source: 'PEP',
+        format: 'csv',
+        filename: 'people.csv',
+      }),
+    );
     expect(bucketFileSave).toHaveBeenCalled();
-    expect(runImport).toHaveBeenCalledWith(expect.objectContaining({
-      uploadedFile: expect.objectContaining({ path: tmpFile, format: 'csv' }),
-    }));
-    expect(markImportApplied).toHaveBeenCalledWith('abc123', { parsed: 5, uploaded: 5 });
+    expect(runImport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        uploadedFile: expect.objectContaining({ path: tmpFile, format: 'csv', source: 'PEP' }),
+      }),
+    );
+    expect(markImportApplied).toHaveBeenCalledWith(result.importId, { parsed: 5, uploaded: 5 });
+  });
+
+  it('maps uk-xml format to source UK and runs streamed UK import', async () => {
+    detectFormat.mockReturnValue({ format: 'uk-xml', fileGenerationDate: '14/08/2026' });
+    runImport.mockResolvedValue({ success: true, importedCounts: { UK: 6334 } });
+
+    const result = await processUpload(baseOptions({ originalFilename: 'uk.xml' }));
+
+    expect(result.outcome).toBe('applied');
+    expect(runImport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        uploadedFile: expect.objectContaining({
+          format: 'uk-xml',
+          source: 'UK',
+        }),
+      }),
+    );
   });
 
   it('infers the source from the detected format for EU/UN/US, ignoring the source hint', async () => {

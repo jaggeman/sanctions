@@ -1,6 +1,9 @@
+import * as path from 'path';
+import * as fs from 'fs-extra';
 import { Command } from 'commander';
 import { db } from '../shared/firebase';
 import { runImport } from '../importer';
+import { processUpload } from '../importer/uploadPipeline';
 import { runSearch } from '../search';
 import { primaryNameOf, aliasNamesOf, formatBirthDates, formatIdentifications } from '../shared/types';
 
@@ -128,7 +131,7 @@ program
       console.log('🔄 Initierar import...');
       const sources = (options.sources 
         ? options.sources.split(',').map((s: string) => s.trim().toUpperCase())
-        : ['EU', 'UN', 'US']) as ('EU' | 'UN' | 'US')[];
+        : ['EU', 'UN', 'US', 'UK']) as ('EU' | 'UN' | 'US' | 'UK')[];
 
       const result = await runImport({
         sources,
@@ -149,6 +152,83 @@ program
 
     } catch (error: any) {
       console.error('❌ Ett oväntat fel uppstod under importen:', error.message);
+      process.exit(1);
+    }
+  });
+
+/**
+ * CLI Command: import-dir
+ */
+program
+  .command('import-dir')
+  .description('Importera eller synka alla sanktionsfiler från en lokal mapp')
+  .argument('<directory>', 'Sökväg till mappen som innehåller .xml / .csv-filer')
+  .option('-m, --mode <mode>', 'Importläge: append eller sync', 'append')
+  .option('-f, --force', 'Tvinga import även om >20% skyddet löser ut', false)
+  .action(async (dirPath, options) => {
+    try {
+      const resolvedDir = path.resolve(process.cwd(), dirPath);
+      if (!fs.existsSync(resolvedDir) || !fs.statSync(resolvedDir).isDirectory()) {
+        console.error(`❌ Mappen hittades inte: ${resolvedDir}`);
+        process.exit(1);
+        return;
+      }
+
+      const files = fs.readdirSync(resolvedDir)
+        .filter(f => f.endsWith('.xml') || f.endsWith('.csv'))
+        .map(f => path.join(resolvedDir, f));
+
+      if (files.length === 0) {
+        console.log(`ℹ️ Inga .xml eller .csv-filer hittades i ${resolvedDir}`);
+        process.exit(0);
+        return;
+      }
+
+      console.log(`📁 Hittade ${files.length} filer i ${resolvedDir}. Startar smart import...\n`);
+
+      const results: { file: string; outcome: string; details: string }[] = [];
+
+      for (const filePath of files) {
+        const filename = path.basename(filePath);
+        console.log(`🔄 Bearbetar ${filename}...`);
+
+        const result = await processUpload({
+          filePath,
+          originalFilename: filename,
+          sourceHint: 'CUSTOM',
+          uploadedBy: 'cli',
+          importOptions: {
+            mode: options.mode as 'append' | 'sync',
+            force: options.force,
+            dryRun: false,
+          },
+        });
+
+        if (result.outcome === 'applied') {
+          console.log(`  ✅ Applicerad: ${result.importId}`);
+          results.push({ file: filename, outcome: 'Applied', details: `Import #${result.importId}` });
+        } else if (result.outcome === 'rejected') {
+          console.log(`  ⚪ Hoppade över: Dubblett av #${result.duplicateOfImportId}`);
+          results.push({ file: filename, outcome: 'Skipped (Duplicate)', details: `Matches #${result.duplicateOfImportId}` });
+        } else if (result.outcome === 'in_flight') {
+          console.log(`  ⏳ Pågår redan som #${result.importId}`);
+          results.push({ file: filename, outcome: 'In Flight', details: `Import #${result.importId}` });
+        } else if (result.outcome === 'unsupported_format') {
+          console.error(`  ❌ Format stöds ej: ${result.format}`);
+          results.push({ file: filename, outcome: 'Unsupported Format', details: result.format });
+        } else if (result.outcome === 'failed') {
+          console.error(`  ❌ Misslyckades: ${result.error}`);
+          results.push({ file: filename, outcome: 'Failed', details: result.error });
+        }
+      }
+
+      console.log('\n==================================================');
+      console.log('📊 SAMMANSTÄLLNING AV MAPP-IMPORT');
+      console.log('==================================================');
+      console.table(results);
+      process.exit(0);
+    } catch (error: any) {
+      console.error('❌ Ett fel uppstod under importen:', error.message);
       process.exit(1);
     }
   });

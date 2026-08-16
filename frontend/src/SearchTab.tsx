@@ -51,11 +51,13 @@ export default function SearchTab({ onSelectRecord }: SearchTabProps) {
   const [totalMatches, setTotalMatches] = useState(0);
   const [truncated, setTruncated] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
 
   const handleSearch = async () => {
     if (!searchQuery) return;
     setIsLoading(true);
+    setHasSearched(true);
     setSearchError(null);
     try {
       const res = await apiFetch(`/api/search?q=${encodeURIComponent(searchQuery)}`);
@@ -172,7 +174,9 @@ export default function SearchTab({ onSelectRecord }: SearchTabProps) {
         {results.length === 0 && !isLoading && !searchError && (
           <Box sx={{ gridColumn: '1 / -1' }}>
             <Typography variant="body1" color="text.secondary" align="center" sx={{ mt: 4 }}>
-              No results found. Enter a query to begin your search.
+              {hasSearched
+                ? 'No results found. Try adjusting your search query or filters.'
+                : 'Enter a name, passport number, or entity ID above to search among 32,000+ sanctions records.'}
             </Typography>
           </Box>
         )}

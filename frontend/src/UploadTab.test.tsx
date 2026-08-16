@@ -274,3 +274,49 @@ describe('UploadTab — applied outcome', () => {
     await waitFor(() => expect(screen.getByText(/applied/i)).toBeInTheDocument());
   });
 });
+
+describe('UploadTab — batch upload', () => {
+  it('renders batch queue when multiple files are selected and executes sequential uploads', async () => {
+    const file1 = makeFile('file1.xml', '<CONSOLIDATED_LIST/>');
+    const file2 = makeFile('file2.xml', '<sdnList/>');
+
+    stubFetch((_url, init) => {
+      const body = init?.body as FormData;
+      const file = body.get('file') as File;
+      if (file.name === 'file1.xml') {
+        return { status: 200, body: { status: 'applied', counts: { parsed: 10, uploaded: 10 } } };
+      }
+      return { status: 409, body: { duplicateOfImportId: 'earlier-99' } };
+    });
+
+    render(<UploadTab onViewImport={vi.fn()} />);
+    const input = screen.getByLabelText(/file/i, { selector: 'input' }) as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [file1, file2] } });
+
+    await waitFor(() => expect(screen.getByText(/Batch Upload Queue/i)).toBeInTheDocument());
+    expect(screen.getByText('file1.xml')).toBeInTheDocument();
+    expect(screen.getByText('file2.xml')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/Batch complete/i)).toBeInTheDocument());
+    expect(screen.getByText(/1 files imported, 1 skipped/i)).toBeInTheDocument();
+  });
+});
+
+describe('UploadTab — sync official sources', () => {
+  it('calls POST /api/import with official sources when button clicked', async () => {
+    let capturedUrl: string | undefined;
+    let capturedBody: any;
+    stubFetch((url, init) => {
+      capturedUrl = url;
+      capturedBody = JSON.parse(init?.body as string);
+      return { status: 200, body: { success: true, importId: 'imp_456' } };
+    });
+
+    render(<UploadTab onViewImport={vi.fn()} />);
+    const syncButton = screen.getByRole('button', { name: /sync official sources/i });
+    fireEvent.click(syncButton);
+
+    await waitFor(() => expect(capturedUrl).toBe('/api/import'));
+    expect(capturedBody.sources).toEqual(['EU', 'UN', 'US', 'UK']);
+    await waitFor(() => expect(screen.getByText(/Official sync started/i)).toBeInTheDocument());
+  });
+});
