@@ -225,6 +225,51 @@ describe('firestore.rules — overrides/{entityId} collection (issue #10)', () =
   });
 });
 
+// Issue #112 acceptance criterion: append-only history so a corrected
+// override's prior fields/author/reason (and a deletion's who/when) aren't
+// silently lost. Already covered by the blanket deny-all backstop above,
+// but named explicitly, same pattern as the sanctions "versions" subcollection.
+describe('firestore.rules — overrides/{entityId}/history subcollection (issue #112)', () => {
+  const SAMPLE_HISTORY_ENTRY = {
+    changeType: 'created',
+    changedAt: '2026-08-15T00:00:00.000Z',
+    changedBy: 'analyst@example.com',
+    override: {
+      entityId: 'EU-1',
+      fields: { sanctionReason: 'Corrected reason' },
+      overriddenBy: 'analyst@example.com',
+      overriddenAt: '2026-08-15T00:00:00.000Z',
+      reason: 'Corrected transliteration',
+    },
+  };
+
+  it('denies an unauthenticated client reading a history entry', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().collection('overrides').doc('EU-1').collection('history').doc('h1').set(SAMPLE_HISTORY_ENTRY);
+    });
+
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(
+      unauthedDb.collection('overrides').doc('EU-1').collection('history').doc('h1').get(),
+    );
+  });
+
+  it('denies an unauthenticated client writing a history entry', async () => {
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(
+      unauthedDb.collection('overrides').doc('EU-1').collection('history').doc('h1').set(SAMPLE_HISTORY_ENTRY),
+    );
+  });
+
+  it('still allows the trusted server path (Admin SDK) to read and write history entries freely', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const ref = ctx.firestore().collection('overrides').doc('EU-1').collection('history').doc('h1');
+      await assertSucceeds(ref.set(SAMPLE_HISTORY_ENTRY));
+      await assertSucceeds(ref.get());
+    });
+  });
+});
+
 // Issue #7 acceptance criterion: "Rules tests: a client cannot write to
 // `imports` directly" — already covered by the blanket deny-all backstop
 // above, but named explicitly in the acceptance criteria, so it gets its own
@@ -307,6 +352,61 @@ describe('firestore.rules — decisions/{entityId__subjectId} collection (issue 
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       await assertSucceeds(ctx.firestore().collection('decisions').doc('EU-1__customer-acme').set(SAMPLE_DECISION));
       await assertSucceeds(ctx.firestore().collection('decisions').doc('EU-1__customer-acme').get());
+    });
+  });
+});
+
+// Issue #112 acceptance criterion: append-only history so a re-adjudication's
+// prior verdict/author/notes aren't silently lost. Already covered by the
+// blanket deny-all backstop above, but named explicitly, same pattern as the
+// sanctions "versions" subcollection.
+describe('firestore.rules — decisions/{entityId__subjectId}/history subcollection (issue #112)', () => {
+  const SAMPLE_HISTORY_ENTRY = {
+    changeType: 'created',
+    changedAt: '2026-08-15T00:00:00.000Z',
+    decision: {
+      entityId: 'EU-1',
+      subjectId: 'customer-acme',
+      verdict: 'false_positive',
+      decidedBy: 'analyst@example.com',
+      decidedAt: '2026-08-15T00:00:00.000Z',
+    },
+  };
+
+  it('denies an unauthenticated client reading a history entry', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx
+        .firestore()
+        .collection('decisions')
+        .doc('EU-1__customer-acme')
+        .collection('history')
+        .doc('h1')
+        .set(SAMPLE_HISTORY_ENTRY);
+    });
+
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(
+      unauthedDb.collection('decisions').doc('EU-1__customer-acme').collection('history').doc('h1').get(),
+    );
+  });
+
+  it('denies an unauthenticated client writing a history entry', async () => {
+    const unauthedDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(
+      unauthedDb
+        .collection('decisions')
+        .doc('EU-1__customer-acme')
+        .collection('history')
+        .doc('h1')
+        .set(SAMPLE_HISTORY_ENTRY),
+    );
+  });
+
+  it('still allows the trusted server path (Admin SDK) to read and write history entries freely', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const ref = ctx.firestore().collection('decisions').doc('EU-1__customer-acme').collection('history').doc('h1');
+      await assertSucceeds(ref.set(SAMPLE_HISTORY_ENTRY));
+      await assertSucceeds(ref.get());
     });
   });
 });

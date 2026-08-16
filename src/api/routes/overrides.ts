@@ -64,10 +64,12 @@ overridesRouter.put('/:id', async (req, res): Promise<any> => {
  * DELETE /api/overrides/:id
  * Removes the override for a sanctions record, restoring exactly the
  * currently-imported values — the stored record itself was never touched.
+ * Records who removed it in the override's own history (issue #112).
  */
 overridesRouter.delete('/:id', async (req, res): Promise<any> => {
   try {
-    await deleteOverride(req.params.id);
+    const deletedBy = (req as any).userEmail;
+    await deleteOverride(req.params.id, deletedBy);
     invalidateSearchIndex();
     res.json({ ok: true });
   } catch (error: any) {

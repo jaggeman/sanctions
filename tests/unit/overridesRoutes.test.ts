@@ -187,7 +187,7 @@ describe('DELETE /api/overrides/:id', () => {
       .set('Cookie', await authedCookie());
 
     expect(res.status).toBe(200);
-    expect(mockDeleteOverride).toHaveBeenCalledWith('EU-1');
+    expect(mockDeleteOverride).toHaveBeenCalledWith('EU-1', CALLER_EMAIL);
     expect(mockInvalidateSearchIndex).toHaveBeenCalledTimes(1);
   });
 });
