@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Box,
   Card,
@@ -9,6 +9,14 @@ import {
   Chip,
   CircularProgress,
   Alert,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TableSortLabel,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import DownloadIcon from '@mui/icons-material/Download';
@@ -46,9 +54,33 @@ interface SearchTabProps {
   onSelectRecord: (id: string) => void;
 }
 
+/**
+ * Results render as a dense table rather than a card grid: the job here is
+ * scanning and comparing a result set, and columns line score/source/type up
+ * for that in a way three-across cards do not. Sorting is client-side over
+ * the page the API already returned — it deliberately does NOT re-query, so
+ * it can never reorder a *different* set of records than the one on screen.
+ * When `truncated` is set, the message above the table still says so.
+ */
+type SortKey = 'score' | 'name' | 'source' | 'type';
+type SortDir = 'asc' | 'desc';
+
+const COLUMNS: { key: SortKey | null; label: string; numeric?: boolean }[] = [
+  { key: 'score', label: 'Score', numeric: true },
+  { key: 'name', label: 'Name' },
+  { key: null, label: 'Matched on' },
+  { key: null, label: 'Aliases' },
+  { key: 'source', label: 'Source' },
+  { key: 'type', label: 'Type' },
+  { key: null, label: 'Date of birth' },
+  { key: null, label: 'Status' },
+];
+
 export default function SearchTab({ onSelectRecord }: SearchTabProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [results, setResults] = useState<any[]>([]);
+  const [sortKey, setSortKey] = useState<SortKey>('score');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [totalMatches, setTotalMatches] = useState(0);
   const [truncated, setTruncated] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -85,6 +117,30 @@ export default function SearchTab({ onSelectRecord }: SearchTabProps) {
       setIsLoading(false);
     }
   };
+
+  // A new column starts ascending; clicking the active column flips it. Score
+  // is the exception — it starts descending, since "best match first" is the
+  // only useful default for a relevance-ranked list.
+  const handleSort = (key: SortKey) => {
+    if (key === sortKey) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortKey(key);
+    setSortDir(key === 'score' ? 'desc' : 'asc');
+  };
+
+  const sortedResults = useMemo(() => {
+    const factor = sortDir === 'asc' ? 1 : -1;
+    return [...results].sort((a, b) => {
+      if (sortKey === 'score') return ((a.score ?? 0) - (b.score ?? 0)) * factor;
+      const av =
+        sortKey === 'name' ? primaryNameOf(a.names) : String(a[sortKey] ?? '');
+      const bv =
+        sortKey === 'name' ? primaryNameOf(b.names) : String(b[sortKey] ?? '');
+      return av.localeCompare(bv) * factor;
+    });
+  }, [results, sortKey, sortDir]);
 
   const handleExportResultsCsv = () => {
     const headers = ['id', 'source', 'type', 'primaryName', 'aliases', 'score', 'matchedAlias', 'status', 'birthDates'];
@@ -172,58 +228,99 @@ export default function SearchTab({ onSelectRecord }: SearchTabProps) {
         </Box>
       )}
 
-      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: '1fr 1fr 1fr' }, gap: 3 }}>
-        {results.map((r, i) => (
-          <Box key={i}>
-            <Card
-              sx={{ height: '100%', display: 'flex', flexDirection: 'column', cursor: 'pointer' }}
-              onClick={() => onSelectRecord(r.id)}
-            >
-              <CardContent sx={{ flexGrow: 1 }}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-                  <Chip label={r.source} size="small" color="primary" variant="outlined" />
-                  <Chip label={r.type} size="small" color="error" variant="outlined" />
-                </Box>
-                <Typography variant="h6" component="h2" gutterBottom>
-                  {primaryNameOf(r.names)}
-                </Typography>
-                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
-                  {typeof r.score === 'number' && (
-                    <Chip
-                      label={`${r.score}% match${r.matchedAlias ? ` — "${r.matchedAlias}"` : ''}`}
-                      size="small"
-                      color={r.score >= 90 ? 'success' : r.score >= 75 ? 'warning' : 'default'}
-                    />
-                  )}
-                  {r.status === 'delisted' && (
-                    <Chip label="Delisted" size="small" color="default" variant="outlined" />
-                  )}
-                </Box>
-                {aliasNamesOf(r.names).length > 0 && (
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    <strong>Aliases:</strong> {aliasNamesOf(r.names).slice(0, 3).join(', ')}
-                    {aliasNamesOf(r.names).length > 3 ? '...' : ''}
-                  </Typography>
-                )}
-                {formatBirthDates(r.birthDates).length > 0 && (
-                  <Typography variant="body2" color="text.secondary">
-                    <strong>DOB:</strong> {formatBirthDates(r.birthDates).join(', ')}
-                  </Typography>
-                )}
-              </CardContent>
-            </Card>
-          </Box>
-        ))}
-        {results.length === 0 && !isLoading && !searchError && (
-          <Box sx={{ gridColumn: '1 / -1' }}>
-            <Typography variant="body1" color="text.secondary" align="center" sx={{ mt: 4 }}>
-              {hasSearched
-                ? 'No results found. Try adjusting your search query or filters.'
-                : 'Enter a name, passport number, or entity ID above to search among 32,000+ sanctions records.'}
-            </Typography>
-          </Box>
-        )}
-      </Box>
+      {results.length > 0 && (
+        <TableContainer component={Paper} sx={{ overflowX: 'auto' }}>
+          <Table size="small" stickyHeader>
+            <TableHead>
+              <TableRow>
+                {COLUMNS.map((col) => (
+                  <TableCell
+                    key={col.label}
+                    align={col.numeric ? 'right' : 'left'}
+                    sortDirection={col.key && sortKey === col.key ? sortDir : false}
+                    onClick={col.key ? () => handleSort(col.key as SortKey) : undefined}
+                    sx={{
+                      whiteSpace: 'nowrap',
+                      fontWeight: 600,
+                      cursor: col.key ? 'pointer' : 'default',
+                      userSelect: 'none',
+                    }}
+                  >
+                    {col.key ? (
+                      <TableSortLabel
+                        active={sortKey === col.key}
+                        direction={sortKey === col.key ? sortDir : 'asc'}
+                      >
+                        {col.label}
+                      </TableSortLabel>
+                    ) : (
+                      col.label
+                    )}
+                  </TableCell>
+                ))}
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {sortedResults.map((r) => {
+                const aliases = aliasNamesOf(r.names);
+                const primary = primaryNameOf(r.names);
+                // Only worth a column when it differs from the primary name —
+                // otherwise it is the same string twice on every single row.
+                const matchedOn = r.matchedAlias && r.matchedAlias !== primary ? r.matchedAlias : '';
+                const dobs = formatBirthDates(r.birthDates);
+                return (
+                  <TableRow
+                    key={r.id}
+                    hover
+                    onClick={() => onSelectRecord(r.id)}
+                    sx={{ cursor: 'pointer' }}
+                  >
+                    <TableCell align="right">
+                      {typeof r.score === 'number' ? (
+                        <Chip
+                          label={`${r.score}%`}
+                          size="small"
+                          color={r.score >= 90 ? 'success' : r.score >= 75 ? 'warning' : 'default'}
+                        />
+                      ) : (
+                        ''
+                      )}
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 500 }}>{primary}</TableCell>
+                    <TableCell sx={{ color: 'text.secondary' }}>{matchedOn}</TableCell>
+                    <TableCell sx={{ color: 'text.secondary', maxWidth: 260 }}>
+                      {aliases.slice(0, 3).join(', ')}
+                      {aliases.length > 3 ? '…' : ''}
+                    </TableCell>
+                    <TableCell>
+                      <Chip label={r.source} size="small" color="primary" variant="outlined" />
+                    </TableCell>
+                    <TableCell>
+                      <Chip label={r.type} size="small" color="error" variant="outlined" />
+                    </TableCell>
+                    <TableCell sx={{ whiteSpace: 'nowrap', color: 'text.secondary' }}>
+                      {dobs.join(', ')}
+                    </TableCell>
+                    <TableCell>
+                      {r.status === 'delisted' && (
+                        <Chip label="Delisted" size="small" variant="outlined" />
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      )}
+
+      {results.length === 0 && !isLoading && !searchError && (
+        <Typography variant="body1" color="text.secondary" align="center" sx={{ mt: 4 }}>
+          {hasSearched
+            ? 'No results found. Try adjusting your search query or filters.'
+            : 'Enter a name, passport number, or entity ID above to search among 32,000+ sanctions records.'}
+        </Typography>
+      )}
     </Box>
   );
 }
