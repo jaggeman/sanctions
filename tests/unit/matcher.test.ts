@@ -474,3 +474,63 @@ describe('first-character disagreement (issue #239)', () => {
     expect(scoreNameMatch('Nasser', ['Nassar']).score).toBeGreaterThan(0);
   });
 });
+
+/**
+ * A first-letter transliteration substitution scores 0 today (issue #252).
+ * Soundex keeps the first letter verbatim (`soundex()`'s `result = letters[0]`),
+ * so "osama"/"usama" (O250 vs U250) never agree even though the phonetic body
+ * is identical — and JW already carries #239's 10% first-char-mismatch
+ * penalty, which pushes these below #104's short-word bar (0.9). Both
+ * mechanisms miss together.
+ *
+ * Fix: a third signal in `pairScore` — same Soundex DIGITS (the code minus
+ * its first letter) with a differing first letter, corroborated by a raw
+ * (unpenalized) JW >= 0.85 — scored below a full phonetic match. Critically,
+ * this also requires equal word length: Soundex digit agreement alone can't
+ * tell a SUBSTITUTED first letter (osama/usama, same length) from a DROPPED
+ * one (issue #239's linda/inda — L530/I530 also agree on digits, JW 0.9333,
+ * yet must stay rejected). Equal length is true for every real substitution
+ * case here and false for the #239 deletion case, so it's what keeps this
+ * fix from reopening that one.
+ */
+describe('first-letter transliteration variants (issue #252)', () => {
+  it.each([
+    ['Osama', 'Usama'],
+    ['Wagner', 'Vagner'],
+    ['Yusuf', 'Jusuf'],
+    ['Jibril', 'Gibril'],
+  ])('acceptance criterion: "%s" matches "%s" at or above the default threshold', (query, alias) => {
+    expect(scoreNameMatch(query, [alias]).score).toBeGreaterThanOrEqual(65);
+  });
+
+  it('acceptance criterion: the full reported case clears the threshold', () => {
+    expect(scoreNameMatch('Osama bin Laden', ['USAMA BIN LADEN']).score).toBeGreaterThanOrEqual(65);
+  });
+
+  it('the new signal scores below a full phonetic match, not equal to it', () => {
+    const variant = scoreNameMatch('Osama', ['Usama']).score;
+    const fullPhonetic = scoreNameMatch('Mohammed', ['Muhammad']).score;
+    expect(variant).toBeLessThan(fullPhonetic);
+  });
+
+  // issue #104 regression: same Soundex digits, but JW (0.7833) below the new
+  // 0.85 floor — must stay rejected, exactly as it was before this fix.
+  it('does not resurrect the #104 false positive (equal digits, JW below the floor)', () => {
+    expect(scoreNameMatch('Qusay', ['Musa']).score).toBe(0);
+  });
+
+  it('rejects a first-letter pair whose digits agree but whose JW stays below the floor (gaddafi/khadafy, out of scope per the issue)', () => {
+    expect(scoreNameMatch('Gaddafi', ['Khadafy']).score).toBeLessThan(65);
+  });
+
+  it('does not disturb names with genuinely different Soundex digits', () => {
+    expect(scoreNameMatch('Angela', ['Jong']).score).toBe(0);
+  });
+
+  // issue #239 regression: same Soundex digits (L530/I530) and JW 0.9333
+  // clear this fix's own floor — the ONLY thing stopping a regression here is
+  // the equal-length requirement (linda has 5 letters, INDA has 4).
+  it('does NOT reopen issue #239: a dropped initial (different length) stays rejected even though its Soundex digits and JW would otherwise qualify', () => {
+    expect(scoreNameMatch('linda', ['INDA']).score).toBe(0);
+  });
+});

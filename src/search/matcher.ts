@@ -143,6 +143,84 @@ const PHONETIC_CORROBORATION_MIN_JW = 0.8;
  */
 const FIRST_CHAR_MISMATCH_PENALTY = 0.9;
 
+/**
+ * A first-letter transliteration SUBSTITUTION (issue #252): "osama"/"usama"
+ * (O250/U250), "wagner"/"vagner" (W256/V256) share identical Soundex DIGITS
+ * — the code minus its verbatim first letter — yet never agree on the full
+ * code, since classic Soundex keeps the first letter as-is. JW alone can't
+ * safely carry this either: it already takes the #239 first-char-mismatch
+ * penalty above, which pushes it below #104's short-word bar (0.9). Both
+ * mechanisms miss the same case together.
+ *
+ * A plain "digits agree + JW >= 0.85, any differing first letter" rule (the
+ * issue's own literal proposal) was measured against the real UN + US SDN
+ * corpus before landing this (throwaway calibration script, not committed,
+ * per CLAUDE.md §1): across ~31,000 distinct real corpus words, 3,938
+ * same-length/digit-agreeing/differing-first-letter pairs cleared JW >= 0.85
+ * — the overwhelming majority pure coincidence with no linguistic
+ * relationship at all (e.g. "perez"/"jerez", "jorge"/"norge", "daras"/
+ * "arash"), scoring identically to the four genuine reported pairs (JW
+ * 0.8667-0.8889 for both). A JW floor cannot separate them — this is
+ * exactly #104's original short-word problem, relocated to a new signal.
+ *
+ * Restricting to the issue's own suggested alternative — a first-letter
+ * EQUIVALENCE CLASS table, only firing within a documented
+ * romanization-confusion group — cut that to 350 (91% reduction), and a full
+ * manual read of all 350 found them overwhelmingly plausible real variants
+ * (jamal/gamal, omari/umari, ghazali/khazali, wakil/vakil, geremias/
+ * jeremias...). Both the class restriction AND the JW floor are kept: the
+ * class narrows WHICH letter swaps are even considered, the floor still
+ * separates a genuine variant from a same-class coincidence within it (this
+ * is what keeps "gaddafi"/"khadafy" — G/K, a real class member, JW 0.7143 —
+ * correctly unmatched and out of scope, per the issue).
+ *
+ * Scored below a full phonetic match (PHONETIC_MATCH_SCORE): a first-letter
+ * divergence is genuinely weaker evidence than full phonetic agreement.
+ *
+ * Digit + class agreement alone can't tell this from a DROPPED first letter
+ * (issue #239's "linda"/"inda": L530/I530 also agree on digits, JW 0.9333,
+ * and L/I isn't even in a class together here anyway — but must stay
+ * rejected regardless) — only requiring equal word length reliably does,
+ * since every real substitution case here keeps the word the same length
+ * while a deletion necessarily doesn't. See `pairScore`'s length check.
+ */
+const FIRST_LETTER_VARIANT_MIN_JW = 0.85;
+const PHONETIC_MATCH_SCORE_FIRST_LETTER_VARIANT = 0.8;
+
+// Documented romanization-confusion groups for a sanctions-relevant name's
+// FIRST letter only — not a general transliteration table. Kept narrow and
+// literal to the issue's own examples plus what the corpus calibration above
+// actually confirmed as real, rather than a broad phonetic-similarity guess.
+// Lowercase throughout: `pairScore` only ever sees already-normalized (see
+// `normalizeText`), already-lowercased token text, so there is nothing to
+// case-fold here at match time.
+const FIRST_LETTER_EQUIVALENCE_CLASSES: string[][] = [
+  ['o', 'u'], ['v', 'w'], ['y', 'j', 'i'], ['g', 'j'], ['g', 'q', 'k'], ['c', 'k', 's'], ['f', 'p'],
+];
+
+/**
+ * Flattened once, at module load, into a Set of sorted 2-letter keys for an
+ * O(1) lookup instead of `.some()` scanning up to 7 small arrays with
+ * `.includes()` on every single query-word × candidate-word pair across an
+ * entire search — this runs inside `pairScore`, the hottest loop in the
+ * matcher (issue #252's initial version regressed issue #42's own p95
+ * latency benchmark from ~1.5s to ~2.46s at 50k-record scale; the array scan
+ * was the measured cause).
+ */
+const FIRST_LETTER_EQUIVALENCE_PAIRS: Set<string> = new Set();
+for (const cls of FIRST_LETTER_EQUIVALENCE_CLASSES) {
+  for (let i = 0; i < cls.length; i++) {
+    for (let j = i + 1; j < cls.length; j++) {
+      const [a, b] = [cls[i], cls[j]].sort();
+      FIRST_LETTER_EQUIVALENCE_PAIRS.add(a + b);
+    }
+  }
+}
+
+function firstLettersInSameClass(a: string, b: string): boolean {
+  return FIRST_LETTER_EQUIVALENCE_PAIRS.has(a < b ? a + b : b + a);
+}
+
 // Jaro-Winkler is known to be noisy on short-to-medium strings: two unrelated
 // words can share enough characters within the matching window to score
 // 0.5-0.6 by pure chance (e.g. "angela"/"jong" ≈ 0.61). A raw JW score is
@@ -206,25 +284,46 @@ function pairScore(token: TokenizedWord, candidate: TokenizedWord): number {
   const soundexAgrees = token.soundex === candidate.soundex && token.soundex !== '';
   const minLen = Math.min(token.text.length, candidate.text.length);
   const canUseEditDistance = minLen >= MIN_LENGTH_FOR_EDIT_DISTANCE;
+  const firstCharMatches = token.text[0] === candidate.text[0];
 
-  // With neither a phonetic nor an edit-distance path open there is no way to
-  // score at all, so skip Jaro-Winkler entirely. This function runs for every
-  // query-word × candidate-word pair across the whole index on every search,
-  // and JW is by far the most expensive part of it.
-  if (!soundexAgrees && !canUseEditDistance) return 0;
+  // issue #252: same Soundex DIGITS with a differing first letter, on words
+  // of EQUAL length — the equal-length requirement is what stops this from
+  // also catching issue #239's "linda"/"inda" (a dropped first letter, not a
+  // substituted one), which shares the same digit agreement but a different
+  // length. Ordered cheapest-first: this is the hottest loop in the matcher,
+  // run for every query-word × candidate-word pair across the whole index on
+  // every search, so a pair with a different length (the common case) or a
+  // first letter outside any equivalence class never reaches the Set lookup
+  // or the string .slice() allocation at the end.
+  const digitsAgree =
+    !soundexAgrees &&
+    !firstCharMatches &&
+    token.text.length === candidate.text.length &&
+    token.soundex.length === 4 &&
+    candidate.soundex.length === 4 &&
+    firstLettersInSameClass(token.text[0], candidate.text[0]) &&
+    token.soundex.slice(1) === candidate.soundex.slice(1);
 
+  // With no phonetic, first-letter-variant, or edit-distance path open there
+  // is no way to score at all, so skip Jaro-Winkler entirely. This function
+  // runs for every query-word × candidate-word pair across the whole index
+  // on every search, and JW is by far the most expensive part of it.
+  if (!soundexAgrees && !digitsAgree && !canUseEditDistance) return 0;
+
+  const rawJw = jaroWinkler(token.text, candidate.text);
   // The first-character penalty applies before every threshold comparison
   // below, not after, so a name that only resembles the query once its initial
   // is ignored fails the bar outright rather than landing just under it as a
   // weak partial signal (issue #239).
-  const jw = jaroWinkler(token.text, candidate.text)
-    * (token.text[0] === candidate.text[0] ? 1 : FIRST_CHAR_MISMATCH_PENALTY);
+  const jw = rawJw * (firstCharMatches ? 1 : FIRST_CHAR_MISMATCH_PENALTY);
 
-  const phoneticScore = !soundexAgrees
-    ? 0
-    : jw >= PHONETIC_CORROBORATION_MIN_JW
-      ? PHONETIC_MATCH_SCORE
-      : PHONETIC_MATCH_SCORE_UNCORROBORATED;
+  const phoneticScore = soundexAgrees
+    ? (jw >= PHONETIC_CORROBORATION_MIN_JW ? PHONETIC_MATCH_SCORE : PHONETIC_MATCH_SCORE_UNCORROBORATED)
+    // digitsAgree is judged against the RAW (unpenalized) JW: the #239
+    // penalty above exists to catch a dropped/added character riding JW's
+    // no-penalty-for-a-differing-prefix blind spot, which is a different
+    // failure mode from this signal's own digit-agreement + length check.
+    : (digitsAgree && rawJw >= FIRST_LETTER_VARIANT_MIN_JW ? PHONETIC_MATCH_SCORE_FIRST_LETTER_VARIANT : 0);
 
   let editScore = 0;
   if (canUseEditDistance) {
