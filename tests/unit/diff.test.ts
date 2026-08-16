@@ -45,7 +45,7 @@ vi.mock('../../src/importer/uploader', async (importOriginal) => {
 });
 
 import { computeContentHash } from '../../src/importer/uploader';
-import { computeDiff, runDiffForSource, DelistGuardError, startDiffSession, SAMPLE_LIMIT } from '../../src/importer/diff';
+import { DelistGuardError, startDiffSession, SAMPLE_LIMIT } from '../../src/importer/diff';
 
 function makeRecord(overrides: Partial<SanctionRecord> = {}): SanctionRecord {
   return {
@@ -79,12 +79,20 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('computeDiff', () => {
+// issue #185: computeDiff/runDiffForSource (the unused non-streaming "batch"
+// API) were deleted as dead code — nothing in src/ called them, and they had
+// already drifted from startDiffSession (missing the CUSTOM-record guard).
+// The classification/guard/apply logic they exercised is real and shared, so
+// these tests are ported onto startDiffSession/addChunk/finish — the actual
+// shipped path — rather than deleted along with the dead code.
+describe('startDiffSession — classification (ported from removed computeDiff, issue #185)', () => {
   it('classifies a record with no existing doc as added', async () => {
     mockExistingSnapshot([]);
     const record = makeRecord({ id: 'EU-new' });
 
-    const diff = await computeDiff('EU', [record], { mode: 'append' });
+    const session = await startDiffSession('EU', { mode: 'append' });
+    await session.addChunk([record]);
+    const diff = await session.finish();
 
     expect(mockCollection).toHaveBeenCalledWith('sanctions');
     expect(mockWhere).toHaveBeenCalledWith('source', '==', 'EU');
@@ -95,7 +103,9 @@ describe('computeDiff', () => {
     const record = makeRecord({ id: 'EU-1' });
     mockExistingSnapshot([{ id: 'EU-1', status: 'active', contentHash: computeContentHash(record) }]);
 
-    const diff = await computeDiff('EU', [record], { mode: 'append' });
+    const session = await startDiffSession('EU', { mode: 'append' });
+    await session.addChunk([record]);
+    const diff = await session.finish();
 
     expect(diff.counts).toMatchObject({ added: 0, updated: 0, unchanged: 1, delisted: 0 });
   });
@@ -104,7 +114,9 @@ describe('computeDiff', () => {
     const record = makeRecord({ id: 'EU-1', names: [{ wholeName: 'Jane Changed', strong: true }] });
     mockExistingSnapshot([{ id: 'EU-1', status: 'active', contentHash: 'stale-hash' }]);
 
-    const diff = await computeDiff('EU', [record], { mode: 'append' });
+    const session = await startDiffSession('EU', { mode: 'append' });
+    await session.addChunk([record]);
+    const diff = await session.finish();
 
     expect(diff.counts).toMatchObject({ added: 0, updated: 1, unchanged: 0, delisted: 0 });
   });
@@ -113,7 +125,9 @@ describe('computeDiff', () => {
     const record = makeRecord({ id: 'EU-1' });
     mockExistingSnapshot([{ id: 'EU-1', status: 'delisted', contentHash: computeContentHash(record) }]);
 
-    const diff = await computeDiff('EU', [record], { mode: 'append' });
+    const session = await startDiffSession('EU', { mode: 'append' });
+    await session.addChunk([record]);
+    const diff = await session.finish();
 
     expect(diff.counts).toMatchObject({ added: 0, updated: 1, unchanged: 0, delisted: 0 });
   });
@@ -124,7 +138,9 @@ describe('computeDiff', () => {
       { id: 'EU-2', status: 'active', contentHash: 'h2' },
     ]);
 
-    const diff = await computeDiff('EU', [], { mode: 'append' });
+    const session = await startDiffSession('EU', { mode: 'append' });
+    await session.addChunk([]);
+    const diff = await session.finish();
 
     expect(diff.toDelistIds).toEqual([]);
     expect(diff.counts.delisted).toBe(0);
@@ -139,19 +155,26 @@ describe('computeDiff', () => {
       { id: 'EU-3', status: 'delisted', contentHash: 'h3' }, // already delisted, not re-flagged
     ]);
 
-    const diff = await computeDiff('EU', [record], { mode: 'sync' });
+    // 1 of 2 active records missing -> 50% delisted, over the guard
+    // threshold; dryRun keeps this a pure classification check rather than
+    // exercising the guard itself (that has its own tests below).
+    const session = await startDiffSession('EU', { mode: 'sync', dryRun: true });
+    await session.addChunk([record]);
+    const diff = await session.finish();
 
     expect(diff.toDelistIds).toEqual(['EU-2']);
     expect(diff.counts.delisted).toBe(1);
   });
 
-  it('trips the guard when the delist share exceeds 20% of active records, but does not throw', async () => {
+  it('trips the guard when the delist share exceeds 20% of active records, but does not throw with force', async () => {
     const active = Array.from({ length: 10 }, (_, i) => ({ id: `EU-${i}`, status: 'active', contentHash: 'h' }));
     mockExistingSnapshot(active);
 
     // Only 3 of 10 active records survive in the file -> 7/10 = 70% delisted
     const survivors = active.slice(0, 3).map((a) => makeRecord({ id: a.id }));
-    const diff = await computeDiff('EU', survivors, { mode: 'sync' });
+    const session = await startDiffSession('EU', { mode: 'sync', force: true });
+    await session.addChunk(survivors);
+    const diff = await session.finish();
 
     expect(diff.guardTripped).toBe(true);
     expect(diff.toDelistIds).toHaveLength(7);
@@ -164,7 +187,9 @@ describe('computeDiff', () => {
 
     // 8 of 10 survive -> 2/10 = 20%, at the threshold, not over it
     const survivors = active.slice(0, 8).map((a) => makeRecord({ id: a.id }));
-    const diff = await computeDiff('EU', survivors, { mode: 'sync' });
+    const session = await startDiffSession('EU', { mode: 'sync' });
+    await session.addChunk(survivors);
+    const diff = await session.finish();
 
     expect(diff.guardTripped).toBe(false);
     expect(diff.toDelistIds).toHaveLength(2);
@@ -172,19 +197,23 @@ describe('computeDiff', () => {
 
   it('never trips the guard when there are no pre-existing active records to compare against', async () => {
     mockExistingSnapshot([]);
-    const diff = await computeDiff('EU', [makeRecord({ id: 'EU-1' })], { mode: 'sync' });
+    const session = await startDiffSession('EU', { mode: 'sync' });
+    await session.addChunk([makeRecord({ id: 'EU-1' })]);
+    const diff = await session.finish();
 
     expect(diff.guardTripped).toBe(false);
     expect(diff.toDelistIds).toEqual([]);
   });
 });
 
-describe('runDiffForSource', () => {
+describe('startDiffSession — apply/dry-run/force/guard (ported from removed runDiffForSource, issue #185)', () => {
   it('dry-run never calls uploadRecords or delistRecords, even when nothing changed', async () => {
     mockExistingSnapshot([]);
     const record = makeRecord({ id: 'EU-1' });
 
-    const diff = await runDiffForSource('EU', [record], { mode: 'append', dryRun: true });
+    const session = await startDiffSession('EU', { mode: 'append', dryRun: true });
+    await session.addChunk([record]);
+    const diff = await session.finish();
 
     expect(diff.counts.added).toBe(1);
     expect(mockUploadRecords).not.toHaveBeenCalled();
@@ -195,7 +224,9 @@ describe('runDiffForSource', () => {
     const active = Array.from({ length: 10 }, (_, i) => ({ id: `EU-${i}`, status: 'active', contentHash: 'h' }));
     mockExistingSnapshot(active);
 
-    const diff = await runDiffForSource('EU', [], { mode: 'sync', dryRun: true });
+    const session = await startDiffSession('EU', { mode: 'sync', dryRun: true });
+    await session.addChunk([]);
+    const diff = await session.finish();
 
     expect(diff.guardTripped).toBe(true);
     expect(mockDelistRecords).not.toHaveBeenCalled();
@@ -220,11 +251,9 @@ describe('runDiffForSource', () => {
     mockUploadRecords.mockResolvedValueOnce(undefined);
     mockDelistRecords.mockResolvedValueOnce(undefined);
 
-    const diff = await runDiffForSource(
-      'EU',
-      [unchangedRecord, updated3, updated4, updated5],
-      { mode: 'sync', importId: 'import_123' },
-    );
+    const session = await startDiffSession('EU', { mode: 'sync', importId: 'import_123' });
+    await session.addChunk([unchangedRecord, updated3, updated4, updated5]);
+    const diff = await session.finish();
 
     expect(mockUploadRecords).toHaveBeenCalledWith([updated3, updated4, updated5], 'import_123');
     expect(mockDelistRecords).toHaveBeenCalledWith(['EU-2'], 'import_123');
@@ -236,7 +265,9 @@ describe('runDiffForSource', () => {
     const record = makeRecord({ id: 'EU-1' });
     mockExistingSnapshot([{ id: 'EU-1', status: 'active', contentHash: computeContentHash(record) }]);
 
-    const diff = await runDiffForSource('EU', [record], { mode: 'sync' });
+    const session = await startDiffSession('EU', { mode: 'sync' });
+    await session.addChunk([record]);
+    const diff = await session.finish();
 
     expect(diff.counts).toMatchObject({ added: 0, updated: 0, unchanged: 1, delisted: 0 });
     expect(mockUploadRecords).not.toHaveBeenCalled();
@@ -250,7 +281,9 @@ describe('runDiffForSource', () => {
     mockExistingSnapshot([{ id: 'EU-2', status: 'active', contentHash: 'h2' }]);
     mockDelistRecords.mockResolvedValueOnce(undefined);
 
-    await runDiffForSource('EU', [], { mode: 'sync', importId: 'import_123', force: true });
+    const session = await startDiffSession('EU', { mode: 'sync', importId: 'import_123', force: true });
+    await session.addChunk([]);
+    await session.finish();
 
     expect(mockUploadRecords).not.toHaveBeenCalled();
     expect(mockDelistRecords).toHaveBeenCalledWith(['EU-2'], 'import_123');
@@ -260,7 +293,10 @@ describe('runDiffForSource', () => {
     const active = Array.from({ length: 10 }, (_, i) => ({ id: `EU-${i}`, status: 'active', contentHash: 'h' }));
     mockExistingSnapshot(active);
 
-    await expect(runDiffForSource('EU', [], { mode: 'sync' })).rejects.toThrow(DelistGuardError);
+    const session = await startDiffSession('EU', { mode: 'sync' });
+    await session.addChunk([]);
+
+    await expect(session.finish()).rejects.toThrow(DelistGuardError);
     expect(mockUploadRecords).not.toHaveBeenCalled();
     expect(mockDelistRecords).not.toHaveBeenCalled();
   });
@@ -270,7 +306,9 @@ describe('runDiffForSource', () => {
     mockExistingSnapshot(active);
     mockDelistRecords.mockResolvedValueOnce(undefined);
 
-    const diff = await runDiffForSource('EU', [], { mode: 'sync', force: true });
+    const session = await startDiffSession('EU', { mode: 'sync', force: true });
+    await session.addChunk([]);
+    const diff = await session.finish();
 
     expect(diff.guardTripped).toBe(true);
     expect(mockDelistRecords).toHaveBeenCalledWith(active.map((a) => a.id), undefined);
@@ -286,12 +324,14 @@ describe('runDiffForSource', () => {
  * avoid — a diff over tens of thousands of records must still only ever
  * hold a handful of sample names, not every record.
  */
-describe('computeDiff — sample records per bucket (issue #12)', () => {
+describe('startDiffSession — sample records per bucket, single-chunk (ported from removed computeDiff, issue #12/#185)', () => {
   it('samples an added record with its id and primaryName', async () => {
     mockExistingSnapshot([]);
     const record = makeRecord({ id: 'EU-new', names: [{ wholeName: 'Newly Added Person', strong: true }] });
 
-    const diff = await computeDiff('EU', [record], { mode: 'append' });
+    const session = await startDiffSession('EU', { mode: 'append', dryRun: true });
+    await session.addChunk([record]);
+    const diff = await session.finish();
 
     expect(diff.samples.added).toEqual([{ id: 'EU-new', primaryName: 'Newly Added Person' }]);
     expect(diff.samples.updated).toEqual([]);
@@ -303,7 +343,9 @@ describe('computeDiff — sample records per bucket (issue #12)', () => {
     const record = makeRecord({ id: 'EU-1', names: [{ wholeName: 'Jane Changed', strong: true }] });
     mockExistingSnapshot([{ id: 'EU-1', status: 'active', contentHash: 'stale-hash', primaryName: 'Jane Old' }]);
 
-    const diff = await computeDiff('EU', [record], { mode: 'append' });
+    const session = await startDiffSession('EU', { mode: 'append', dryRun: true });
+    await session.addChunk([record]);
+    const diff = await session.finish();
 
     expect(diff.samples.updated).toEqual([{ id: 'EU-1', primaryName: 'Jane Changed' }]);
   });
@@ -312,7 +354,9 @@ describe('computeDiff — sample records per bucket (issue #12)', () => {
     const record = makeRecord({ id: 'EU-1', names: [{ wholeName: 'Same Person', strong: true }] });
     mockExistingSnapshot([{ id: 'EU-1', status: 'active', contentHash: computeContentHash(record), primaryName: 'Same Person' }]);
 
-    const diff = await computeDiff('EU', [record], { mode: 'append' });
+    const session = await startDiffSession('EU', { mode: 'append', dryRun: true });
+    await session.addChunk([record]);
+    const diff = await session.finish();
 
     expect(diff.samples.unchanged).toEqual([{ id: 'EU-1', primaryName: 'Same Person' }]);
   });
@@ -320,7 +364,9 @@ describe('computeDiff — sample records per bucket (issue #12)', () => {
   it('samples a to-be-delisted record using its existing (pre-fetched) primaryName', async () => {
     mockExistingSnapshot([{ id: 'EU-2', status: 'active', contentHash: 'h2', primaryName: 'About To Be Delisted' }]);
 
-    const diff = await computeDiff('EU', [], { mode: 'sync' });
+    const session = await startDiffSession('EU', { mode: 'sync', dryRun: true });
+    await session.addChunk([]);
+    const diff = await session.finish();
 
     expect(diff.samples.delisted).toEqual([{ id: 'EU-2', primaryName: 'About To Be Delisted' }]);
   });
@@ -330,7 +376,9 @@ describe('computeDiff — sample records per bucket (issue #12)', () => {
     const records = Array.from({ length: SAMPLE_LIMIT + 10 }, (_, i) =>
       makeRecord({ id: `EU-${i}`, primaryName: `Person ${i}` }));
 
-    const diff = await computeDiff('EU', records, { mode: 'append' });
+    const session = await startDiffSession('EU', { mode: 'append', dryRun: true });
+    await session.addChunk(records);
+    const diff = await session.finish();
 
     expect(diff.counts.added).toBe(SAMPLE_LIMIT + 10); // the real count is uncapped
     expect(diff.samples.added).toHaveLength(SAMPLE_LIMIT); // only the sample is capped

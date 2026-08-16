@@ -76,7 +76,7 @@ import { filterAutomatedBatch } from '../../src/importer/uploader';
 
 // Dynamic import (not a static top-level one): src/importer/index.ts imports
 // ./diff, which is mocked above via a factory that references the
-// `runDiffForSource` const — vi.mock calls are hoisted above top-level
+// `startDiffSession` const — vi.mock calls are hoisted above top-level
 // `const`s, so a *static* import here would load that module (and invoke the
 // factory) before the const is initialized. A dynamic import runs in
 // sequential file order instead, after the const above has already run.
@@ -101,7 +101,7 @@ function makeRecord(id: string, source: SanctionRecord['source'] = 'EU'): Sancti
 // accumulate per source, then hand each source's full set to the diff engine
 // (issue #8) exactly once. The diff engine — not runImport — decides what
 // actually gets written, so these tests assert on calls into
-// runDiffForSource rather than into uploadRecords directly.
+// startDiffSession rather than into uploadRecords directly.
 describe('runImport — streams sources, reconciles each via the diff engine', () => {
   beforeEach(() => {
     diffFedBySource.clear();
