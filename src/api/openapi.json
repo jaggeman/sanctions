@@ -268,12 +268,12 @@
                     "description": "Issue #8: 'sync' behandlar filen som fullständig sanning för källan och avlistar aktiva poster som saknas i filen. 'append' (standard) avlistar aldrig — rätt för PEP/CUSTOM/kompletterande filer."
                   },
                   "dryRun": {
-                    "type": "boolean",
-                    "description": "Kör klassificeringen (added/updated/unchanged/delisted) utan att skriva något. Svarar synkront med resultatet istället för 202."
+                    "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["true", "false"] }],
+                    "description": "Kör klassificeringen (added/updated/unchanged/delisted) utan att skriva något. Accepterar boolean eller \"true\"/\"false\". Svarar synkront med resultatet istället för 202."
                   },
                   "force": {
-                    "type": "boolean",
-                    "description": "Kringgå 20%-spärren mot att avlista en for stor andel av en källas aktiva poster."
+                    "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["true", "false"] }],
+                    "description": "Kringgå 20%-spärren mot att avlista en för stor andel av en källas aktiva poster. Accepterar boolean eller \"true\"/\"false\". Kräver administratörssession."
                   },
                   "importId": {
                     "type": "string",
@@ -322,7 +322,7 @@
             }
           },
           "400": {
-            "description": "Ogiltiga \"sources\" (måste vara en array) eller ogiltigt \"mode\"/\"importId\""
+            "description": "Ogiltiga \"sources\" (måste vara en array), ogiltigt \"mode\"/\"importId\", eller ogiltigt värde för boolean-fält (\"dryRun\"/\"force\")"
           },
           "401": {
             "description": "Ingen giltig session eller API-token"
@@ -433,7 +433,7 @@
             }
           },
           "400": {
-            "description": "Ingen fil bifogad, ogiltig filtyp, okänt \"source\"-värde, eller ogiltigt \"mode\"/\"importId\"",
+            "description": "Ingen fil bifogad, ogiltig filtyp, okänt \"source\"-värde, ogiltigt \"mode\"/\"importId\", eller ogiltigt värde för boolean-fält (\"dryRun\"/\"force\")",
             "content": {
               "application/json": {
                 "schema": {
