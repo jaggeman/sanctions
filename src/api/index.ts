@@ -24,7 +24,7 @@ import { applyOverride, getOverride } from '../overrides';
 import { overridesRouter } from './routes/overrides';
 import { validateEntityIdParam } from './middleware/validateEntityIdParam';
 import { createOtp, verifyOtp, isInCooldown } from '../auth/otpStore';
-import { consumeGlobalOtpBudget } from '../auth/otpBudget';
+import { consumeGlobalOtpBudget, consumeIpOtpBudget } from '../auth/otpBudget';
 import { sendOtpEmail } from '../auth/mailer';
 import { createSession, destroySession } from '../auth/session';
 import { requireAuth, SESSION_COOKIE_NAME } from '../auth/middleware';
@@ -39,6 +39,11 @@ import { logger } from '../shared/logger';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// issue #144: trust 1 upstream hop (Cloud Run / Firebase Hosting reverse proxy)
+// so req.ip reflects the actual client IP and cannot be spoofed by client-supplied
+// X-Forwarded-For headers.
+app.set('trust proxy', 1);
 
 // issue #65: ADMIN_EMAILS and ALLOWED_EMAIL_DOMAINS are independently
 // configured — an admin address whose domain isn't allow-listed gets
@@ -232,14 +237,18 @@ app.post('/api/auth/request-otp', async (req, res): Promise<any> => {
     return res.json({ ok: true });
   }
 
-  // issue #62: the per-email cooldown below stops one address being spammed
-  // repeatedly, but does nothing against many DISTINCT real addresses each
-  // being sent one code at once. Only charge the org-wide budget for a
-  // request that will actually cause a new send — a request already blocked
-  // by the per-email cooldown must not also burn a global-budget slot, or a
-  // single attacker flooding one address could exhaust it for everyone else.
-  if (!(await isInCooldown(email)) && !(await consumeGlobalOtpBudget())) {
-    return res.status(429).json({ error: 'Too many login codes have been requested. Please try again shortly.' });
+  // issue #144 & issue #62: per-IP rate limiting and global send budget.
+  // Both budgets are only charged if the request is not already blocked by
+  // the per-email cooldown, preventing an attacker flooding a single address
+  // from exhausting either budget for other addresses.
+  if (!(await isInCooldown(email))) {
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    if (!(await consumeIpOtpBudget(clientIp))) {
+      return res.status(429).json({ error: 'Too many login codes have been requested from this IP address. Please try again shortly.' });
+    }
+    if (!(await consumeGlobalOtpBudget())) {
+      return res.status(429).json({ error: 'Too many login codes have been requested. Please try again shortly.' });
+    }
   }
 
   // Narrow, accepted race: two concurrent first-ever requests for the same

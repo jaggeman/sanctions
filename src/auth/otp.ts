@@ -14,6 +14,11 @@ export const OTP_REQUEST_COOLDOWN_MS = 60 * 1000;
 export const OTP_GLOBAL_SEND_LIMIT = 30;
 export const OTP_GLOBAL_SEND_WINDOW_MS = 60 * 1000;
 
+// issue #144: per-IP send limit to prevent a single attacker from exhausting
+// global budget or sending spam from a single address.
+export const OTP_IP_SEND_LIMIT = 5;
+export const OTP_IP_SEND_WINDOW_MS = 60 * 1000;
+
 export function generateOtpCode(): string {
   return crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
 }

@@ -1,7 +1,8 @@
 import { db } from '../shared/firebase';
-import { OTP_GLOBAL_SEND_LIMIT, OTP_GLOBAL_SEND_WINDOW_MS } from './otp';
+import { OTP_GLOBAL_SEND_LIMIT, OTP_GLOBAL_SEND_WINDOW_MS, OTP_IP_SEND_LIMIT, OTP_IP_SEND_WINDOW_MS } from './otp';
 
 const COLLECTION = 'otpGlobalBudget';
+const IP_COLLECTION = 'otpIpBudget';
 
 /**
  * Fixed-window bucket id — every send within the same window shares one
@@ -13,6 +14,13 @@ const COLLECTION = 'otpGlobalBudget';
  */
 function currentWindowId(): string {
   return String(Math.floor(Date.now() / OTP_GLOBAL_SEND_WINDOW_MS));
+}
+
+function currentIpWindowId(ip: string): string {
+  // Normalize IPv6 colons and other characters so doc ID is safe in Firestore
+  const safeIp = ip.replace(/[^a-zA-Z0-9_.-]/g, '_');
+  const windowId = String(Math.floor(Date.now() / OTP_IP_SEND_WINDOW_MS));
+  return `${safeIp}_${windowId}`;
 }
 
 /**
@@ -44,3 +52,24 @@ export async function consumeGlobalOtpBudget(): Promise<boolean> {
     return true;
   });
 }
+
+/**
+ * issue #144: Atomically consumes one slot from the per-IP OTP-send budget.
+ * Caps requests from any single client IP to OTP_IP_SEND_LIMIT within
+ * OTP_IP_SEND_WINDOW_MS.
+ */
+export async function consumeIpOtpBudget(ip: string): Promise<boolean> {
+  if (!ip) return true;
+  const ref = db.collection(IP_COLLECTION).doc(currentIpWindowId(ip));
+
+  return db.runTransaction(async (tx: any) => {
+    const doc = await tx.get(ref);
+    const count = doc.exists ? (doc.data().count as number) : 0;
+
+    if (count >= OTP_IP_SEND_LIMIT) return false;
+
+    tx.set(ref, { count: count + 1 }, { merge: true });
+    return true;
+  });
+}
+
