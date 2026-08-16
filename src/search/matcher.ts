@@ -101,7 +101,47 @@ export function jaroWinkler(a: string, b: string): number {
   return jaroSim + prefixLen * PREFIX_SCALE * (1 - jaroSim);
 }
 
-const PHONETIC_MATCH_SCORE = 0.85;
+/**
+ * A shared Soundex code is corroborating evidence, not decisive evidence
+ * (issue #239). This was 0.85 — above DEFAULT_THRESHOLD (65) — which made
+ * every Soundex collision a guaranteed hit, rendered in the UI's orange
+ * "warning" band. Soundex is a 4-character code and collides densely: over
+ * the real UN + US SDN corpora, M200 covers 174 distinct spellings (musa,
+ * mzee, mihigo, mwissa, maheshe…) and A134 covers 159. Searching "musa"
+ * returned 23 results related to the query by nothing but that code — 3MG,
+ * MAK, MIKE, MYC. Because that noise sat ABOVE most genuine variants, no
+ * threshold could remove it without removing real matches too.
+ *
+ * What separates a real spelling variant from a code collision is whether
+ * the two words also LOOK alike, so the phonetic path now has two levels:
+ *
+ *   qusay/qoussai  soundex Q200=Q200, JW 0.81  -> a real transliteration
+ *   linda/lamd     soundex L530=L530, JW 0.63  -> a code collision
+ *   musa/mzee      soundex M200=M200, JW 0.45  -> a code collision
+ *
+ * Corroborated agreement scores high; uncorroborated agreement stays under
+ * DEFAULT_THRESHOLD (65) so it cannot carry a match on its own, while still
+ * lifting a candidate whose other words support it and still ranking a
+ * phonetic near-miss above an unrelated name.
+ *
+ * Note the JW bar here is deliberately BELOW #104's short-word bar (0.9):
+ * that bar governs edit distance used alone, where a coincidence is the main
+ * risk. Here the soundex agreement has already been established, so a weaker
+ * textual signal is enough to tell "same name, spelled differently" from
+ * "same four-character code by chance".
+ */
+const PHONETIC_MATCH_SCORE = 0.9;
+const PHONETIC_MATCH_SCORE_UNCORROBORATED = 0.5;
+const PHONETIC_CORROBORATION_MIN_JW = 0.8;
+
+/**
+ * Jaro-Winkler only ever REWARDS a shared prefix — it has no penalty for a
+ * differing one. Dropping the single most identifying character in a name
+ * therefore barely moved the score: jaroWinkler('linda','inda') = 0.9333,
+ * clearing even the stricter short-word bar from #104. That is how a vessel
+ * named INDA came back as a 93% match for "linda" (issue #239).
+ */
+const FIRST_CHAR_MISMATCH_PENALTY = 0.9;
 
 // Jaro-Winkler is known to be noisy on short-to-medium strings: two unrelated
 // words can share enough characters within the matching window to score
@@ -162,16 +202,35 @@ function annotateWithSoundex(wordGroups: string[][]): TokenizedWord[][] {
 /** Similarity (0..1) between exactly one query token and one candidate token. */
 function pairScore(token: TokenizedWord, candidate: TokenizedWord): number {
   if (token.text === candidate.text) return 1;
-  const phoneticScore = token.soundex === candidate.soundex && token.soundex !== ''
-    ? PHONETIC_MATCH_SCORE
-    : 0;
+
+  const soundexAgrees = token.soundex === candidate.soundex && token.soundex !== '';
   const minLen = Math.min(token.text.length, candidate.text.length);
+  const canUseEditDistance = minLen >= MIN_LENGTH_FOR_EDIT_DISTANCE;
+
+  // With neither a phonetic nor an edit-distance path open there is no way to
+  // score at all, so skip Jaro-Winkler entirely. This function runs for every
+  // query-word × candidate-word pair across the whole index on every search,
+  // and JW is by far the most expensive part of it.
+  if (!soundexAgrees && !canUseEditDistance) return 0;
+
+  // The first-character penalty applies before every threshold comparison
+  // below, not after, so a name that only resembles the query once its initial
+  // is ignored fails the bar outright rather than landing just under it as a
+  // weak partial signal (issue #239).
+  const jw = jaroWinkler(token.text, candidate.text)
+    * (token.text[0] === candidate.text[0] ? 1 : FIRST_CHAR_MISMATCH_PENALTY);
+
+  const phoneticScore = !soundexAgrees
+    ? 0
+    : jw >= PHONETIC_CORROBORATION_MIN_JW
+      ? PHONETIC_MATCH_SCORE
+      : PHONETIC_MATCH_SCORE_UNCORROBORATED;
+
   let editScore = 0;
-  if (minLen >= MIN_LENGTH_FOR_EDIT_DISTANCE) {
+  if (canUseEditDistance) {
     const threshold = minLen <= SHORT_WORD_MAX_LENGTH
       ? EDIT_DISTANCE_MATCH_THRESHOLD_SHORT_WORD
       : EDIT_DISTANCE_MATCH_THRESHOLD;
-    const jw = jaroWinkler(token.text, candidate.text);
     editScore = jw >= threshold ? jw : 0;
   }
   return Math.max(phoneticScore, editScore);
@@ -234,6 +293,34 @@ function greedyOneToOneMatch(queryWordGroups: TokenizedWord[][], candidateWordGr
 
   return assignments;
 }
+
+/**
+ * How much of a match's score survives when the candidate carries name parts
+ * the query never mentioned (issue #239).
+ *
+ * #41 combined query- and candidate-coverage via their harmonic mean (F1).
+ * That is symmetric by construction, which is what it needed to be to stop an
+ * unrelated long name scoring a perfect 100 — but it also caps a one-word
+ * query at 2·1·(1/n) / (1 + 1/n) against an n-word candidate, regardless of
+ * how good the match is: 67 for two words, 50 for three, 40 for four. With
+ * DEFAULT_THRESHOLD at 65, surname search worked on two-word names and
+ * silently failed on everything longer, and most sanctions records are 3+
+ * words. Measured over the real corpora, that lost 88% of "kim", 75% of "ali"
+ * and 80% of "mohammed".
+ *
+ * This replaces the harmonic mean with query coverage scaled by a floored
+ * candidate coverage: a match keeps at least this fraction of its query
+ * coverage no matter how much unexplained material the candidate carries,
+ * and earns the rest back as that material is explained. So a partial match
+ * still ranks BELOW a fuller one — the ordering #41 wanted is intact, and a
+ * partial match still cannot reach 100 — but it lands above the threshold
+ * instead of vanishing from the result set entirely.
+ *
+ * That is a deliberate reversal of the tradeoff #41 accepted. In sanctions
+ * screening a false negative clears someone who is actually listed, while a
+ * false positive costs one row of human review. The costs are not symmetric.
+ */
+const PARTIAL_MATCH_FLOOR = 0.7;
 
 function weightedAverage(scores: number[], weights: number[]): number {
   let totalWeight = 0;
@@ -311,7 +398,7 @@ function tokenSetScore(
   const candidateCoverage = weightedAverage(scorePerCandidateWord, candidateWeights);
 
   if (queryCoverage === 0 || candidateCoverage === 0) return 0;
-  return (2 * queryCoverage * candidateCoverage) / (queryCoverage + candidateCoverage);
+  return queryCoverage * (PARTIAL_MATCH_FLOOR + (1 - PARTIAL_MATCH_FLOOR) * candidateCoverage);
 }
 
 export interface NameMatch {

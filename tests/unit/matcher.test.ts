@@ -95,22 +95,31 @@ describe('scoreNameMatch', () => {
     expect(matchedName).toBe('Vladimir Putin');
   });
 
-  it('RECALIBRATED (issue #41): a single-word query against a much longer name no longer clears the match threshold', () => {
-    // Was a "KEY CASE (issue #11)" asserting >= 65 (a perfect-sounding phonetic
-    // hit on ONE word of a four-word name was treated as a likely match).
-    // Fixing issue #41's asymmetric-scoring bug means candidate coverage now
-    // counts for real: this query only explains ~1 of 4 real name parts, which
-    // is structurally the same shape as the bug case below ("Al Hassan" also
-    // covers only a fraction of its candidate). No coverage-ratio formula can
-    // tell "legitimate first-name-only search" apart from "coincidental partial
-    // overlap" without name-frequency data this codebase doesn't have — see
-    // the PR description for the full tradeoff. Explicitly accepted: a bare
-    // first name against a full multi-part name is now a weak signal, not a
-    // confident match. It must still clearly beat a truly unrelated name.
+  it('RE-RECALIBRATED (issue #239): a single-word query against a much longer name clears the threshold again, but weakly', () => {
+    // History, because this one assertion has now flipped twice:
+    //   #11  asserted >= 65 — a first-name search should find the person.
+    //   #41  flipped it to < 65 while fixing asymmetric scoring, reasoning
+    //        that no coverage ratio can tell "legitimate first-name-only
+    //        search" from "coincidental partial overlap" without name-
+    //        frequency data, and explicitly accepting a bare first name as a
+    //        weak signal rather than a confident match.
+    //   #239 flips it back, because measuring against the real corpora showed
+    //        what that cost: 88% of "kim", 75% of "ali" and 80% of
+    //        "mohammed" vanished from results entirely. In sanctions
+    //        screening a false negative clears someone who IS listed; a false
+    //        positive costs one row of human review. Not symmetric.
+    //
+    // #41's reasoning was right that the two cases are structurally alike.
+    // The resolution isn't to tell them apart — it's to stop treating "weak"
+    // as "invisible". A partial match now surfaces, ranked well below a full
+    // one, rather than being filtered out of the result set altogether.
     const { score } = scoreNameMatch('Qusay', ['Qoussaï Saddam Hussein Al-Tikriti']);
     const { score: unrelated } = scoreNameMatch('Qusay', ['Kim Jong Un']);
-    expect(score).toBeLessThan(65);
+    const { score: full } = scoreNameMatch('Qoussaï Saddam Hussein Al-Tikriti', ['Qoussaï Saddam Hussein Al-Tikriti']);
+
+    expect(score).toBeGreaterThanOrEqual(65);
     expect(score).toBeGreaterThan(unrelated);
+    expect(score).toBeLessThan(full);
   });
 
   it('KEY CASE (issue #11): "Mohammed" finds "Muhammad"-spelled records', () => {
@@ -159,8 +168,21 @@ describe('scoreNameMatch — asymmetric token-set scoring bug (issue #41)', () =
     // coverage. Every query word (even the generic particle "al") happened
     // to appear somewhere in this unrelated candidate, so it scored 100 —
     // indistinguishable from an exact match, and above DEFAULT_THRESHOLD (65).
+    //
+    // issue #239 narrowed this assertion from "< 65" (filtered out entirely)
+    // to "clearly below a full match". The defect here was never that the
+    // record surfaced — "Hassan" genuinely IS one of its name parts, and a
+    // screening tool should show that — it was that a partial overlap was
+    // indistinguishable from an exact hit. That property is what this test
+    // guards now. The case where the overlap is ONLY generic particles, with
+    // no real name part behind it, must still be filtered out, and is
+    // asserted separately below.
     const { score } = scoreNameMatch('Al Hassan', ['Al-Tikriti Hassan Omar']);
-    expect(score).toBeLessThan(65);
+    const { score: full } = scoreNameMatch('Al-Tikriti Hassan Omar', ['Al-Tikriti Hassan Omar']);
+
+    expect(full).toBe(100);
+    expect(score).toBeLessThan(90);
+    expect(full - score).toBeGreaterThanOrEqual(15);
   });
 
   it('a candidate token cannot be consumed by more than one query word', () => {
@@ -312,5 +334,143 @@ describe('short-word edit-distance false positives (issue #104)', () => {
   // the phonetic path regardless of the stricter short-word JW bar.
   it('keeps matching a short pair whose JW score is below the new bar but whose soundex agrees', () => {
     expect(scoreNameMatch('Dwayne', ['Duane']).score).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Partial-name recall (issue #239).
+ *
+ * Measured against the real UN + US SDN corpora, a single-name query missed
+ * up to 88% of the records that literally contain that name: "kim" returned
+ * 20 of 80, "ali" 110 of 423. `ALI HASSAN AL-MAJID AL-TIKRITI` scored 36 for
+ * the query "ali", and searching "linda" returned two vessels while hiding
+ * `Linda Elizabeth CAMPOS TIRADO` (40).
+ *
+ * The cause was arithmetic, not tuning. #41 made tokenSetScore symmetric via
+ * the harmonic mean (F1) of query- and candidate-coverage, which caps a
+ * one-word query at 2·1·(1/n) / (1 + 1/n) against an n-word name — 50 for
+ * three words, 40 for four — regardless of how good the match actually is.
+ * DEFAULT_THRESHOLD (65) sat in the gap between the 2-word case (67) and the
+ * 3-word case (50), so surname search worked on two-word names and silently
+ * failed on everything longer. Most sanctions records are 3+ words.
+ *
+ * This deliberately REVERSES the tradeoff #41 accepted ("a bare first name
+ * against a full multi-part name is now a weak signal"). In sanctions
+ * screening a false negative means clearing someone who is actually listed;
+ * a false positive means one extra row for a human to dismiss. Those are not
+ * symmetric costs. What #41 actually had to prevent — a partial overlap being
+ * indistinguishable from an exact match at 100 — is still prevented, and is
+ * asserted below: partial matches surface, but always rank beneath a full one.
+ */
+describe('partial-name recall (issue #239)', () => {
+  // The exact curve that produced the bug. Every row must clear the 65
+  // threshold, so that a surname stays findable no matter how many given
+  // names, patronymics or honorifics the record happens to carry.
+  it('a one-word query stays above threshold against a candidate of any length', () => {
+    const candidates = [
+      'KIM',
+      'KIM JONG',
+      'KIM KWANG IL',
+      'KIM KWANG IL SUN',
+      'KIM KWANG IL SUN MYONG',
+    ];
+    for (const candidate of candidates) {
+      const { score } = scoreNameMatch('Kim', [candidate]);
+      expect(
+        score,
+        `"Kim" vs ${candidate.split(' ').length}-word "${candidate}" scored ${score}`,
+      ).toBeGreaterThanOrEqual(65);
+    }
+  });
+
+  it('score still decreases as the candidate carries more unexplained name parts', () => {
+    // Recall must not come at the cost of ranking: a fuller match outranks a
+    // thinner one, even though both now clear the threshold.
+    const one = scoreNameMatch('Kim', ['KIM']).score;
+    const three = scoreNameMatch('Kim', ['KIM KWANG IL']).score;
+    const five = scoreNameMatch('Kim', ['KIM KWANG IL SUN MYONG']).score;
+    expect(one).toBeGreaterThan(three);
+    expect(three).toBeGreaterThan(five);
+  });
+
+  it('a partial match never reaches the score of a full match on the same record', () => {
+    // This is the property #41 genuinely needed: "Al Hassan" must not be
+    // indistinguishable from an exact hit. It may surface; it may not tie.
+    const partial = scoreNameMatch('Al Hassan', ['Al-Tikriti Hassan Omar']).score;
+    const full = scoreNameMatch('Al-Tikriti Hassan Omar', ['Al-Tikriti Hassan Omar']).score;
+    expect(full).toBe(100);
+    expect(partial).toBeLessThan(full);
+    expect(partial).toBeLessThan(90);
+  });
+
+  it('the reported case: "linda" finds the real Linda and ranks her above the vessels', () => {
+    const real = scoreNameMatch('linda', ['Linda Elizabeth CAMPOS TIRADO']).score;
+    const droppedInitial = scoreNameMatch('linda', ['INDA']).score;
+    const soundexOnly = scoreNameMatch('linda', ['LAMD']).score;
+
+    expect(real).toBeGreaterThanOrEqual(65);
+    expect(real).toBeGreaterThan(droppedInitial);
+    expect(real).toBeGreaterThan(soundexOnly);
+  });
+
+  it('a first-name-only query finds the person (reverses the tradeoff #41 accepted)', () => {
+    const { score } = scoreNameMatch('Qusay', ['Qoussaï Saddam Hussein Al-Tikriti']);
+    expect(score).toBeGreaterThanOrEqual(65);
+  });
+
+  it('a genuinely unrelated name still scores far below any partial match', () => {
+    const partial = scoreNameMatch('Kim', ['KIM KWANG IL SUN MYONG']).score;
+    const unrelated = scoreNameMatch('Kim', ['Vladimir Vladimirovich Putin']).score;
+    expect(unrelated).toBeLessThan(65);
+    expect(partial).toBeGreaterThan(unrelated + 20);
+  });
+});
+
+/**
+ * Phonetic-only matches must not outrank textual ones (issue #239).
+ *
+ * PHONETIC_MATCH_SCORE was 0.85 — above DEFAULT_THRESHOLD (65) — so every
+ * Soundex collision was guaranteed to surface as a hit, in the UI's orange
+ * "warning" band. Soundex is a 4-character code and collides densely: over
+ * the real corpus, M200 covers 174 distinct spellings (musa, mzee, mihigo,
+ * mwissa…), A134 covers 159. Searching "musa" returned 23 results whose only
+ * relationship to the query was the shared code: 3MG, MAK, MIKE, MYC.
+ *
+ * No threshold a user could set removed that noise without also removing
+ * every genuine fuzzy match, because the noise was pinned ABOVE the real
+ * variants. Soundex is now a corroborating signal, not a decisive one.
+ */
+describe('phonetic matching is corroborating, not decisive (issue #239)', () => {
+  it('a shared soundex code alone does not clear the threshold', () => {
+    // linda/lamd, musa/mzee: same code, no textual similarity whatsoever.
+    expect(scoreNameMatch('linda', ['LAMD']).score).toBeLessThan(65);
+    expect(scoreNameMatch('musa', ['MZEE']).score).toBeLessThan(65);
+    expect(scoreNameMatch('saif', ['SPP']).score).toBeLessThan(65);
+  });
+
+  it('but genuine phonetic spelling variants still match', () => {
+    // These agree phonetically AND are textually close, which is what
+    // separates a real variant from a code collision.
+    expect(scoreNameMatch('Mohammed Al-Amin', ['Muhammad Al-Amin']).score).toBeGreaterThanOrEqual(65);
+    expect(scoreNameMatch('Ahmed', ['Ahmad']).score).toBeGreaterThan(0);
+    expect(scoreNameMatch('Dwayne', ['Duane']).score).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * A differing first character is strong evidence of a different name
+ * (issue #239). Jaro-Winkler only ever REWARDS a shared prefix; it has no
+ * penalty for a differing one, so "linda"/"inda" scored 0.9333 — above the
+ * short-word bar from #104 — purely by dropping the most identifying
+ * character in the string.
+ */
+describe('first-character disagreement (issue #239)', () => {
+  it('a dropped or changed initial no longer scores as a near-identical name', () => {
+    expect(scoreNameMatch('linda', ['INDA']).score).toBeLessThan(90);
+  });
+
+  it('does not disturb names that agree on their first character', () => {
+    expect(scoreNameMatch('Vladimir Putin', ['Vladmir Putin']).score).toBeGreaterThanOrEqual(80);
+    expect(scoreNameMatch('Nasser', ['Nassar']).score).toBeGreaterThan(0);
   });
 });
