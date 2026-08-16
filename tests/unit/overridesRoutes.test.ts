@@ -8,11 +8,15 @@ const {
   mockSaveOverride,
   mockDeleteOverride,
   mockInvalidateSearchIndex,
+  mockVerifyApiToken,
 } = vi.hoisted(() => ({
   mockSaveOverride: vi.fn(),
   mockDeleteOverride: vi.fn(),
   mockInvalidateSearchIndex: vi.fn(),
+  mockVerifyApiToken: vi.fn(),
 }));
+
+vi.mock('../../src/shared/apiTokens', () => ({ verifyApiToken: mockVerifyApiToken }));
 
 vi.mock('../../src/overrides', async () => {
   const actual = await vi.importActual<typeof import('../../src/overrides')>('../../src/overrides');
@@ -185,6 +189,29 @@ describe('DELETE /api/overrides/:id', () => {
     expect(res.status).toBe(200);
     expect(mockDeleteOverride).toHaveBeenCalledWith('EU-1');
     expect(mockInvalidateSearchIndex).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('write-scoped bearer token attribution', () => {
+  it("attributes overriddenBy to the token's ownerEmail, not undefined", async () => {
+    mockVerifyApiToken.mockResolvedValueOnce({
+      valid: true,
+      tokenId: 'tok-1',
+      scopes: ['write'],
+      ownerEmail: 'svc-agent@corp.test',
+    });
+
+    const res = await request(buildApp())
+      .put('/api/overrides/EU-1')
+      .set('Authorization', 'Bearer sanc_sometoken')
+      .send({ fields: { sanctionReason: 'Corrected' }, reason: 'Fix' });
+
+    expect(res.status).toBe(200);
+    expect(mockSaveOverride).toHaveBeenCalledWith(
+      'EU-1',
+      { sanctionReason: 'Corrected' },
+      { overriddenBy: 'svc-agent@corp.test', reason: 'Fix' },
+    );
   });
 });
 

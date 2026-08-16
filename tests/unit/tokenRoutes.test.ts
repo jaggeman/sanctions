@@ -141,7 +141,7 @@ describe('POST /api/admin/tokens', () => {
     expect(res.status).toBe(201);
     expect(res.body.token).toBe('sanc_rawtoken');
     expect(res.body.id).toBe('tok-1');
-    expect(mockCreateApiToken).toHaveBeenCalledWith('CI pipeline', ['read']);
+    expect(mockCreateApiToken).toHaveBeenCalledWith('CI pipeline', ['read'], ADMIN_EMAIL);
   });
 
   it('returns 500 with details when createApiToken throws', async () => {

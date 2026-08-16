@@ -9,6 +9,7 @@ export interface ApiTokenRecord {
   tokenHash: string;
   tokenPreview: string;
   scopes: ApiTokenScope[];
+  ownerEmail: string; // the admin who created this token — write attribution
   createdAt: string; // ISO string
   lastUsedAt: string | null; // ISO string
   revoked: boolean;
@@ -19,9 +20,10 @@ export type ApiTokenPublic = Omit<ApiTokenRecord, 'tokenHash'>;
 
 export interface TokenVerificationResult {
   valid: boolean;
-  reason?: 'missing' | 'not_found' | 'revoked' | 'insufficient_scope';
+  reason?: 'missing' | 'not_found' | 'revoked' | 'insufficient_scope' | 'no_owner_email';
   tokenId?: string;
   scopes?: ApiTokenScope[];
+  ownerEmail?: string;
 }
 
 const TOKEN_PREFIX = 'sanc_';
@@ -55,8 +57,13 @@ function toPublic(record: ApiTokenRecord): ApiTokenPublic {
 
 export async function createApiToken(
   name: string,
-  scopes: ApiTokenScope[]
+  scopes: ApiTokenScope[],
+  ownerEmail: string
 ): Promise<{ token: string; record: ApiTokenPublic }> {
+  if (!ownerEmail || !ownerEmail.trim()) {
+    throw new Error('"ownerEmail" is required to create an API token.');
+  }
+
   const rawToken = generateRawToken();
   const docRef = db.collection(TOKENS_COLLECTION).doc();
 
@@ -66,6 +73,7 @@ export async function createApiToken(
     tokenHash: hashToken(rawToken),
     tokenPreview: previewFromRawToken(rawToken),
     scopes,
+    ownerEmail,
     createdAt: new Date().toISOString(),
     lastUsedAt: null,
     revoked: false,
@@ -126,10 +134,18 @@ export async function verifyApiToken(
     return { valid: false, reason: 'insufficient_scope', tokenId: record.id, scopes: record.scopes };
   }
 
+  // Writes are attributed to the token's owner (overriddenBy/decidedBy) —
+  // a token minted before ownerEmail existed has nothing to attribute to,
+  // so fail closed rather than silently writing as an unknown actor. Reads
+  // don't attribute anything, so they're let through unchanged.
+  if (requiredScope === 'write' && !record.ownerEmail) {
+    return { valid: false, reason: 'no_owner_email', tokenId: record.id, scopes: record.scopes };
+  }
+
   // Fire-and-forget: don't make every authenticated request wait on this write.
   doc.ref.update({ lastUsedAt: new Date().toISOString() }).catch((err: unknown) => {
     console.error('Failed to update lastUsedAt for token', record.id, err);
   });
 
-  return { valid: true, tokenId: record.id, scopes: record.scopes };
+  return { valid: true, tokenId: record.id, scopes: record.scopes, ownerEmail: record.ownerEmail };
 }

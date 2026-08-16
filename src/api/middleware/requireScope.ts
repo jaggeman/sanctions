@@ -4,6 +4,7 @@ import { verifyApiToken, ApiTokenScope, TokenVerificationResult } from '../../sh
 declare module 'express-serve-static-core' {
   interface Request {
     apiTokenId?: string;
+    userEmail?: string;
   }
 }
 
@@ -25,6 +26,8 @@ function messageFor(reason: TokenVerificationResult['reason']): string {
       return 'This API token has been revoked.';
     case 'insufficient_scope':
       return 'This API token does not have the required scope.';
+    case 'no_owner_email':
+      return 'This API token predates owner-attribution support and cannot be used for write access. Revoke it and mint a new token.';
     default:
       return 'Unauthorized.';
   }
@@ -42,6 +45,7 @@ export function requireScope(scope: ApiTokenScope): RequestHandler {
     }
 
     req.apiTokenId = result.tokenId;
+    req.userEmail = result.ownerEmail;
     next();
   };
 }
