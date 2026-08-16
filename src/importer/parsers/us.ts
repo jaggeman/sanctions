@@ -130,6 +130,22 @@ function mapEntryToRecord(entry: any): SanctionRecord | null {
     }
   }
 
+  // Map nationality/citizenship (issue #169). OFAC uses plain full-text
+  // country names here (e.g. "Saudi Arabia"), not ISO codes, so no
+  // placeholder-code filtering like the EU parser's '00'/unknown handling
+  // is needed. Both lists feed the same field — the same country can
+  // legitimately appear in both (a citizen who is also a national of that
+  // country), so dedup across the combined set, not per-list.
+  const citizenships: string[] = [];
+  for (const nat of toArray(entry.nationalityList?.nationality)) {
+    const country = nat.country ? String(nat.country).trim() : '';
+    if (country && !citizenships.includes(country)) citizenships.push(country);
+  }
+  for (const cit of toArray(entry.citizenshipList?.citizenship)) {
+    const country = cit.country ? String(cit.country).trim() : '';
+    if (country && !citizenships.includes(country)) citizenships.push(country);
+  }
+
   // Map program details as sanction reason
   const programs = toArray(entry.programList?.program).map((p) => String(p));
   const sanctionReason = programs.join(', ');
@@ -152,6 +168,7 @@ function mapEntryToRecord(entry: any): SanctionRecord | null {
     datesOfBirth: datesOfBirth.length > 0 ? datesOfBirth : undefined,
     birthDates: birthDates.length > 0 ? birthDates : undefined,
     placesOfBirth: placesOfBirth.length > 0 ? placesOfBirth : undefined,
+    citizenships: citizenships.length > 0 ? citizenships : undefined,
     passports: passports.length > 0 ? passports : undefined,
     addresses: addresses.length > 0 ? addresses : undefined,
     sanctionReason: sanctionReason || undefined,

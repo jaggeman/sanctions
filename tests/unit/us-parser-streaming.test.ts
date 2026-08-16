@@ -12,9 +12,9 @@ describe('parseUSListStreaming', () => {
     const count = await parseUSListStreaming(FIXTURE, (record) => {
       seen.push(record.id);
     });
-    expect(count).toBe(3);
-    expect(seen.length).toBe(3);
-    expect(new Set(seen).size).toBe(3);
+    expect(count).toBe(5);
+    expect(seen.length).toBe(5);
+    expect(new Set(seen).size).toBe(5);
   });
 
   it("produces records matching parseUSList's array output field-for-field", async () => {
@@ -37,7 +37,7 @@ describe('parseUSListStreaming', () => {
       await new Promise((resolve) => setTimeout(resolve, 1));
       seen.push(record.id);
     });
-    expect(seen.length).toBe(3);
+    expect(seen.length).toBe(5);
   });
 
   it('returns 0 and emits nothing when sdnEntry is absent', async () => {
