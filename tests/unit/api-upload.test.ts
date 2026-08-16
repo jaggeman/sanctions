@@ -5,6 +5,17 @@ import { createFakeDb } from './helpers/fakeFirestore';
 const processUpload = vi.fn();
 vi.mock('../../src/importer/uploadPipeline', () => ({ processUpload }));
 
+// issue #153: the force-guard tests below drive the bearer-token auth path.
+// Only `verifyApiToken` is replaced — everything else in the module stays
+// real, so the tokens router it also feeds keeps working.
+const { mockVerifyApiToken } = vi.hoisted(() => ({ mockVerifyApiToken: vi.fn() }));
+vi.mock('../../src/shared/apiTokens', async () => {
+  const actual = await vi.importActual<typeof import('../../src/shared/apiTokens')>(
+    '../../src/shared/apiTokens',
+  );
+  return { ...actual, verifyApiToken: mockVerifyApiToken };
+});
+
 // Issue #63: this suite logs in through the real POST /api/auth/verify-otp
 // route (below), which now persists the session through `db` — a bare
 // `{ collection: vi.fn() }` stub no longer works since it returns undefined
@@ -234,6 +245,57 @@ describe('POST /api/upload', () => {
       expect(processUpload).not.toHaveBeenCalled();
       expect(removeMock).toHaveBeenCalled();
       vi.unstubAllEnvs();
+    });
+  });
+
+  // issue #153: the #105 guard above reads `req.userEmail` and assumed a
+  // bearer token never sets one. Token owner-attribution (#123) then began
+  // setting `req.userEmail` from the token's `ownerEmail` — and since only
+  // an admin can mint a token, that address is always an ADMIN_EMAILS one,
+  // so every write-scoped token silently satisfied the admin check.
+  //
+  // These use `admin@sanctions.com` as the owner deliberately: it IS an
+  // admin (the dev fallback in src/auth/admins.ts), which is exactly what
+  // makes the bypass reachable. A non-admin owner would pass for the wrong
+  // reason and wouldn't prove anything.
+  describe('force:true is refused on the API-token path, even when the token owner is an admin (issue #153)', () => {
+    const adminOwnedWriteToken = {
+      valid: true,
+      tokenId: 'tok_mcp_integration',
+      scopes: ['write'],
+      ownerEmail: 'admin@sanctions.com',
+    };
+
+    it('rejects force:true from a write-scoped token with 403 and cleans up the temp file', async () => {
+      mockVerifyApiToken.mockResolvedValue(adminOwnedWriteToken);
+
+      const res = await request(api)
+        .post('/api/upload')
+        .set('Authorization', 'Bearer tok_raw_value')
+        .field('source', 'PEP')
+        .field('force', 'true')
+        .attach('file', Buffer.from('id;name\n1;Test\n'), 'people.csv');
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toMatch(/admin/i);
+      expect(processUpload).not.toHaveBeenCalled();
+      expect(removeMock).toHaveBeenCalled();
+    });
+
+    it('still allows a write-scoped token to upload normally when it is not asking to force', async () => {
+      mockVerifyApiToken.mockResolvedValue(adminOwnedWriteToken);
+      processUpload.mockResolvedValue({ outcome: 'applied', importId: 'abc123', counts: { parsed: 1, uploaded: 1 } });
+
+      const res = await request(api)
+        .post('/api/upload')
+        .set('Authorization', 'Bearer tok_raw_value')
+        .field('source', 'PEP')
+        .attach('file', Buffer.from('id;name\n1;Test\n'), 'people.csv');
+
+      expect(res.status).toBe(200);
+      expect(processUpload).toHaveBeenCalledWith(
+        expect.objectContaining({ importOptions: expect.objectContaining({ force: false }) }),
+      );
     });
   });
 });

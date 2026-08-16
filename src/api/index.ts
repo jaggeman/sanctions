@@ -88,12 +88,30 @@ const IMPORT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
  * sanctions source. `requireAuthOrScope('write')` alone only proves the
  * caller is logged in (or holds a write-scoped token), not that they're
  * trusted with overriding a safety mechanism — restricting it to real admin
- * sessions specifically (issue #105). A write-scoped API token has no
- * associated identity to check admin status against at all, so it's
- * rejected outright rather than silently treated as non-admin.
+ * sessions specifically (issue #105).
+ *
+ * The token check below is load-bearing and must not be reduced back to an
+ * `isAdminEmail` test alone (issue #153). This guard originally relied on a
+ * bearer token carrying no identity, so that `req.userEmail` being set
+ * implied a session. Token owner-attribution (#123) broke that assumption:
+ * `requireScope` now sets `req.userEmail` from the token's `ownerEmail`,
+ * and since only an admin can mint a token, that address always passes
+ * `isAdminEmail` — every write-scoped token silently satisfied this guard.
+ *
+ * Identity is therefore not sufficient; the *authentication method* is what
+ * matters. `req.apiTokenId` is set only by `requireScope`, never by
+ * `requireAuth`, and `requireAuthOrScope` routes to exactly one of the two,
+ * so its presence is a reliable "this caller is a token, not a session".
  */
 function assertForceAllowed(req: express.Request, res: express.Response, force: boolean): boolean {
   if (!force) return true;
+
+  if (req.apiTokenId) {
+    res.status(403).json({
+      error: '"force" (delist safety guard override) requires an admin session; an API token cannot be used for it.',
+    });
+    return false;
+  }
 
   const email = (req as any).userEmail;
   if (!email || !isAdminEmail(email)) {
