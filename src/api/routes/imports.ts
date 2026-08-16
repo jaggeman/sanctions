@@ -6,7 +6,13 @@ import multer from 'multer';
 import { enqueueImportTask } from '../../importer/taskQueue';
 import { runImport } from '../../importer';
 import { processUpload } from '../../importer/uploadPipeline';
-import { listImports, findImportBySha256, createFetchImportRecord, markImportFailed } from '../../importer/importRecord';
+import {
+  listImports,
+  findImportBySha256,
+  createFetchImportRecord,
+  markImportFailed,
+  ImportAlreadyExistsError,
+} from '../../importer/importRecord';
 import { validateCsvPath } from '../../importer/csvPath';
 import { generateImportId } from '../../importer/uploader';
 import { SanctionSource } from '../../shared/types';
@@ -257,14 +263,30 @@ importsRouter.post('/import', requireAuthOrScope('imports:write'), async (req, r
   // an upload does, so this is its own durable audit record — created
   // before enqueueing so "who triggered this and what was requested" is
   // captured even if the Cloud Task itself never runs.
-  await createFetchImportRecord({
-    importId: resolvedImportId,
-    sources,
-    mode,
-    force,
-    uploadedBy: (req as any).userEmail || null,
-    uploadedAt: new Date().toISOString(),
-  });
+  // issue #295: wrapped in try/catch so ALREADY_EXISTS / collision errors
+  // respond 409 and generic Firestore rejections respond 500 instead of hanging
+  // until the Cloud Function timeout.
+  try {
+    await createFetchImportRecord({
+      importId: resolvedImportId,
+      sources,
+      mode,
+      force,
+      uploadedBy: (req as any).userEmail || null,
+      uploadedAt: new Date().toISOString(),
+    });
+  } catch (error: any) {
+    if (
+      error instanceof ImportAlreadyExistsError ||
+      error?.code === 6 ||
+      error?.code === 'already-exists' ||
+      /already exists/i.test(error?.message)
+    ) {
+      return res.status(409).json({ error: `Import with ID "${resolvedImportId}" already exists.` });
+    }
+    console.error('Failed to create import record:', error);
+    return res.status(500).json({ error: 'Failed to record import', details: error.message });
+  }
 
   try {
     // importOptions already carries mode/dryRun/force/importId — building a

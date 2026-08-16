@@ -19,9 +19,11 @@ vi.mock('../../src/importer/uploadPipeline', () => ({ processUpload: vi.fn() }))
 // rather than exercising the real Firestore-shaped importRecord internals.
 const createFetchImportRecord = vi.fn(async () => {});
 const markImportFailed = vi.fn(async () => {});
+class ImportAlreadyExistsError extends Error {}
 vi.mock('../../src/importer/importRecord', () => ({
   createFetchImportRecord,
   markImportFailed,
+  ImportAlreadyExistsError,
   listImports: vi.fn(),
   findImportBySha256: vi.fn(),
 }));
@@ -320,6 +322,36 @@ describe('POST /api/import', () => {
       const res = await agent.post('/api/import').send({ sources: ['EU'], force: 123 });
       expect(res.status).toBe(400);
       expect(res.body.error).toMatch(/force.*boolean/i);
+      expect(enqueueImportTask).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('unhandled rejection prevention & duplicate importId (issue #295)', () => {
+    it('returns 409 when createFetchImportRecord throws ImportAlreadyExistsError instead of hanging', async () => {
+      createFetchImportRecord.mockRejectedValueOnce(
+        new ImportAlreadyExistsError('Import with ID "existing-id" already exists'),
+      );
+
+      const res = await agent.post('/api/import').send({
+        sources: ['EU'],
+        importId: 'existing-id',
+      });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toMatch(/already exists/i);
+      expect(enqueueImportTask).not.toHaveBeenCalled();
+    });
+
+    it('returns 500 when createFetchImportRecord throws generic Firestore error instead of hanging', async () => {
+      createFetchImportRecord.mockRejectedValueOnce(new Error('Firestore connection timeout'));
+
+      const res = await agent.post('/api/import').send({
+        sources: ['EU'],
+        importId: 'timeout-id',
+      });
+
+      expect(res.status).toBe(500);
+      expect(res.body).toHaveProperty('error');
       expect(enqueueImportTask).not.toHaveBeenCalled();
     });
   });
