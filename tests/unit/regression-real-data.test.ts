@@ -61,34 +61,39 @@ describe('regression: known name-variant pairs against the real EU corpus', () =
     }
   });
 
-  // Removed from name-variants.json (issue #41): a bare "Qusay" used to
-  // reliably out-rank all 6,234 other entries and land on EU-20 (the
-  // "Qoussaï Saddam Hussein Al-Tikriti" / "Qusay Saddam Hussein Al-Tikriti"
-  // entity) — that was this suite's very first fixture, straight from
-  // issue #11. Fixing #41's asymmetric-coverage bug necessarily weakens a
-  // single-word query against a 4-part name (see the PR description for
-  // why no coverage-ratio formula can tell that apart from the bug this
-  // issue exists to fix, without corpus-wide name-frequency data this
-  // codebase doesn't have) — a conscious, user-approved trade-off, not an
-  // oversight. This test documents what actually happens now, rather than
-  // silently dropping the coverage: the true entity's score drops sharply.
-  // It USED to also note that, at full-corpus scale, an unrelated short
-  // alias (EU-121867, "Musa") could win by crossing the old flat
-  // EDIT_DISTANCE_MATCH_THRESHOLD by pure chance — that specific mechanism
-  // is fixed by issue #104 (see the next test), but the underlying #41
-  // trade-off (the true entity's own score dropping) remains and is what
-  // this test documents.
-  it('KNOWN TRADE-OFF (issue #41): a bare first name alone no longer reliably out-ranks the whole corpus', () => {
+  // This case has been the suite's bellwether for the recall/precision
+  // tradeoff from the start, and it has now moved twice:
+  //
+  //   #11  This was the suite's very FIRST fixture: a bare "Qusay" reliably
+  //        out-ranked all 6,234 other entries and landed on EU-20, the
+  //        "Qoussaï Saddam Hussein Al-Tikriti" entity.
+  //   #41  Fixing asymmetric coverage necessarily weakened a one-word query
+  //        against a 4-part name, so the fixture was REMOVED from
+  //        name-variants.json and this test written in its place, to
+  //        document the true entity's score collapsing below threshold —
+  //        a conscious, user-approved tradeoff at the time.
+  //   #239 Measuring against the full UN + US SDN corpora showed what that
+  //        cost across the board: 88% of "kim", 75% of "ali" and 80% of
+  //        "mohammed" disappeared from results entirely. A screening tool
+  //        that hides listed people when you search one part of their name
+  //        is not doing its job, so the tradeoff was reversed.
+  //
+  // This therefore asserts the #11 behaviour again — findable by a bare
+  // first name — while the property #41 genuinely needed (a partial match
+  // must not masquerade as an exact one) is asserted here as the ranking
+  // check below, and more fully in tests/unit/matcher.test.ts. #104's
+  // specific coincidental cross-match stays fixed in the next test.
+  it('RESTORED (issue #239): a bare first name finds its entity again', () => {
     const trueEntity = corpus.find((c) => c.id === 'EU-20')!;
     const { score: trueScore } = scoreNameMatch('Qusay', [trueEntity.primaryName, ...trueEntity.aliases]);
+    const { score: fullScore } = scoreNameMatch(trueEntity.primaryName, [trueEntity.primaryName]);
     const best = bestMatchInCorpus('Qusay', corpus);
 
-    // The true entity's own score dropped well below the match threshold...
-    expect(trueScore).toBeLessThan(65);
-    // ...and, at full-corpus scale, is no longer guaranteed to be the winner.
-    // This assertion exists to make that fact visible in the suite, not to
-    // lock in which unrelated entity wins — that's corpus-order-sensitive
-    // noise, not a property worth pinning down.
+    // The true entity clears the threshold, so it reaches the result set...
+    expect(trueScore).toBeGreaterThanOrEqual(65);
+    // ...but still ranks below the full name it was drawn from, which is the
+    // property #41 actually had to protect.
+    expect(trueScore).toBeLessThan(fullScore);
     expect(best).not.toBeNull();
   });
 
