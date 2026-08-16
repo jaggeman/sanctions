@@ -60,6 +60,26 @@ const GRANULAR_SCOPE_OPTIONS = [
   { id: 'system:read', label: 'System Diagnostics (Read)', group: 'System' },
 ];
 
+// One row per resource, Read/Write collapsed into columns — derived from
+// GRANULAR_SCOPE_OPTIONS so the table can't drift from the actual scope ids.
+interface GranularScopeRow {
+  resource: string;
+  readId?: string;
+  writeId?: string;
+}
+
+const GRANULAR_SCOPE_ROWS: GranularScopeRow[] = GRANULAR_SCOPE_OPTIONS.reduce<GranularScopeRow[]>((rows, opt) => {
+  const resource = opt.label.replace(/\s*\((Read|Write)\)$/, '');
+  let row = rows.find((r) => r.resource === resource);
+  if (!row) {
+    row = { resource };
+    rows.push(row);
+  }
+  if (opt.id.endsWith(':read')) row.readId = opt.id;
+  else if (opt.id.endsWith(':write')) row.writeId = opt.id;
+  return rows;
+}, []);
+
 function formatDate(value: string | null): string {
   if (!value) return 'Never';
   return new Date(value).toLocaleString();
@@ -277,26 +297,44 @@ export default function ApiTokensTab() {
                 <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
                   Granular Resource Scopes (Least Privilege Access):
                 </Typography>
-                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: '1fr 1fr 1fr' }, gap: 1 }}>
-                  {GRANULAR_SCOPE_OPTIONS.map((opt) => (
-                    <FormControlLabel
-                      key={opt.id}
-                      control={
-                        <Checkbox
-                          size="small"
-                          checked={selectedGranularScopes.includes(opt.id)}
-                          onChange={() => toggleGranularScope(opt.id)}
-                          disabled={creating}
-                        />
-                      }
-                      label={
-                        <Typography variant="body2">
-                          <strong>{opt.label}</strong>
-                        </Typography>
-                      }
-                    />
-                  ))}
-                </Box>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Resource</TableCell>
+                      <TableCell align="center">Read</TableCell>
+                      <TableCell align="center">Write</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {GRANULAR_SCOPE_ROWS.map((row) => (
+                      <TableRow key={row.resource}>
+                        <TableCell>{row.resource}</TableCell>
+                        <TableCell align="center">
+                          {row.readId && (
+                            <Checkbox
+                              size="small"
+                              checked={selectedGranularScopes.includes(row.readId)}
+                              onChange={() => toggleGranularScope(row.readId!)}
+                              disabled={creating}
+                              slotProps={{ input: { 'aria-label': `${row.resource} (Read)` } }}
+                            />
+                          )}
+                        </TableCell>
+                        <TableCell align="center">
+                          {row.writeId && (
+                            <Checkbox
+                              size="small"
+                              checked={selectedGranularScopes.includes(row.writeId)}
+                              onChange={() => toggleGranularScope(row.writeId!)}
+                              disabled={creating}
+                              slotProps={{ input: { 'aria-label': `${row.resource} (Write)` } }}
+                            />
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </Paper>
             )}
           </Box>
