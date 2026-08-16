@@ -31,43 +31,54 @@ exportRouter.get('/export', requireAuthOrScope('read'), async (req: Request, res
     ? importId.trim()
     : null;
 
-  const snapshot = await db.collection('sanctions').get();
-  const records: SanctionRecord[] = [];
+  try {
+    const snapshot = await db.collection('sanctions').get();
+    const records: SanctionRecord[] = [];
 
-  snapshot.docs.forEach((doc: any) => {
-    const r = doc.data() as SanctionRecord;
+    snapshot.docs.forEach((doc: any) => {
+      const r = doc.data() as SanctionRecord;
 
-    // Filter by status: 'active', 'delisted', or 'all'
-    const recordStatus = r.status || 'active';
-    if (statusFilter !== 'all' && recordStatus !== statusFilter) {
-      return;
-    }
+      // Firestore doesn't enforce the SanctionRecord type — a corrupted or
+      // manually-edited document can be missing required fields at runtime.
+      if (!r.source || !r.type) {
+        return;
+      }
 
-    // Filter by source
-    if (sourcesFilter && !sourcesFilter.includes(r.source.toUpperCase())) {
-      return;
-    }
+      // Filter by status: 'active', 'delisted', or 'all'
+      const recordStatus = r.status || 'active';
+      if (statusFilter !== 'all' && recordStatus !== statusFilter) {
+        return;
+      }
 
-    // Filter by entity type
-    if (typeFilter && r.type.toLowerCase() !== typeFilter) {
-      return;
-    }
+      // Filter by source
+      if (sourcesFilter && !sourcesFilter.includes(r.source.toUpperCase())) {
+        return;
+      }
 
-    // Filter by importId
-    if (targetImportId && r.firstSeenImport !== targetImportId && r.lastSeenImport !== targetImportId) {
-      return;
-    }
+      // Filter by entity type
+      if (typeFilter && r.type.toLowerCase() !== typeFilter) {
+        return;
+      }
 
-    records.push(r);
-  });
+      // Filter by importId
+      if (targetImportId && r.firstSeenImport !== targetImportId && r.lastSeenImport !== targetImportId) {
+        return;
+      }
 
-  const csv = recordsToCsv(records);
-  const dateStr = new Date().toISOString().slice(0, 10);
-  const filename = targetImportId
-    ? `sanctions-import-${targetImportId}-${dateStr}.csv`
-    : `sanctions-export-${dateStr}.csv`;
+      records.push(r);
+    });
 
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  res.status(200).send(csv);
+    const csv = recordsToCsv(records);
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const filename = targetImportId
+      ? `sanctions-import-${targetImportId}-${dateStr}.csv`
+      : `sanctions-export-${dateStr}.csv`;
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.status(200).send(csv);
+  } catch (error: any) {
+    console.error('Export error:', error);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
 });

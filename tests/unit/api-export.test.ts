@@ -6,20 +6,22 @@ import { createFakeDb } from './helpers/fakeFirestore';
 let allRecords: SanctionRecord[] = [];
 const { db: authFakeDb } = createFakeDb();
 
-const fakeDb = {
-  collection: vi.fn((name: string) => {
-    if (name === 'sessions' || name === 'otpCodes') {
-      return authFakeDb.collection(name);
-    }
-    if (name === 'sanctions') {
-      return {
-        get: vi.fn(async () => ({
-          docs: allRecords.map((r) => ({ id: r.id, data: () => r })),
-        })),
-      };
-    }
+const defaultCollectionImpl = (name: string) => {
+  if (name === 'sessions' || name === 'otpCodes') {
     return authFakeDb.collection(name);
-  }),
+  }
+  if (name === 'sanctions') {
+    return {
+      get: vi.fn(async () => ({
+        docs: allRecords.map((r) => ({ id: r.id, data: () => r })),
+      })),
+    };
+  }
+  return authFakeDb.collection(name);
+};
+
+const fakeDb = {
+  collection: vi.fn(defaultCollectionImpl),
 };
 
 const verifyApiToken = vi.fn();
@@ -61,6 +63,7 @@ describe('GET /api/export', () => {
     allRecords = [record1, record2];
     verifyApiToken.mockReset();
     vi.clearAllMocks();
+    fakeDb.collection.mockImplementation(defaultCollectionImpl);
     agent = request.agent(app);
     await agent.post('/api/auth/verify-otp').send({ email: 'admin@sanctions.com', code: '123456' });
   });
@@ -113,5 +116,36 @@ describe('GET /api/export', () => {
     expect(res.status).toBe(200);
     expect(res.text).toContain('EU-1');
     expect(res.text).not.toContain('US-2');
+  });
+
+  it('issue #260: returns 500 instead of crashing when Firestore read fails', async () => {
+    // Session-cookie auth also calls db.collection('sessions') on this same
+    // request, so only the 'sanctions' branch should fail here.
+    fakeDb.collection.mockImplementation((name: string) => {
+      if (name === 'sanctions') {
+        return {
+          get: vi.fn(async () => {
+            throw new Error('Firestore unavailable');
+          }),
+        };
+      }
+      return authFakeDb.collection(name);
+    });
+
+    const res = await agent.get('/api/export?status=all');
+
+    expect(res.status).toBe(500);
+    expect(res.body).toHaveProperty('error');
+  });
+
+  it('issue #260: skips a malformed record missing source/type instead of throwing (corrupt/manually-edited document)', async () => {
+    const malformed = { id: 'BAD-1', names: [{ wholeName: 'No Source Or Type', strong: true }], status: 'active' } as unknown as SanctionRecord;
+    allRecords = [record1, malformed];
+
+    const res = await agent.get('/api/export?status=all');
+
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('EU-1');
+    expect(res.text).not.toContain('No Source Or Type');
   });
 });
