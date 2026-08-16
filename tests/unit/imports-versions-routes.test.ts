@@ -120,6 +120,21 @@ describe('GET /api/imports', () => {
     expect(res.status).toBe(500);
     expect(res.body.details).toBe('boom');
   });
+
+  // issue #261: `|| 20` treated an explicit limit=0 the same as "not provided",
+  // and let a negative limit reach Firestore's `.limit()` unvalidated (a 500).
+  it('preserves an explicit limit=0 rather than defaulting to 20', async () => {
+    listImports.mockResolvedValue([]);
+    await agent.get('/api/imports').query({ limit: '0' });
+    expect(listImports).toHaveBeenCalledWith(0);
+  });
+
+  it('falls back to the default 20 for a negative limit instead of passing it to Firestore', async () => {
+    listImports.mockResolvedValue([]);
+    const res = await agent.get('/api/imports').query({ limit: '-5' });
+    expect(res.status).toBe(200);
+    expect(listImports).toHaveBeenCalledWith(20);
+  });
 });
 
 describe('GET /api/imports/:id', () => {
