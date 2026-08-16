@@ -10,6 +10,11 @@ vi.mock('../../../src/shared/firebase', () => ({ db: fakeDb }));
 const { requireAuth, SESSION_COOKIE_NAME } = await import('../../../src/auth/middleware');
 const { createSession, destroySession } = await import('../../../src/auth/session');
 const { TEST_LOGIN_EMAIL } = await import('../../../src/auth/testAccount');
+const { requestLogger } = await import('../../../src/api/middleware/requestLogger');
+
+function readJsonLines(spy: ReturnType<typeof vi.spyOn>): any[] {
+  return spy.mock.calls.map((call) => JSON.parse(call[0] as string));
+}
 
 function buildApp() {
   const app = express();
@@ -115,5 +120,25 @@ describe('requireAuth middleware', () => {
       .set('X-User-Email', TEST_LOGIN_EMAIL)
       .set('userEmail', TEST_LOGIN_EMAIL);
     expect(res.status).toBe(401);
+  });
+
+  it('binds the authenticated email into req.log, so request.finish includes it (issue #110)', async () => {
+    process.env.ALLOWED_EMAIL_DOMAINS = 'corp.com';
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const app = express();
+      app.use(requestLogger);
+      app.use(cookieParser());
+      app.get('/protected', requireAuth, (req, res) => res.json({ ok: true }));
+
+      const cookie = `${SESSION_COOKIE_NAME}=${await createSession('someone@corp.com')}`;
+      await request(app).get('/protected').set('Cookie', cookie);
+
+      const entries = readJsonLines(logSpy);
+      const finish = entries.find((e) => e.message === 'request.finish');
+      expect(finish.userEmail).toBe('s***@corp.com'); // shared logger redacts embedded emails (issue #67)
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 });

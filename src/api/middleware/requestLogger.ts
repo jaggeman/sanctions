@@ -26,6 +26,19 @@ function resolveRequestId(req: Request): string {
   return randomUUID();
 }
 
+/**
+ * Rebinds req.log with additional context (issue #110) — e.g. the caller's
+ * identity, once an auth middleware further down the pipeline resolves it.
+ * A no-op if req.log doesn't exist, which happens in any test harness (or
+ * future route) that doesn't mount requestLogger first.
+ */
+export function bindLogIdentity(req: Request, identity: Record<string, unknown>): void {
+  const typedReq = req as RequestWithLog;
+  if (typedReq.log) {
+    typedReq.log = typedReq.log.child(identity);
+  }
+}
+
 export function requestLogger(req: Request, res: Response, next: NextFunction): void {
   const requestId = resolveRequestId(req);
   const log = logger.child({ requestId });
@@ -40,7 +53,11 @@ export function requestLogger(req: Request, res: Response, next: NextFunction): 
   res.on('finish', () => {
     const durationMs = Date.now() - started;
     const level = levelForStatus(res.statusCode);
-    log[level]('request.finish', {
+    // issue #110: read req.log (the property), not the `log` closed over
+    // above — an auth middleware later in the pipeline may have rebound
+    // req.log via bindLogIdentity to include the caller's identity, and this
+    // callback was registered before that could possibly have happened.
+    (req as RequestWithLog).log[level]('request.finish', {
       method: req.method,
       path: req.path,
       statusCode: res.statusCode,

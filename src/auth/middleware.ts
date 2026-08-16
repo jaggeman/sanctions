@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { getSession } from './session';
 import { isAllowedEmail } from './emailAllowlist';
+import { bindLogIdentity } from '../api/middleware/requestLogger';
 
 export const SESSION_COOKIE_NAME = 'sid';
 
@@ -27,6 +28,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     }
 
     (req as any).userEmail = session.email;
+    bindLogIdentity(req, { userEmail: session.email });
     next();
   } catch (error: any) {
     res.status(500).json({ error: 'Internal server error', details: error.message });

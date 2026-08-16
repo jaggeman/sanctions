@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { requestLogger } from '../../src/api/middleware/requestLogger';
+import { requestLogger, bindLogIdentity } from '../../src/api/middleware/requestLogger';
 import { errorLogger } from '../../src/api/middleware/errorLogger';
 
 function readJsonLines(spy: ReturnType<typeof vi.spyOn>): any[] {
@@ -70,6 +70,23 @@ describe('errorLogger middleware', () => {
     // completes without an unhandled "ERR_HTTP_HEADERS_SENT" crash.
     const res = await request(buildApp()).get('/already-sent');
     expect(res.status).toBe(200);
+  });
+
+  // --- issue #110 ------------------------------------------------------
+
+  it('includes identity bound earlier in the pipeline by an auth middleware', async () => {
+    const app = express();
+    app.use(requestLogger);
+    app.get('/throws', (req, res) => {
+      bindLogIdentity(req, { userEmail: 'analyst@example.com' });
+      throw new Error('handler exploded');
+    });
+    app.use(errorLogger);
+
+    await request(app).get('/throws');
+    const entries = readJsonLines(errorSpy);
+    const errorLine = entries.find((e) => e.message === 'request.error');
+    expect(errorLine.userEmail).toBe('a***@example.com');
   });
 
   // issue #66: an unconditional 500 mislabels a client's own mistake (e.g. a

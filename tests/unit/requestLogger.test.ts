@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { requestLogger } from '../../src/api/middleware/requestLogger';
+import { requestLogger, bindLogIdentity } from '../../src/api/middleware/requestLogger';
 
 function readJsonLines(spy: ReturnType<typeof vi.spyOn>): any[] {
   return spy.mock.calls.map((call) => JSON.parse(call[0] as string));
@@ -87,5 +87,52 @@ describe('requestLogger middleware', () => {
     const finishAsError = errorEntries.find((e) => e.message === 'request.finish');
     expect(finishAsError).toMatchObject({ statusCode: 500 });
     expect(warnEntries.find((e) => e.message === 'request.finish')).toBeUndefined();
+  });
+
+  // --- issue #110 ------------------------------------------------------
+
+  it('does not include a userEmail/tokenId field for an unauthenticated request — not a crash, not a blank string', async () => {
+    await request(buildApp()).get('/ok');
+    const entries = readJsonLines(logSpy);
+    const finish = entries.find((e) => e.message === 'request.finish');
+    expect(finish.userEmail).toBeUndefined();
+    expect(finish.tokenId).toBeUndefined();
+  });
+
+  it('lets downstream middleware bind the caller identity into req.log, picked up by every later log call in the same request', async () => {
+    const app = express();
+    app.use(requestLogger);
+    app.get(
+      '/ok',
+      (req, res, next) => {
+        bindLogIdentity(req, { userEmail: 'analyst@example.com' });
+        next();
+      },
+      (req, res) => {
+        (req as any).log.info('handler reached');
+        res.json({ ok: true });
+      },
+    );
+
+    await request(app).get('/ok');
+    const entries = readJsonLines(logSpy);
+    const handlerLine = entries.find((e) => e.message === 'handler reached');
+    const finish = entries.find((e) => e.message === 'request.finish');
+
+    // src/shared/logger.ts already redacts any embedded email address
+    // (issue #67) — the identity is present, just masked, same as any other
+    // logged field would be.
+    expect(handlerLine.userEmail).toBe('a***@example.com');
+    // issue #110: request.finish is logged from a res.on('finish') callback
+    // registered before identity is known — it must read the current
+    // req.log, not a stale reference captured at request start, or identity
+    // bound by auth middleware would never reach this specific log line.
+    expect(finish.userEmail).toBe('a***@example.com');
+  });
+
+  it('is a no-op when req.log does not exist (e.g. a bare router with no requestLogger mounted)', () => {
+    const bareReq: any = {};
+    expect(() => bindLogIdentity(bareReq, { userEmail: 'x@example.com' })).not.toThrow();
+    expect(bareReq.log).toBeUndefined();
   });
 });
