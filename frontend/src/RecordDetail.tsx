@@ -48,14 +48,14 @@ interface Regulation {
 
 interface RecordDetailData {
   id: string;
-  primaryName: string;
-  aliases?: string[];
+  // issue #46: SanctionRecord no longer sends flat primaryName/aliases —
+  // `names` (below) is the only source now and is always present.
+  names?: NameAlias[];
   source?: string;
   type?: string;
   status?: 'active' | 'delisted';
   listedAt?: string;
   delistedAt?: string;
-  names?: NameAlias[];
   identifications?: Identification[];
   addresses?: Address[];
   citizenships?: string[];
@@ -132,7 +132,7 @@ export default function RecordDetail({ recordId, onClose }: { recordId: string |
   return (
     <Dialog open={!!recordId} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span>{record?.primaryName || 'Record detail'}</span>
+        <span>{record?.names?.[0]?.wholeName || 'Record detail'}</span>
         <IconButton aria-label="Close" onClick={onClose} size="small">
           <CloseIcon fontSize="small" />
         </IconButton>
@@ -184,7 +184,7 @@ export default function RecordDetail({ recordId, onClose }: { recordId: string |
               </List>
             ) : (
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                {[record.primaryName, ...(record.aliases || [])].join(', ')}
+                No name data.
               </Typography>
             )}
 

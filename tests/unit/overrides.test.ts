@@ -59,6 +59,7 @@ const {
   IMMUTABLE_KEYS,
 } = await import('../../src/overrides');
 import type { SanctionRecord, Override } from '../../src/shared/types';
+import { primaryNameOf } from '../../src/shared/types';
 
 beforeEach(() => {
   store = {};
@@ -71,8 +72,10 @@ function record(overrides: Partial<SanctionRecord> = {}): SanctionRecord {
     id: 'EU-1',
     source: 'EU',
     type: 'individual',
-    primaryName: 'Vladimir Putin',
-    aliases: ['Vladimir Vladimirovich Putin'],
+    names: [
+      { wholeName: 'Vladimir Putin', strong: true },
+      { wholeName: 'Vladimir Vladimirovich Putin', strong: true },
+    ],
     searchNames: ['vladimir', 'putin', 'vladimirovich'],
     sanctionReason: 'Original official reason',
     createdAt: '2024-01-01T00:00:00.000Z',
@@ -114,32 +117,37 @@ describe('applyOverride', () => {
     expect(result.record.sanctionReason).toBe('Corrected reason from analyst');
     expect(result.overriddenFields).toEqual(['sanctionReason']);
     // Every other field stays exactly as the source record had it.
-    expect(result.record.primaryName).toBe(rec.primaryName);
+    expect(primaryNameOf(result.record.names)).toBe(primaryNameOf(rec.names));
   });
 
   it('never mutates the input record — reversibility depends on the source staying pristine', () => {
     const rec = record();
     const snapshot = JSON.parse(JSON.stringify(rec));
-    applyOverride(rec, override({ primaryName: 'Changed Name' }));
+    applyOverride(rec, override({ names: [{ wholeName: 'Changed Name', strong: true }] }));
     expect(rec).toEqual(snapshot);
   });
 
   it('regenerates searchNames when primaryName is overridden, so the new name is searchable', () => {
     const rec = record();
-    const result = applyOverride(rec, override({ primaryName: 'Wladimir Putin' }));
+    const result = applyOverride(rec, override({ names: [{ wholeName: 'Wladimir Putin', strong: true }] }));
     expect(result.record.searchNames).toContain('wladimir');
   });
 
   it('regenerates searchNames when aliases are overridden', () => {
     const rec = record();
-    const result = applyOverride(rec, override({ aliases: ['New Alias Name'] }));
+    const result = applyOverride(rec, override({
+      names: [
+        { wholeName: 'Vladimir Putin', strong: true },
+        { wholeName: 'New Alias Name', strong: true },
+      ],
+    }));
     expect(result.record.searchNames).toContain('alias');
   });
 
   it('does not report searchNames itself as an overridden field — it is a derived side effect', () => {
     const rec = record();
-    const result = applyOverride(rec, override({ primaryName: 'Wladimir Putin' }));
-    expect(result.overriddenFields).toEqual(['primaryName']);
+    const result = applyOverride(rec, override({ names: [{ wholeName: 'Wladimir Putin', strong: true }] }));
+    expect(result.overriddenFields).toEqual(['names']);
   });
 
   it('ignores an attempt to override immutable identity fields (id, source, type, createdAt)', () => {

@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { db } from '../shared/firebase';
 import { runImport } from '../importer';
 import { runSearch } from '../search';
+import { primaryNameOf, aliasNamesOf, formatBirthDates, formatIdentifications } from '../shared/types';
 
 export const program = new Command();
 
@@ -45,14 +46,16 @@ program
       results.forEach(r => {
         console.log(`--------------------------------------------------`);
         console.log(`🆔 ID:      ${r.id}`);
-        console.log(`👤 Namn:    \x1b[1m\x1b[32m${r.primaryName}\x1b[0m`);
+        console.log(`👤 Namn:    \x1b[1m\x1b[32m${primaryNameOf(r.names)}\x1b[0m`);
         console.log(`🎯 Träff:   ${r.score}% (matchade "${r.matchedAlias}")`);
-        if (r.aliases && r.aliases.length > 0) {
-          console.log(`🗣️ Alias:   ${r.aliases.join(', ')}`);
+        const aliases = aliasNamesOf(r.names);
+        if (aliases.length > 0) {
+          console.log(`🗣️ Alias:   ${aliases.join(', ')}`);
         }
         console.log(`🌍 Källa:   ${r.source} (${r.type})`);
-        if (r.datesOfBirth) {
-          console.log(`📅 Född:    ${r.datesOfBirth.join(', ')}`);
+        const birthDates = formatBirthDates(r.birthDates);
+        if (birthDates.length > 0) {
+          console.log(`📅 Född:    ${birthDates.join(', ')}`);
         }
         if (r.placesOfBirth) {
           console.log(`📍 Födelseort: ${r.placesOfBirth.join(', ')}`);
@@ -60,8 +63,9 @@ program
         if (r.citizenships) {
           console.log(`🏳️ Medborgarskap: ${r.citizenships.join(', ')}`);
         }
-        if (r.passports) {
-          console.log(`📇 ID/Pass: ${r.passports.join(', ')}`);
+        const identifications = formatIdentifications(r.identifications);
+        if (identifications.length > 0) {
+          console.log(`📇 ID/Pass: ${identifications.join(', ')}`);
         }
         if (r.sanctionReason) {
           console.log(`📝 Orsak:   ${r.sanctionReason.substring(0, 150)}${r.sanctionReason.length > 150 ? '...' : ''}`);

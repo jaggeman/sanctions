@@ -12,7 +12,7 @@ describe('parseUKList', () => {
     expect(abdul).toBeDefined();
     expect(abdul!.source).toBe('UK');
     expect(abdul!.type).toBe('individual');
-    expect(abdul!.primaryName).toBe('ABDUL LATIF MANSUR');
+    expect(abdul!.names[0].wholeName).toBe('ABDUL LATIF MANSUR');
     expect(abdul!.unitedNationId).toBe('TAi.007');
     expect(abdul!.sourceRef).toBe('AFG0011');
   });
@@ -20,8 +20,9 @@ describe('parseUKList', () => {
   it('collects Alias and "Primary Name Variation" entries as aliases, not just the primary', async () => {
     const records = await parseUKList(FIXTURE);
     const abdul = records.find((r) => r.id === 'UK-AFG0011');
-    expect(abdul!.aliases).toContain('Abdul Latif MANSOOR');
-    expect(abdul!.aliases).toContain('Wali MOHAMMAD');
+    const aliases = abdul!.names.slice(1).map((n) => n.wholeName);
+    expect(aliases).toContain('Abdul Latif MANSOOR');
+    expect(aliases).toContain('Wali MOHAMMAD');
   });
 
   it('issue #99: parses a dd/mm/YYYY placeholder DOB as year-only, and a real DD/MM/YYYY DOB in full (deduped)', async () => {
@@ -70,7 +71,7 @@ describe('parseUKList', () => {
     const akram = records.find((r) => r.id === 'UK-AQD0128');
 
     expect(akram).toBeDefined();
-    expect(akram!.primaryName).toBe('AKRAM TURKI HISHAN AL-MAZIDIH');
+    expect(akram!.names[0].wholeName).toBe('AKRAM TURKI HISHAN AL-MAZIDIH');
   });
 
   it('issue #99/#34-class bug: preserves a leading-zero national identifier number', async () => {
@@ -86,8 +87,8 @@ describe('parseUKList', () => {
 
     expect(ktj).toBeDefined();
     expect(ktj!.type).toBe('entity');
-    expect(ktj!.primaryName).toBe('Khatiba al-Tawhid wal-Jihad (KTJ)');
-    expect(ktj!.aliases).toContain("Jama'at al-Tawhid wal-Jihad");
+    expect(ktj!.names[0].wholeName).toBe('Khatiba al-Tawhid wal-Jihad (KTJ)');
+    expect(ktj!.names.slice(1).map((n) => n.wholeName)).toContain("Jama'at al-Tawhid wal-Jihad");
   });
 
   it('maps IndividualEntityShip "Ship" to the canonical "vessel" type', async () => {
@@ -96,7 +97,7 @@ describe('parseUKList', () => {
 
     expect(ship).toBeDefined();
     expect(ship!.type).toBe('vessel');
-    expect(ship!.primaryName).toBe('Petrel 8');
+    expect(ship!.names[0].wholeName).toBe('Petrel 8');
   });
 
   it('does not crash on a Ship record with no OFSIGroupID or UNReferenceNumber (both optional)', async () => {
@@ -114,7 +115,7 @@ describe('parseUKList', () => {
 
   it('skips a designation with no UniqueID', async () => {
     const records = await parseUKList(FIXTURE);
-    expect(records.find((r) => r.primaryName === 'No Unique Id')).toBeUndefined();
+    expect(records.find((r) => r.names[0].wholeName === 'No Unique Id')).toBeUndefined();
   });
 
   it('parses exactly the real records in the fixture (5 designations, 1 skipped for missing id)', async () => {

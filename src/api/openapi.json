@@ -81,7 +81,7 @@
           {
             "name": "dob",
             "in": "query",
-            "description": "Födelsedatum (helt eller delvis, t.ex. ett årtal) som boostar — men inte krävs av — poster vars datesOfBirth innehåller värdet. Inte ett hårt filter: en post utan matchande datum exkluderas aldrig enbart av detta.",
+            "description": "Födelsedatum (helt eller delvis, t.ex. ett årtal) som boostar — men inte krävs av — poster vars birthDates innehåller värdet. Inte ett hårt filter: en post utan matchande datum exkluderas aldrig enbart av detta.",
             "required": false,
             "schema": {
               "type": "string",
@@ -951,7 +951,7 @@
               },
               "matchedAlias": {
                 "type": "string",
-                "description": "Vilket namn (primaryName eller alias) som gav den högsta poängen."
+                "description": "Vilket namn i names[] (primärt eller alias) som gav den högsta poängen."
               },
               "overriddenFields": {
                 "type": "array",
@@ -971,7 +971,7 @@
       },
       "SanctionRecord": {
         "type": "object",
-        "required": ["id", "source", "type", "primaryName", "aliases", "createdAt", "updatedAt"],
+        "required": ["id", "source", "type", "names", "createdAt", "updatedAt"],
         "properties": {
           "id": {
             "type": "string",
@@ -987,23 +987,46 @@
             "enum": ["individual", "entity", "vessel", "aircraft"],
             "example": "individual"
           },
-          "primaryName": {
-            "type": "string",
-            "example": "Vladimir Vladimirovich Putin"
-          },
-          "aliases": {
+          "names": {
             "type": "array",
+            "description": "Every name/alias for this entity, primary name first (issue #46 — the sole source of truth; no separate flat primaryName/aliases fields).",
             "items": {
-              "type": "string"
+              "type": "object",
+              "required": ["wholeName", "strong"],
+              "properties": {
+                "wholeName": { "type": "string", "example": "Vladimir Vladimirovich Putin" },
+                "firstName": { "type": "string" },
+                "middleName": { "type": "string" },
+                "lastName": { "type": "string" },
+                "strong": { "type": "boolean", "description": "Authoritative name vs. a weaker variant, per the source." },
+                "language": { "type": "string" },
+                "title": { "type": "string" },
+                "function": { "type": "string" }
+              }
             },
-            "example": ["Valodia Putin", "Vladimir Putin"]
+            "example": [
+              { "wholeName": "Vladimir Vladimirovich Putin", "strong": true },
+              { "wholeName": "Valodia Putin", "strong": false }
+            ]
           },
-          "datesOfBirth": {
+          "birthDates": {
             "type": "array",
+            "description": "Structured, precision-aware birth dates (exact date, year-only, year range, or circa/approximate).",
             "items": {
-              "type": "string"
-            },
-            "example": ["1952-10-07"]
+              "type": "object",
+              "properties": {
+                "raw": { "type": "string", "example": "1952-10-07" },
+                "year": { "type": "integer" },
+                "month": { "type": "integer" },
+                "day": { "type": "integer" },
+                "yearRangeFrom": { "type": "integer" },
+                "yearRangeTo": { "type": "integer" },
+                "circa": { "type": "boolean" },
+                "place": { "type": "string" },
+                "city": { "type": "string" },
+                "countryIso2": { "type": "string" }
+              }
+            }
           },
           "placesOfBirth": {
             "type": "array",
@@ -1019,12 +1042,25 @@
             },
             "example": ["Russia"]
           },
-          "passports": {
+          "identifications": {
             "type": "array",
+            "description": "Passports, national IDs, and similar documents — structured, including the source's own reliability flags (CLAUDE.md §6: never present a known-false/expired/revoked document as good data).",
             "items": {
-              "type": "string"
-            },
-            "example": ["Diplomatic Passport 123456"]
+              "type": "object",
+              "required": ["number"],
+              "properties": {
+                "number": { "type": "string", "example": "123456" },
+                "typeCode": { "type": "string" },
+                "typeDescription": { "type": "string", "example": "Diplomatic Passport" },
+                "countryIso2": { "type": "string" },
+                "issuedBy": { "type": "string" },
+                "knownFalse": { "type": "boolean" },
+                "knownExpired": { "type": "boolean" },
+                "reportedLost": { "type": "boolean" },
+                "revokedByIssuer": { "type": "boolean" },
+                "diplomatic": { "type": "boolean" }
+              }
+            }
           },
           "addresses": {
             "type": "array",

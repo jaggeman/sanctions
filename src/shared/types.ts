@@ -48,7 +48,7 @@ export interface Regulation {
   url?: string;
 }
 
-/** One `<nameAlias>` entry — the structured form `primaryName`/`aliases` are derived from. */
+/** One `<nameAlias>` entry — a name or alias. See `primaryNameOf`/`aliasNamesOf` below for display. */
 export interface NameAlias {
   wholeName: string;
   firstName?: string;
@@ -62,8 +62,9 @@ export interface NameAlias {
 
 /**
  * One `<birthdate>` entry. The source distinguishes an exact date from a
- * year-only value, a year *range*, and a `circa` (approximate) flag — the
- * legacy `datesOfBirth: string[]` collapses all of that into a plain string.
+ * year-only value, a year *range*, and a `circa` (approximate) flag, none of
+ * which survives collapsing to a plain string — see `formatBirthDates` below
+ * for display.
  */
 export interface BirthDate {
   raw?: string; // the full date as given, e.g. "1937-04-28", when present
@@ -173,23 +174,20 @@ export interface SanctionRecord {
   source: SanctionSource;
   type: SanctionType;
 
-  // --- Flat fields (kept for backward compatibility, issue #6) ---
-  // Every already-shipped consumer (search/matcher.ts, uploader.ts's
-  // generateSearchTokens, the frontend) reads these directly. The EU parser
-  // derives them from `names`/`birthDates` below rather than dropping them;
-  // a follow-up issue tracks actually removing them once the several other
-  // in-flight PRs that also read this shape have landed.
-  primaryName: string;
-  aliases: string[];
+  // --- Structured source fidelity (issue #6) — the only source of truth ---
+  // (issue #46: the flat primaryName/aliases/datesOfBirth/passports fields
+  // that used to live here were removed once every consumer was migrated to
+  // read these instead — see primaryNameOf/aliasNamesOf/etc. below.)
+  names: NameAlias[];
   searchNames: string[]; // Normalized search terms for basic search indexing
 
   firstNames?: string[];
   lastNames?: string[];
   titles?: string[];
-  datesOfBirth?: string[];
+  birthDates?: BirthDate[]; // structured, precision-aware form of a legacy flat date-of-birth list
   placesOfBirth?: string[];
   citizenships?: string[];
-  passports?: string[]; // IDs, passports, etc. — derived from `identifications` when present
+  identifications?: Identification[]; // passports, national IDs, and similar documents
   addresses?: Address[];
 
   sanctionReason?: string;
@@ -200,10 +198,7 @@ export interface SanctionRecord {
   euReferenceNumber?: string; // the EU's own public identifier, e.g. "EU.27.28"
   unitedNationId?: string; // cross-reference to the UN list, e.g. "QDi.399"
   sourceRef?: string; // the raw source-native id (e.g. EU logicalId), before any "EU-" prefix
-  identifications?: Identification[];
   regulation?: Regulation;
-  names?: NameAlias[]; // structured form; primaryName/aliases above are derived from this when present
-  birthDates?: BirthDate[]; // structured, precision-aware form of datesOfBirth
   contactInfo?: ContactInfo;
 
   // --- Pipeline bookkeeping (issue #6) ---
@@ -260,4 +255,76 @@ export interface SearchLogEntry {
   };
   resultCount: number; // totalMatches for a search; 1 (found) or 0 (not found) for a lookup
   timestamp: string; // ISO string
+}
+
+// --- Display helpers (issue #46) ---
+// Every consumer that used to read the flat primaryName/aliases/datesOfBirth/
+// passports fields now goes through these, so "how do we format a birth
+// date/ID document" is decided once, not re-implemented per consumer (CLI,
+// MCP, the frontend, search scoring).
+//
+// "Which name is primary" is deliberately just "whichever the parser put
+// first" — every parser already picks its own best candidate using
+// source-specific logic (e.g. the EU parser's strong/has-name-parts/
+// preferred-language tie-break in selectPrimary) and is responsible for
+// ordering `names` with that choice first. Re-deriving the choice here from
+// `strong` alone would silently disagree with a parser whose selection logic
+// is richer than "the first strong entry" — trusting the array's own order
+// avoids two competing definitions of "primary" for the same record.
+
+/** The record's primary display name: whichever entry its parser ordered first, else a placeholder. */
+export function primaryNameOf(names: NameAlias[]): string {
+  return names[0]?.wholeName || 'Unknown Name';
+}
+
+/** Every name after the primary, in original order. */
+export function aliasNamesOf(names: NameAlias[]): string[] {
+  return names.slice(1).map((n) => n.wholeName);
+}
+
+/** Every name (primary + aliases), for candidate-matching purposes where the distinction doesn't matter. */
+export function allNamesOf(names: NameAlias[]): string[] {
+  return names.map((n) => n.wholeName);
+}
+
+/** Formats each birth date as a single display/search string — the fullest precision available. */
+export function formatBirthDates(birthDates?: BirthDate[]): string[] {
+  return (birthDates || [])
+    .map((b) => {
+      if (b.raw) return b.raw;
+      if (b.yearRangeFrom || b.yearRangeTo) {
+        return `${b.yearRangeFrom ?? '?'}-${b.yearRangeTo ?? '?'}`;
+      }
+      if (b.year) {
+        const parts = [b.year, b.month, b.day].filter((p): p is number => p !== undefined);
+        return parts.join('-');
+      }
+      return '';
+    })
+    .filter(Boolean);
+}
+
+/**
+ * Formats each identification document as a single display/search string.
+ * Carries the source's own reliability flags through to the caller (CLAUDE.md
+ * §6: never present a known-false/expired/reported-lost/revoked document as
+ * good data) rather than dropping them the way a bare number/type would.
+ */
+export function formatIdentifications(identifications?: Identification[]): string[] {
+  return (identifications || [])
+    .map((id) => {
+      const label = id.typeDescription || id.typeCode;
+      const country = id.countryIso2 ? ` (${id.countryIso2})` : '';
+      const caveats = [
+        id.knownFalse && 'known false',
+        id.knownExpired && 'expired',
+        id.reportedLost && 'reported lost',
+        id.revokedByIssuer && 'revoked',
+      ].filter(Boolean) as string[];
+      const caveatSuffix = caveats.length > 0 ? ` [${caveats.join(', ')}]` : '';
+
+      const base = label ? `${label} ${id.number}` : id.number;
+      return `${base}${country}${caveatSuffix}`;
+    })
+    .filter(Boolean);
 }

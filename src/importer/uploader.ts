@@ -1,7 +1,7 @@
 import * as crypto from 'crypto';
 import * as admin from 'firebase-admin';
 import { db } from '../shared/firebase';
-import { SanctionRecord, RecordVersion, ChangeType } from '../shared/types';
+import { SanctionRecord, RecordVersion, ChangeType, NameAlias, allNamesOf } from '../shared/types';
 import { logger } from '../shared/logger';
 
 const log = logger.child({ module: 'importer.uploader' });
@@ -83,15 +83,17 @@ export function transliterate(text: string): string | null {
 }
 
 /**
- * Generates search tokens from a primary name and list of aliases.
+ * Generates search tokens from a record's structured names (issue #46: reads
+ * `names: NameAlias[]` directly, no separate primary/aliases split needed —
+ * every wholeName contributes tokens the same way).
  * Splits names into individual word tokens.
  *
  * issue #40: also includes a transliterated token for any Cyrillic/Greek
  * name, alongside the original-script token (decision c) — e.g. "Абу Нидал"
  * contributes both "абу"/"нидал" and "abu"/"nidal".
  */
-export function generateSearchTokens(primaryName: string, aliases: string[] = []): string[] {
-  const allNames = [primaryName, ...aliases];
+export function generateSearchTokens(names: NameAlias[]): string[] {
+  const allNames = allNamesOf(names);
   const tokenSet = new Set<string>();
 
   const addTokensFrom = (name: string) => {
@@ -273,7 +275,7 @@ export async function uploadRecords(records: SanctionRecord[], importId?: string
       const existingDoc = existingDocs[idx];
 
       // Add search tokens to the record before saving
-      record.searchNames = generateSearchTokens(record.primaryName, record.aliases);
+      record.searchNames = generateSearchTokens(record.names);
       record.contentHash = computeContentHash(record);
 
       let changeType: ChangeType | null;

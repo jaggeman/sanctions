@@ -12,7 +12,7 @@ describe('parseUNList', () => {
     expect(eric).toBeDefined();
     expect(eric!.source).toBe('UN');
     expect(eric!.type).toBe('individual');
-    expect(eric!.primaryName).toBe('ERIC BADEGE');
+    expect(eric!.names[0].wholeName).toBe('ERIC BADEGE');
     expect(eric!.citizenships).toEqual(['Democratic Republic of the Congo']);
     expect(eric!.addresses?.[0].country).toBe('Rwanda');
     expect(eric!.sanctionReason).toBe('He fled to Rwanda in March 2013.');
@@ -21,7 +21,7 @@ describe('parseUNList', () => {
   it('does not treat YEAR-only birth data as a full date, but still records the year', async () => {
     const records = await parseUNList(FIXTURE);
     const eric = records.find((r) => r.id === 'UN-6907993');
-    expect(eric!.datesOfBirth).toEqual(['1971']);
+    expect(eric!.birthDates!.map((b) => b.raw)).toEqual(['1971']);
   });
 
   it('KNOWN GAP: an empty <ALIAS_NAME/> element produces a real-looking empty string alias, not an omission', async () => {
@@ -31,25 +31,28 @@ describe('parseUNList', () => {
     // excludes it — verifying that here since it's easy to regress.
     const records = await parseUNList(FIXTURE);
     const eric = records.find((r) => r.id === 'UN-6907993');
-    expect(eric!.aliases).toEqual([]);
+    expect(eric!.names.slice(1)).toEqual([]);
   });
 
   it('collects multiple real aliases into a single array', async () => {
     const records = await parseUNList(FIXTURE);
     const multi = records.find((r) => r.id === 'UN-7000001');
-    expect(multi!.aliases).toEqual(['Alias One', 'Alias Two']);
+    expect(multi!.names.slice(1).map((n) => n.wholeName)).toEqual(['Alias One', 'Alias Two']);
   });
 
   it('builds the primary name from first/second/third/fourth name parts', async () => {
     const records = await parseUNList(FIXTURE);
     const multi = records.find((r) => r.id === 'UN-7000001');
-    expect(multi!.primaryName).toBe('MULTI ALIAS PERSON');
+    expect(multi!.names[0].wholeName).toBe('MULTI ALIAS PERSON');
   });
 
   it('formats each document with type, number and issuing country', async () => {
     const records = await parseUNList(FIXTURE);
     const multi = records.find((r) => r.id === 'UN-7000001');
-    expect(multi!.passports).toEqual(['Passport P1234567 (Sweden)', 'National ID N9999']);
+    expect(multi!.identifications).toEqual([
+      { number: 'P1234567', typeDescription: 'Passport', countryIso2: 'Sweden' },
+      { number: 'N9999', typeDescription: 'National ID', countryIso2: undefined },
+    ]);
   });
 
   it('collects multiple nationality VALUE entries', async () => {
@@ -60,7 +63,7 @@ describe('parseUNList', () => {
 
   it('skips an individual with no DATAID', async () => {
     const records = await parseUNList(FIXTURE);
-    expect(records.find((r) => r.primaryName === 'No Data Id')).toBeUndefined();
+    expect(records.find((r) => r.names[0].wholeName === 'No Data Id')).toBeUndefined();
   });
 
   it('parses an entity with a single FIRST_NAME field as its whole name', async () => {
@@ -69,7 +72,7 @@ describe('parseUNList', () => {
 
     expect(adf).toBeDefined();
     expect(adf!.type).toBe('entity');
-    expect(adf!.primaryName).toBe('ADF');
+    expect(adf!.names[0].wholeName).toBe('ADF');
     expect(adf!.addresses?.[0].fullAddress).toBe('Beni, Democratic Republic of the Congo');
   });
 
@@ -82,10 +85,18 @@ describe('parseUNList', () => {
     const naser = records.find((r) => r.id === 'UN-110425');
 
     expect(naser).toBeDefined();
-    expect(naser!.passports).toContain('National Identification Number 0035011785 (Iran (Islamic Republic of))');
+    expect(naser!.identifications).toContainEqual({
+      number: '0035011785',
+      typeDescription: 'National Identification Number',
+      countryIso2: 'Iran (Islamic Republic of)',
+    });
     // The other document on the same record isn't all-digit, so it was never
     // at risk — asserting it anyway to pin the full expected shape.
-    expect(naser!.passports).toContain('Passport A0003039 (Iran (Islamic Republic of))');
+    expect(naser!.identifications).toContainEqual({
+      number: 'A0003039',
+      typeDescription: 'Passport',
+      countryIso2: 'Iran (Islamic Republic of)',
+    });
   });
 
   it('reads the issuing country from COUNTRY_OF_ISSUE, not just ISSUING_COUNTRY', async () => {
@@ -95,7 +106,7 @@ describe('parseUNList', () => {
     // COUNTRY_OF_ISSUE — this pins that the country isn't silently dropped.
     const records = await parseUNList(FIXTURE);
     const naser = records.find((r) => r.id === 'UN-110425');
-    expect(naser!.passports?.every((p) => p.includes('Iran (Islamic Republic of)'))).toBe(true);
+    expect(naser!.identifications?.every((id) => id.countryIso2 === 'Iran (Islamic Republic of)')).toBe(true);
   });
 
   it('issue #168: marks a Good-quality INDIVIDUAL_ALIAS as strong, a Low-quality one as weak', async () => {

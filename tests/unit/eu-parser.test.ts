@@ -19,25 +19,26 @@ describe('parseEUList — real EU FSD v1.1 structure', () => {
   describe('names live in attributes, not child elements', () => {
     it('extracts a name for every entity that has one', async () => {
       const all = await records();
-      const nameless = all.filter((r) => r.primaryName === 'Unknown Name');
+      const nameless = all.filter((r) => r.names[0].wholeName === 'Unknown Name');
       // Only the synthetic no-nameAlias entity may fall back.
       expect(nameless.map((r) => r.id)).toEqual(['EU-999999']);
     });
 
     it('reads wholeName off the nameAlias attribute', async () => {
       const r = await byId('EU-13');
-      expect(r!.primaryName).toBe('Saddam Hussein Al-Tikriti');
+      expect(r!.names[0].wholeName).toBe('Saddam Hussein Al-Tikriti');
     });
 
     it('keeps the remaining aliases, without duplicating the primary', async () => {
       const r = await byId('EU-13');
-      expect(r!.aliases).toEqual(['Abu Ali', 'Abou Ali']);
-      expect(r!.aliases).not.toContain(r!.primaryName);
+      const aliases = r!.names.slice(1).map((n) => n.wholeName);
+      expect(aliases).toEqual(['Abu Ali', 'Abou Ali']);
+      expect(aliases).not.toContain(r!.names[0].wholeName);
     });
 
     it('preserves non-Latin aliases verbatim', async () => {
       const r = await byId('EU-330');
-      expect(r!.aliases).toContain('Организация за подпомагане на Ulema, Пакистан');
+      expect(r!.names.map((n) => n.wholeName)).toContain('Организация за подпомагане на Ulema, Пакистан');
     });
   });
 
@@ -64,32 +65,35 @@ describe('parseEUList — real EU FSD v1.1 structure', () => {
       // EU-191 lists seven strong aliases; only logicalId 289 has firstName +
       // lastName, and it is the canonical form. Document order would instead
       // pick the French transliteration at logicalId 161419.
-      expect((await byId('EU-191'))!.primaryName).toBe('Khalid Sheikh MOHAMMED');
+      expect((await byId('EU-191'))!.names[0].wholeName).toBe('Khalid Sheikh MOHAMMED');
     });
 
     it('prefers English/unmarked aliases over other languages', async () => {
       // EU-330 has no structured names at all, and one Bulgarian alias.
-      expect((await byId('EU-330'))!.primaryName).toBe('Al-Rasheed Trust');
+      expect((await byId('EU-330'))!.names[0].wholeName).toBe('Al-Rasheed Trust');
     });
 
     it('produces the same result on a re-parse', async () => {
       const a = await parseEUList(FIXTURE);
       const b = await parseEUList(FIXTURE);
-      expect(a.map((r) => r.primaryName)).toEqual(b.map((r) => r.primaryName));
+      expect(a.map((r) => r.names[0].wholeName)).toEqual(b.map((r) => r.names[0].wholeName));
     });
   });
 
   describe('<identification> — not <identificationDocument>', () => {
     it('captures the passport number and its type', async () => {
       const r = await byId('EU-191');
-      expect(r!.passports).toBeDefined();
-      expect(r!.passports).toContain('National passport 488555');
+      expect(r!.identifications).toBeDefined();
+      expect(r!.identifications).toContainEqual(
+        expect.objectContaining({ number: '488555', typeDescription: 'National passport' }),
+      );
     });
 
     it('omits the issuing country when the source says it is unknown', async () => {
       // countryIso2Code="00" countryDescription="UNKNOWN"
       const r = await byId('EU-191');
-      expect(r!.passports!.join(' ')).not.toMatch(/UNKNOWN/);
+      const countries = r!.identifications!.map((id) => id.countryIso2).filter(Boolean);
+      expect(countries).not.toContain('UNKNOWN');
     });
   });
 
@@ -122,11 +126,13 @@ describe('parseEUList — real EU FSD v1.1 structure', () => {
 
   describe('birthdate and citizenship', () => {
     it('reads the birthdate attribute', async () => {
-      expect((await byId('EU-13'))!.datesOfBirth).toEqual(['1937-04-28']);
+      const r = await byId('EU-13');
+      expect(r!.birthDates!.map((b) => b.raw)).toEqual(['1937-04-28']);
     });
 
     it('reads multiple birthdates when the source lists several', async () => {
-      expect((await byId('EU-191'))!.datesOfBirth).toEqual([
+      const r = await byId('EU-191');
+      expect(r!.birthDates!.map((b) => b.raw)).toEqual([
         '1965-04-14',
         '1964-03-01',
       ]);
@@ -164,7 +170,7 @@ describe('parseEUList — real EU FSD v1.1 structure', () => {
     });
 
     it('falls back to "Unknown Name" only when there is no nameAlias at all', async () => {
-      expect((await byId('EU-999999'))!.primaryName).toBe('Unknown Name');
+      expect((await byId('EU-999999'))!.names[0].wholeName).toBe('Unknown Name');
     });
 
     it('skips an entity whose logicalId would escape the collection path', async () => {

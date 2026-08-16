@@ -55,7 +55,7 @@ describe('createCustomRecord — concurrent create race (issue #172, real Firest
     expect(stored).not.toBeNull();
     // The stored record must be exactly the one attempt that actually won —
     // no interleaved partial write from a loser.
-    expect(stored?.primaryName).toMatch(/^Attempt \d$/);
+    expect(stored?.names?.[0]?.wholeName).toMatch(/^Attempt \d$/);
   }, 30_000);
 
   it('a second create after the first succeeds is still rejected as a duplicate', async () => {
@@ -65,6 +65,6 @@ describe('createCustomRecord — concurrent create race (issue #172, real Firest
     ).rejects.toThrow(/already exists/i);
 
     const stored = await getCustomRecord('CUSTOM-RACE-2');
-    expect(stored?.primaryName).toBe('First');
+    expect(stored?.names?.[0]?.wholeName).toBe('First');
   }, 30_000);
 });

@@ -34,8 +34,7 @@ function makeRecord(overrides: Partial<SanctionRecord> = {}): SanctionRecord {
     id: 'EU-1',
     source: 'EU',
     type: 'individual',
-    primaryName: 'Jane Doe',
-    aliases: [],
+    names: [{ wholeName: 'Jane Doe', strong: true }],
     searchNames: [],
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
@@ -48,7 +47,11 @@ function mockExistingSnapshot(docs: Array<{ id: string; status?: string; content
     forEach: (cb: (doc: any) => void) => {
       docs.forEach((d) => cb({
         id: d.id,
-        data: () => ({ status: d.status, contentHash: d.contentHash, primaryName: d.primaryName }),
+        data: () => ({
+          status: d.status,
+          contentHash: d.contentHash,
+          names: d.primaryName !== undefined ? [{ wholeName: d.primaryName, strong: true }] : undefined,
+        }),
       }));
     },
   });
@@ -80,7 +83,7 @@ describe('computeDiff', () => {
   });
 
   it('classifies a record with a changed content hash as updated', async () => {
-    const record = makeRecord({ id: 'EU-1', primaryName: 'Jane Changed' });
+    const record = makeRecord({ id: 'EU-1', names: [{ wholeName: 'Jane Changed', strong: true }] });
     mockExistingSnapshot([{ id: 'EU-1', status: 'active', contentHash: 'stale-hash' }]);
 
     const diff = await computeDiff('EU', [record], { mode: 'append' });
@@ -268,7 +271,7 @@ describe('runDiffForSource', () => {
 describe('computeDiff — sample records per bucket (issue #12)', () => {
   it('samples an added record with its id and primaryName', async () => {
     mockExistingSnapshot([]);
-    const record = makeRecord({ id: 'EU-new', primaryName: 'Newly Added Person' });
+    const record = makeRecord({ id: 'EU-new', names: [{ wholeName: 'Newly Added Person', strong: true }] });
 
     const diff = await computeDiff('EU', [record], { mode: 'append' });
 
@@ -279,7 +282,7 @@ describe('computeDiff — sample records per bucket (issue #12)', () => {
   });
 
   it('samples an updated record', async () => {
-    const record = makeRecord({ id: 'EU-1', primaryName: 'Jane Changed' });
+    const record = makeRecord({ id: 'EU-1', names: [{ wholeName: 'Jane Changed', strong: true }] });
     mockExistingSnapshot([{ id: 'EU-1', status: 'active', contentHash: 'stale-hash', primaryName: 'Jane Old' }]);
 
     const diff = await computeDiff('EU', [record], { mode: 'append' });
@@ -288,7 +291,7 @@ describe('computeDiff — sample records per bucket (issue #12)', () => {
   });
 
   it('samples an unchanged record even though it is never written', async () => {
-    const record = makeRecord({ id: 'EU-1', primaryName: 'Same Person' });
+    const record = makeRecord({ id: 'EU-1', names: [{ wholeName: 'Same Person', strong: true }] });
     mockExistingSnapshot([{ id: 'EU-1', status: 'active', contentHash: computeContentHash(record), primaryName: 'Same Person' }]);
 
     const diff = await computeDiff('EU', [record], { mode: 'append' });
@@ -318,7 +321,7 @@ describe('computeDiff — sample records per bucket (issue #12)', () => {
 
 describe('startDiffSession — sample records per bucket, streaming path (issue #12)', () => {
   it('samples added/updated/unchanged across multiple addChunk calls, and delisted in finish()', async () => {
-    const unchangedRecord = makeRecord({ id: 'EU-1', primaryName: 'Unchanged Person' });
+    const unchangedRecord = makeRecord({ id: 'EU-1', names: [{ wholeName: 'Unchanged Person', strong: true }] });
     // computeContentHash depends on record content — align the mocked hash with it.
     mockExistingSnapshot([
       { id: 'EU-1', status: 'active', contentHash: computeContentHash(unchangedRecord), primaryName: 'Unchanged Person' },
@@ -329,8 +332,8 @@ describe('startDiffSession — sample records per bucket, streaming path (issue 
     const session = await startDiffSession('EU', { mode: 'sync', force: true });
     await session.addChunk([unchangedRecord]);
     await session.addChunk([
-      makeRecord({ id: 'EU-2', primaryName: 'New Name' }),
-      makeRecord({ id: 'EU-new', primaryName: 'Fresh Person' }),
+      makeRecord({ id: 'EU-2', names: [{ wholeName: 'New Name', strong: true }] }),
+      makeRecord({ id: 'EU-new', names: [{ wholeName: 'Fresh Person', strong: true }] }),
     ]);
     const result = await session.finish();
 
@@ -343,7 +346,7 @@ describe('startDiffSession — sample records per bucket, streaming path (issue 
   it('abort() reports no samples at all — nothing should be presented as a preview of a failed run', async () => {
     mockExistingSnapshot([]);
     const session = await startDiffSession('EU', { mode: 'append' });
-    await session.addChunk([makeRecord({ id: 'EU-1', primaryName: 'Partial' })]);
+    await session.addChunk([makeRecord({ id: 'EU-1', names: [{ wholeName: 'Partial', strong: true }] })]);
 
     const result = session.abort();
 

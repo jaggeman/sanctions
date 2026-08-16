@@ -1,5 +1,5 @@
 import { db } from '../shared/firebase';
-import { SanctionRecord, SanctionSource } from '../shared/types';
+import { SanctionRecord, SanctionSource, NameAlias, primaryNameOf } from '../shared/types';
 import { computeContentHash, uploadRecords, delistRecords, filterAutomatedBatch } from './uploader';
 
 export type ImportMode = 'sync' | 'append';
@@ -36,8 +36,8 @@ function emptySamples(): DiffSamples {
   return { added: [], updated: [], unchanged: [], delisted: [] };
 }
 
-function pushSample(bucket: SampleRecord[], record: { id: string; primaryName: string }): void {
-  if (bucket.length < SAMPLE_LIMIT) bucket.push({ id: record.id, primaryName: record.primaryName });
+function pushSample(bucket: SampleRecord[], record: { id: string; names: NameAlias[] }): void {
+  if (bucket.length < SAMPLE_LIMIT) bucket.push({ id: record.id, primaryName: primaryNameOf(record.names) });
 }
 
 export interface DiffCounts {
@@ -92,26 +92,26 @@ interface ExistingSummary {
   status?: string;
   contentHash?: string;
   // Only for the delisted sample (issue #12) — a to-be-delisted record's
-  // primaryName isn't otherwise available, since it's identified purely by
+  // display name isn't otherwise available, since it's identified purely by
   // "id present in `existing` but absent from the incoming file."
-  primaryName?: string;
+  names?: NameAlias[];
 }
 
 async function fetchExistingSummaries(source: SanctionSource): Promise<Map<string, ExistingSummary>> {
-  // id + status + contentHash + primaryName only — fetching whole documents
-  // for a ~6k-record source reintroduces the memory problem the
-  // streaming-import issue fixed. primaryName is one extra scalar field per
-  // record, not a materially different memory cost.
+  // id + status + contentHash + names only — fetching whole documents for a
+  // ~6k-record source reintroduces the memory problem the streaming-import
+  // issue fixed. `names` (issue #46) replaced the scalar `primaryName` this
+  // projected before; still far lighter than the full document.
   const snapshot = await db
     .collection('sanctions')
     .where('source', '==', source)
-    .select('status', 'contentHash', 'primaryName')
+    .select('status', 'contentHash', 'names')
     .get();
 
   const map = new Map<string, ExistingSummary>();
   snapshot.forEach((doc: any) => {
     const data = doc.data();
-    map.set(doc.id, { status: data.status, contentHash: data.contentHash, primaryName: data.primaryName });
+    map.set(doc.id, { status: data.status, contentHash: data.contentHash, names: data.names });
   });
   return map;
 }
@@ -170,7 +170,7 @@ export async function computeDiff(
       .filter(([id, e]) => e.status !== 'delisted' && !incomingIds.has(id))
       .map(([id]) => id);
     for (const id of toDelistIds) {
-      pushSample(samples.delisted, { id, primaryName: existing.get(id)?.primaryName || '' });
+      pushSample(samples.delisted, { id, names: existing.get(id)?.names || [] });
     }
   }
 
@@ -339,7 +339,7 @@ export async function startDiffSession(
           .filter(([id, e]) => e.status !== 'delisted' && !incomingIds.has(id))
           .map(([id]) => id);
         for (const id of toDelistIds) {
-          pushSample(samples.delisted, { id, primaryName: existing.get(id)?.primaryName || '' });
+          pushSample(samples.delisted, { id, names: existing.get(id)?.names || [] });
         }
       }
 

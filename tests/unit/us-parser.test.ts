@@ -12,8 +12,8 @@ describe('parseUSList', () => {
     expect(airline).toBeDefined();
     expect(airline!.source).toBe('US');
     expect(airline!.type).toBe('entity');
-    expect(airline!.primaryName).toBe('AEROCARIBBEAN AIRLINES');
-    expect(airline!.aliases).toEqual(['AERO-CARIBBEAN']);
+    expect(airline!.names[0].wholeName).toBe('AEROCARIBBEAN AIRLINES');
+    expect(airline!.names.slice(1).map((n) => n.wholeName)).toEqual(['AERO-CARIBBEAN']);
     expect(airline!.addresses?.[0].fullAddress).toBe('Havana, Cuba');
     expect(airline!.sanctionReason).toBe('CUBA');
   });
@@ -24,19 +24,19 @@ describe('parseUSList', () => {
 
     expect(abbas).toBeDefined();
     expect(abbas!.type).toBe('individual');
-    expect(abbas!.primaryName).toBe('Abu ABBAS');
-    expect(abbas!.aliases).toEqual(['Muhammad ZAYDAN']);
-    expect(abbas!.datesOfBirth).toEqual(['10 Dec 1948']);
+    expect(abbas!.names[0].wholeName).toBe('Abu ABBAS');
+    expect(abbas!.names.slice(1).map((n) => n.wholeName)).toEqual(['Muhammad ZAYDAN']);
+    expect(abbas!.birthDates!.map((b) => b.raw)).toEqual(['10 Dec 1948']);
   });
 
   it('formats an id-list entry even when it is not really a passport number', async () => {
     // KNOWN QUIRK: the SDN "Secondary sanctions risk:" idType is legal boilerplate,
     // not an identity document, but the parser has no way to distinguish it from
-    // a real passport/national-id entry and stores it in `passports` regardless.
+    // a real passport/national-id entry and stores it in `identifications` regardless.
     const records = await parseUSList(FIXTURE);
     const abbas = records.find((r) => r.id === 'US-SDN-2674');
-    expect(abbas!.passports).toEqual([
-      'Secondary sanctions risk: section 1(b) of Executive Order 13224',
+    expect(abbas!.identifications).toEqual([
+      { number: 'section 1(b) of Executive Order 13224', typeDescription: 'Secondary sanctions risk:', countryIso2: undefined, knownExpired: false },
     ]);
   });
 
@@ -46,7 +46,7 @@ describe('parseUSList', () => {
 
     expect(vessel).toBeDefined();
     expect(vessel!.type).toBe('vessel');
-    expect(vessel!.primaryName).toBe('MAR AZUL');
+    expect(vessel!.names[0].wholeName).toBe('MAR AZUL');
   });
 
   it('joins multiple program entries with a comma for the sanction reason', async () => {
@@ -85,7 +85,6 @@ describe('parseUSList', () => {
     const jelassi = records.find((r) => r.id === 'US-SDN-7254');
 
     expect(jelassi).toBeDefined();
-    expect(jelassi!.passports).toEqual(['Passport L276046 [expired]']);
     expect(jelassi!.identifications).toEqual([
       expect.objectContaining({ number: 'L276046', knownExpired: true }),
     ]);
@@ -94,7 +93,7 @@ describe('parseUSList', () => {
   it('issue #168: does not flag [expired] for a document with no expirationDate at all', async () => {
     const records = await parseUSList(FIXTURE);
     const abbas = records.find((r) => r.id === 'US-SDN-2674');
-    expect(abbas!.passports?.[0]).not.toContain('[expired]');
+    expect(abbas!.identifications?.[0].knownExpired).toBe(false);
   });
 
   it('issue #168: does not flag [expired] when expirationDate is a real "DD Mon YYYY" date still in the future', async () => {
@@ -105,7 +104,9 @@ describe('parseUSList', () => {
     await (fs as any).writeFile(tmp, xml, 'utf-8');
     try {
       const records = await parseUSList(tmp);
-      expect(records[0].passports).toEqual(['Passport X1']);
+      expect(records[0].identifications).toEqual([
+        expect.objectContaining({ number: 'X1', knownExpired: false }),
+      ]);
     } finally {
       await (fs as any).remove(tmp);
     }
@@ -126,10 +127,10 @@ describe('parseUSList', () => {
     await (fs as any).writeFile(tmp, xml, 'utf-8');
     try {
       const records = await parseUSList(tmp);
-      expect(records.find((r) => r.id === 'US-SDN-1')!.passports).toEqual(['Passport A1 [expired]']);
-      expect(records.find((r) => r.id === 'US-SDN-2')!.passports).toEqual(['Passport A2']);
-      expect(records.find((r) => r.id === 'US-SDN-3')!.passports).toEqual(['Passport A3 [expired]']);
-      expect(records.find((r) => r.id === 'US-SDN-4')!.passports).toEqual(['Passport A4']);
+      expect(records.find((r) => r.id === 'US-SDN-1')!.identifications).toEqual([expect.objectContaining({ number: 'A1', knownExpired: true })]);
+      expect(records.find((r) => r.id === 'US-SDN-2')!.identifications).toEqual([expect.objectContaining({ number: 'A2', knownExpired: false })]);
+      expect(records.find((r) => r.id === 'US-SDN-3')!.identifications).toEqual([expect.objectContaining({ number: 'A3', knownExpired: true })]);
+      expect(records.find((r) => r.id === 'US-SDN-4')!.identifications).toEqual([expect.objectContaining({ number: 'A4', knownExpired: false })]);
     } finally {
       await (fs as any).remove(tmp);
     }
@@ -147,8 +148,8 @@ describe('parseUSList', () => {
     await (fs as any).writeFile(tmp, xml, 'utf-8');
     try {
       const records = await parseUSList(tmp);
-      expect(records.find((r) => r.id === 'US-SDN-1')!.passports).toEqual(['Passport R1 [expired]']);
-      expect(records.find((r) => r.id === 'US-SDN-2')!.passports).toEqual(['Passport R2']);
+      expect(records.find((r) => r.id === 'US-SDN-1')!.identifications).toEqual([expect.objectContaining({ number: 'R1', knownExpired: true })]);
+      expect(records.find((r) => r.id === 'US-SDN-2')!.identifications).toEqual([expect.objectContaining({ number: 'R2', knownExpired: false })]);
     } finally {
       await (fs as any).remove(tmp);
     }
@@ -202,7 +203,7 @@ describe('parseUSList', () => {
     try {
       const records = await parseUSList(tmp);
       expect(records).toHaveLength(1);
-      expect(records[0].primaryName).toBe('Solo');
+      expect(records[0].names[0].wholeName).toBe('Solo');
     } finally {
       await (fs as any).remove(tmp);
     }

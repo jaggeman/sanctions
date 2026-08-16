@@ -60,7 +60,7 @@ describe('handleSearchSanctions — MCP search_sanctions tool', () => {
   it('formats each hit with its score and matched alias', async () => {
     runSearch.mockResolvedValue({
       results: [
-        { id: 'PEP-1', primaryName: 'Vladimir Putin', source: 'PEP', type: 'individual', aliases: [], score: 92, matchedAlias: 'Vladimir Putin' },
+        { id: 'PEP-1', names: [{ wholeName: 'Vladimir Putin', strong: true }], source: 'PEP', type: 'individual', score: 92, matchedAlias: 'Vladimir Putin' },
       ],
       totalMatches: 1,
       truncated: false,
@@ -78,7 +78,7 @@ describe('handleSearchSanctions — MCP search_sanctions tool', () => {
 
   it('surfaces truncation instead of hiding it', async () => {
     runSearch.mockResolvedValue({
-      results: [{ id: 'PEP-1', primaryName: 'XY', source: 'PEP', type: 'individual', aliases: [], score: 90, matchedAlias: 'XY' }],
+      results: [{ id: 'PEP-1', names: [{ wholeName: 'XY', strong: true }], source: 'PEP', type: 'individual', score: 90, matchedAlias: 'XY' }],
       totalMatches: 50,
       truncated: true,
     });

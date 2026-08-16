@@ -1,6 +1,6 @@
 import { XMLParser } from 'fast-xml-parser';
 import * as fs from 'fs-extra';
-import { SanctionRecord, Address, NameAlias, BirthDate } from '../../shared/types';
+import { SanctionRecord, Address, NameAlias, BirthDate, Identification } from '../../shared/types';
 import { logger } from '../../shared/logger';
 
 const log = logger.child({ module: 'importer.parsers.un' });
@@ -139,8 +139,8 @@ export async function parseUNList(filePath: string): Promise<SanctionRecord[]> {
       }
     }
 
-    // Map passports / documents
-    const passports: string[] = [];
+    // Map passports / documents (issue #46: structured, not a formatted string)
+    const identifications: Identification[] = [];
     const rawDocs = toArray(ind.INDIVIDUAL_DOCUMENT);
     for (const doc of rawDocs) {
       const docType = String(doc.TYPE_OF_DOCUMENT || '').trim();
@@ -152,8 +152,11 @@ export async function parseUNList(filePath: string): Promise<SanctionRecord[]> {
       // every document using the second name.
       const country = String(doc.ISSUING_COUNTRY || doc.COUNTRY_OF_ISSUE || '').trim();
       if (num) {
-        const detail = docType ? `${docType} ${num}${country ? ` (${country})` : ''}` : num;
-        passports.push(detail);
+        identifications.push({
+          number: num,
+          typeDescription: docType || undefined,
+          countryIso2: country || undefined,
+        });
       }
     }
 
@@ -164,15 +167,12 @@ export async function parseUNList(filePath: string): Promise<SanctionRecord[]> {
       id: `UN-${dataId}`,
       source: 'UN',
       type: 'individual',
-      primaryName,
-      aliases,
-      searchNames: [],
       names: deriveNames(primaryName, aliases, strongAliases),
-      datesOfBirth: datesOfBirth.length > 0 ? datesOfBirth : undefined,
+      searchNames: [],
       birthDates: birthDates.length > 0 ? birthDates : undefined,
       placesOfBirth: placesOfBirth.length > 0 ? placesOfBirth : undefined,
       citizenships: citizenships.length > 0 ? citizenships : undefined,
-      passports: passports.length > 0 ? passports : undefined,
+      identifications: identifications.length > 0 ? identifications : undefined,
       addresses: addresses.length > 0 ? addresses : undefined,
       sanctionReason: sanctionReason || undefined,
       createdAt: new Date().toISOString(),
@@ -228,10 +228,8 @@ export async function parseUNList(filePath: string): Promise<SanctionRecord[]> {
       id: `UN-${dataId}`,
       source: 'UN',
       type: 'entity',
-      primaryName,
-      aliases,
-      searchNames: [],
       names: deriveNames(primaryName, aliases),
+      searchNames: [],
       addresses: addresses.length > 0 ? addresses : undefined,
       sanctionReason: sanctionReason || undefined,
       createdAt: new Date().toISOString(),

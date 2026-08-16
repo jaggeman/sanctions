@@ -40,8 +40,8 @@ export function applyOverride(
     overriddenFields.push(key);
   }
 
-  if (overriddenFields.includes('primaryName') || overriddenFields.includes('aliases')) {
-    merged.searchNames = generateSearchTokens(merged.primaryName, merged.aliases);
+  if (overriddenFields.includes('names')) {
+    merged.searchNames = generateSearchTokens(merged.names);
   }
 
   return { record: merged, overriddenFields };

@@ -19,14 +19,21 @@ process.env.FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'sanctions-
 const { db } = await import('../../src/shared/firebase');
 const { uploadRecords, delistRecords, generateSearchTokens } = await import('../../src/importer/uploader');
 const { getOverride, saveOverride, deleteOverride, applyOverride } = await import('../../src/overrides');
+const { primaryNameOf } = await import('../../src/shared/types');
+
+function namesOverride(wholeName: string, aliases: string[] = []) {
+  return [
+    { wholeName, strong: true },
+    ...aliases.map((a) => ({ wholeName: a, strong: false })),
+  ];
+}
 
 function record(overrides: Record<string, any> = {}) {
   return {
     id: 'PEP-int-1',
     source: 'PEP',
     type: 'individual',
-    primaryName: 'Integration Person',
-    aliases: ['Alias Person'],
+    names: namesOverride('Integration Person', ['Alias Person']),
     searchNames: [], // deliberately empty — uploadRecords must fill this in
     createdAt: '2024-01-01T00:00:00.000Z',
     updatedAt: '2024-01-01T00:00:00.000Z',
@@ -62,7 +69,7 @@ describe('uploadRecords — real Firestore write path', () => {
     expect(doc.exists).toBe(true);
     const data = doc.data()!;
     expect(data.searchNames).toEqual(
-      expect.arrayContaining(generateSearchTokens('Integration Person', ['Alias Person'])),
+      expect.arrayContaining(generateSearchTokens(namesOverride('Integration Person', ['Alias Person']))),
     );
   });
 
@@ -83,7 +90,7 @@ describe('uploadRecords — real Firestore write path', () => {
     const doc = await db.collection('sanctions').doc('PEP-int-1').get();
     const data = doc.data()!;
     expect(data.analystNote).toBe('flagged for review');
-    expect(data.primaryName).toBe('Integration Person');
+    expect(primaryNameOf(data.names)).toBe('Integration Person');
   });
 
   it('batches writes across the 500-document boundary', async () => {
@@ -91,7 +98,7 @@ describe('uploadRecords — real Firestore write path', () => {
     // that still crosses two batches without making the test slow.
     const N = 501;
     const records = Array.from({ length: N }, (_, i) =>
-      record({ id: `PEP-batch-${i}`, primaryName: `Batch Person ${i}` }),
+      record({ id: `PEP-batch-${i}`, names: namesOverride(`Batch Person ${i}`) }),
     );
 
     await uploadRecords(records);
@@ -115,7 +122,7 @@ describe('uploadRecords — real Firestore write path', () => {
     // every run, so the incoming record's createdAt is "now", not the
     // original value.
     await uploadRecords([
-      record({ primaryName: 'Changed Name', createdAt: new Date().toISOString() }),
+      record({ names: namesOverride('Changed Name'), createdAt: new Date().toISOString() }),
     ]);
 
     const doc = await db.collection('sanctions').doc('PEP-int-1').get();
@@ -134,7 +141,7 @@ describe('uploadRecords — real Firestore write path', () => {
 
     doc = await db.collection('sanctions').doc('PEP-int-1').get();
     expect(doc.data()!.addresses).toBeUndefined();
-    expect(doc.data()!.primaryName).toBe('Integration Person');
+    expect(primaryNameOf(doc.data()!.names)).toBe('Integration Person');
   });
 });
 
@@ -161,14 +168,14 @@ describe('soft delete + version history — real Firestore write path (issue #9)
   });
 
   it('delists a record via delistRecords, then relists it on reappearance, reconstructing its full history', async () => {
-    await uploadRecords([record({ id: 'PEP-int-ver-3', primaryName: 'Original Name' })], 'import-1');
+    await uploadRecords([record({ id: 'PEP-int-ver-3', names: namesOverride('Original Name') })], 'import-1');
     await delistRecords(['PEP-int-ver-3'], 'import-2');
 
     let doc = await db.collection('sanctions').doc('PEP-int-ver-3').get();
     expect(doc.data()!.status).toBe('delisted');
     expect(doc.data()!.delistedAt).toBeTruthy();
 
-    await uploadRecords([record({ id: 'PEP-int-ver-3', primaryName: 'Original Name' })], 'import-3');
+    await uploadRecords([record({ id: 'PEP-int-ver-3', names: namesOverride('Original Name') })], 'import-3');
 
     doc = await db.collection('sanctions').doc('PEP-int-ver-3').get();
     expect(doc.data()!.status).toBe('active');
@@ -185,7 +192,7 @@ describe('soft delete + version history — real Firestore write path (issue #9)
 
     // Reconstruct the record as of the first import from its version snapshot.
     const firstVersion = versionsSnap.docs[0].data();
-    expect(firstVersion.record.primaryName).toBe('Original Name');
+    expect(primaryNameOf(firstVersion.record.names)).toBe('Original Name');
     expect(firstVersion.record.status).toBe('active');
   });
 });
@@ -208,8 +215,7 @@ describe('uploadRecords — custom records survive an unrelated import (issue #1
     const customRecord = record({
       id: 'CUSTOM-1',
       source: 'CUSTOM',
-      primaryName: 'Local Watchlist Entry',
-      aliases: [],
+      names: namesOverride('Local Watchlist Entry'),
       searchNames: ['local', 'watchlist', 'entry'],
     });
     await uploadRecords([customRecord]);
@@ -219,8 +225,8 @@ describe('uploadRecords — custom records survive an unrelated import (issue #1
     // the custom record. uploadRecords never queries or deletes anything
     // outside the batch it's given, so the custom doc should be untouched.
     await uploadRecords([
-      record({ id: 'EU-1', source: 'EU', primaryName: 'Official EU Person', searchNames: [] }),
-      record({ id: 'EU-2', source: 'EU', primaryName: 'Another EU Person', searchNames: [] }),
+      record({ id: 'EU-1', source: 'EU', names: namesOverride('Official EU Person'), searchNames: [] }),
+      record({ id: 'EU-2', source: 'EU', names: namesOverride('Another EU Person'), searchNames: [] }),
     ]);
 
     const after = (await db.collection('sanctions').doc('CUSTOM-1').get()).data();
@@ -231,7 +237,7 @@ describe('uploadRecords — custom records survive an unrelated import (issue #1
 describe('overrides — real Firestore write path (issue #35)', () => {
   it('survives a full re-import of its source, and still wins over the freshly re-imported value', async () => {
     await uploadRecords([
-      record({ id: 'EU-override-1', primaryName: 'Original Name', sanctionReason: 'Original reason' }),
+      record({ id: 'EU-override-1', names: namesOverride('Original Name'), sanctionReason: 'Original reason' }),
     ]);
 
     await saveOverride(
@@ -243,7 +249,7 @@ describe('overrides — real Firestore write path (issue #35)', () => {
     // Simulates a full re-import of the same source: the parser produced a
     // genuinely updated sanctionReason from the official source this time.
     await uploadRecords([
-      record({ id: 'EU-override-1', primaryName: 'Original Name', sanctionReason: 'Updated source reason' }),
+      record({ id: 'EU-override-1', names: namesOverride('Original Name'), sanctionReason: 'Updated source reason' }),
     ]);
 
     const rawDoc = (await db.collection('sanctions').doc('EU-override-1').get()).data()!;
@@ -259,7 +265,7 @@ describe('overrides — real Firestore write path (issue #35)', () => {
 
   it('removing an override restores exactly the CURRENT imported values, not a frozen pre-override snapshot', async () => {
     await uploadRecords([
-      record({ id: 'EU-override-2', primaryName: 'Original Name', sanctionReason: 'Original reason' }),
+      record({ id: 'EU-override-2', names: namesOverride('Original Name'), sanctionReason: 'Original reason' }),
     ]);
     await saveOverride(
       'EU-override-2',
@@ -269,7 +275,7 @@ describe('overrides — real Firestore write path (issue #35)', () => {
 
     // A re-import lands new source data WHILE the override is still active.
     await uploadRecords([
-      record({ id: 'EU-override-2', primaryName: 'Original Name', sanctionReason: 'Second source update' }),
+      record({ id: 'EU-override-2', names: namesOverride('Original Name'), sanctionReason: 'Second source update' }),
     ]);
 
     await deleteOverride('EU-override-2', 'reviewer@example.com');
@@ -286,7 +292,7 @@ describe('overrides — real Firestore write path (issue #35)', () => {
   });
 
   it('does not resurrect a delisted record even with an override attempting to flip status back to active', async () => {
-    await uploadRecords([record({ id: 'EU-override-3', primaryName: 'Some Name' })], 'import-1');
+    await uploadRecords([record({ id: 'EU-override-3', names: namesOverride('Some Name') })], 'import-1');
     await delistRecords(['EU-override-3'], 'import-2');
 
     await saveOverride(
