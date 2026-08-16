@@ -5,9 +5,6 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/**/*.test.ts'],
     exclude: ['node_modules/**', 'dist/**'],
-    // Opts every test file into the dev test-login (src/auth/testAccount.ts)
-    // without each file needing to know the flag exists — see tests/setup.ts.
-    setupFiles: ['./tests/setup.ts'],
     // Emulator-backed suites (tests/rules, tests/integration) talk to a real
     // Firestore emulator over the network, so they need more headroom than the
     // pure unit layer. See CLAUDE.md §1 for the three-layer split.
