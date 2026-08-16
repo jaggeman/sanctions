@@ -15,12 +15,20 @@ import {
   Chip,
   Checkbox,
   FormControlLabel,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Divider,
 } from '@mui/material';
 import type { SelectChangeEvent } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
+import SyncIcon from '@mui/icons-material/Sync';
 import { apiFetch } from './apiFetch';
 
-type SanctionSource = 'EU' | 'UN' | 'US' | 'PEP' | 'CUSTOM';
+type SanctionSourceOption = 'AUTO' | 'EU' | 'UN' | 'US' | 'UK' | 'PEP' | 'CUSTOM';
 type ImportMode = 'sync' | 'append';
 
 interface SampleRecord {
@@ -49,11 +57,29 @@ interface PreviewState {
   diffs: DiffResultData[];
 }
 
+interface BatchItem {
+  id: string;
+  filename: string;
+  size: number;
+  status: 'pending' | 'uploading' | 'applied' | 'skipped' | 'failed';
+  message?: string;
+  duplicateImportId?: string;
+  counts?: { parsed?: number; uploaded?: number };
+}
+
 interface UploadTabProps {
   onViewImport: (importId: string) => void;
 }
 
-const SOURCES: SanctionSource[] = ['EU', 'UN', 'US', 'PEP', 'CUSTOM'];
+const SOURCES: { value: SanctionSourceOption; label: string }[] = [
+  { value: 'AUTO', label: 'Auto-detect Source' },
+  { value: 'EU', label: 'EU' },
+  { value: 'UN', label: 'UN' },
+  { value: 'US', label: 'US (OFAC SDN)' },
+  { value: 'UK', label: 'UK Sanctions' },
+  { value: 'PEP', label: 'PEP' },
+  { value: 'CUSTOM', label: 'Custom' },
+];
 
 function SampleChips({ samples }: { samples: SampleRecord[] }) {
   if (samples.length === 0) return null;
@@ -79,22 +105,24 @@ function DiffBucket({ label, count, samples }: { label: string; count: number; s
 }
 
 export default function UploadTab({ onViewImport }: UploadTabProps) {
-  const [source, setSource] = useState<SanctionSource>('EU');
+  const [source, setSource] = useState<SanctionSourceOption>('AUTO');
   const [mode, setMode] = useState<ImportMode>('append');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [applying, setApplying] = useState(false);
+  const [syncingOfficial, setSyncingOfficial] = useState(false);
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [overrideConfirmed, setOverrideConfirmed] = useState(false);
+  const [batchQueue, setBatchQueue] = useState<BatchItem[]>([]);
   const [feedback, setFeedback] = useState<{
-    severity: 'success' | 'error' | 'warning';
+    severity: 'success' | 'error' | 'warning' | 'info';
     message: string;
     duplicateImportId?: string;
   } | null>(null);
 
   const guardTripped = preview?.diffs.some((d) => d.guardTripped) ?? false;
   const totalDelisted = preview?.diffs.reduce((sum, d) => sum + d.counts.delisted, 0) ?? 0;
-  const isBusy = previewing || applying;
+  const isBusy = previewing || applying || syncingOfficial;
 
   function resetForNextUpload() {
     setSelectedFile(null);
@@ -105,7 +133,9 @@ export default function UploadTab({ onViewImport }: UploadTabProps) {
   async function runUpload(file: File, dryRun: boolean, force: boolean) {
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('source', source);
+    if (source !== 'AUTO') {
+      formData.append('source', source);
+    }
     formData.append('mode', mode);
     formData.append('dryRun', dryRun ? 'true' : 'false');
     if (force) formData.append('force', 'true');
@@ -117,40 +147,122 @@ export default function UploadTab({ onViewImport }: UploadTabProps) {
 
   async function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
     if (!e.target.files || e.target.files.length === 0) return;
-    const file = e.target.files[0];
+    const files = Array.from(e.target.files);
     e.target.value = ''; // allow re-selecting the same file later
 
-    setSelectedFile(file);
-    setPreview(null);
-    setOverrideConfirmed(false);
-    setFeedback(null);
-    setPreviewing(true);
+    if (files.length === 1) {
+      // Single file interactive dry-run preview flow
+      setBatchQueue([]);
+      const file = files[0];
+      setSelectedFile(file);
+      setPreview(null);
+      setOverrideConfirmed(false);
+      setFeedback(null);
+      setPreviewing(true);
 
-    try {
-      const { res, data } = await runUpload(file, true, false);
+      try {
+        const { res, data } = await runUpload(file, true, false);
 
-      if (res.status === 200 && data.status === 'dry_run') {
-        setPreview({ counts: data.counts || { parsed: 0, uploaded: 0 }, diffs: data.diffs || [] });
-      } else if (res.status === 409 && data.duplicateOfImportId) {
-        setFeedback({
-          severity: 'warning',
-          message: data.error || `Identical file already imported as import #${data.duplicateOfImportId}.`,
-          duplicateImportId: data.duplicateOfImportId,
-        });
-        setSelectedFile(null);
-      } else if (res.status === 422) {
-        setFeedback({ severity: 'error', message: data.error || 'This file format is not yet supported.' });
-        setSelectedFile(null);
-      } else {
-        setFeedback({ severity: 'error', message: data.error || 'Preview failed.' });
+        if (res.status === 200 && data.status === 'dry_run') {
+          setPreview({ counts: data.counts || { parsed: 0, uploaded: 0 }, diffs: data.diffs || [] });
+        } else if (res.status === 409 && data.duplicateOfImportId) {
+          setFeedback({
+            severity: 'warning',
+            message: data.error || `Identical file already imported as import #${data.duplicateOfImportId}.`,
+            duplicateImportId: data.duplicateOfImportId,
+          });
+          setSelectedFile(null);
+        } else if (res.status === 422) {
+          setFeedback({ severity: 'error', message: data.error || 'This file format is not yet supported.' });
+          setSelectedFile(null);
+        } else {
+          setFeedback({ severity: 'error', message: data.error || 'Preview failed.' });
+          setSelectedFile(null);
+        }
+      } catch (err) {
+        console.error(err);
+        setFeedback({ severity: 'error', message: 'Preview failed. Please try again.' });
         setSelectedFile(null);
       }
-    } catch (err) {
-      console.error(err);
-      setFeedback({ severity: 'error', message: 'Preview failed. Please try again.' });
+      setPreviewing(false);
+    } else {
+      // Multi-file batch upload queue
       setSelectedFile(null);
+      setPreview(null);
+      setFeedback(null);
+
+      const items: BatchItem[] = files.map((f, idx) => ({
+        id: `${f.name}-${idx}`,
+        filename: f.name,
+        size: f.size,
+        status: 'pending',
+      }));
+      setBatchQueue(items);
+      setApplying(true);
+
+      let successCount = 0;
+      let skippedCount = 0;
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setBatchQueue((prev) =>
+          prev.map((item, idx) => (idx === i ? { ...item, status: 'uploading' } : item)),
+        );
+
+        try {
+          const { res, data } = await runUpload(file, false, false);
+          if (res.status === 200 && data.status === 'applied') {
+            successCount++;
+            setBatchQueue((prev) =>
+              prev.map((item, idx) =>
+                idx === i
+                  ? {
+                      ...item,
+                      status: 'applied',
+                      counts: data.counts,
+                      message: `Applied: ${data.counts?.parsed ?? 0} parsed, ${data.counts?.uploaded ?? 0} saved`,
+                    }
+                  : item,
+              ),
+            );
+          } else if (res.status === 409 && data.duplicateOfImportId) {
+            skippedCount++;
+            setBatchQueue((prev) =>
+              prev.map((item, idx) =>
+                idx === i
+                  ? {
+                      ...item,
+                      status: 'skipped',
+                      duplicateImportId: data.duplicateOfImportId,
+                      message: `Skipped: duplicate of import #${data.duplicateOfImportId}`,
+                    }
+                  : item,
+              ),
+            );
+          } else {
+            setBatchQueue((prev) =>
+              prev.map((item, idx) =>
+                idx === i
+                  ? { ...item, status: 'failed', message: data.error || 'Upload failed' }
+                  : item,
+              ),
+            );
+          }
+        } catch (err: any) {
+          setBatchQueue((prev) =>
+            prev.map((item, idx) =>
+              idx === i ? { ...item, status: 'failed', message: err.message || 'Error' } : item,
+            ),
+          );
+        }
+      }
+
+      setApplying(false);
+      setFeedback({
+        severity: 'success',
+        message: `Batch complete: ${successCount} files imported, ${skippedCount} skipped as duplicates.`,
+      });
     }
-    setPreviewing(false);
   }
 
   async function handleApply() {
@@ -185,31 +297,76 @@ export default function UploadTab({ onViewImport }: UploadTabProps) {
     setApplying(false);
   }
 
+  async function handleSyncOfficial() {
+    setSyncingOfficial(true);
+    setFeedback(null);
+
+    try {
+      const res = await apiFetch('/api/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sources: ['EU', 'UN', 'US', 'UK'], mode }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (res.status === 200 || res.status === 202) {
+        setFeedback({
+          severity: 'success',
+          message: data.importId
+            ? `Official sync started in background (Import #${data.importId}). Check Import History for progress.`
+            : 'Official sources synchronization started.',
+        });
+      } else {
+        setFeedback({ severity: 'error', message: data.error || 'Failed to trigger sync.' });
+      }
+    } catch (err) {
+      console.error(err);
+      setFeedback({ severity: 'error', message: 'Sync failed. Please try again.' });
+    }
+    setSyncingOfficial(false);
+  }
+
   const applyDisabled = isBusy || !preview || (guardTripped && !overrideConfirmed);
 
   return (
     <Box>
-      <Card sx={{ p: 2 }}>
+      <Card sx={{ p: 2, mb: 3 }}>
         <CardContent>
-          <Typography variant="h5" gutterBottom>
-            Import Sanctions List
-          </Typography>
-          <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
-            Selecting a file previews what it would change. Nothing is written until you click Apply.
-          </Typography>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', mb: 2 }}>
+            <div>
+              <Typography variant="h5" gutterBottom>
+                Import Sanctions Lists
+              </Typography>
+              <Typography variant="body1" color="text.secondary">
+                Upload one or multiple files (.xml, .csv) with automatic format detection and duplicate skipping.
+              </Typography>
+            </div>
+            <Button
+              variant="outlined"
+              color="primary"
+              startIcon={syncingOfficial ? <CircularProgress size={18} /> : <SyncIcon />}
+              onClick={handleSyncOfficial}
+              disabled={isBusy}
+              sx={{ mt: { xs: 2, sm: 0 } }}
+            >
+              Sync Official Sources (EU/UN/US/UK)
+            </Button>
+          </Box>
+
+          <Divider sx={{ my: 2 }} />
 
           <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 1 }}>
-            <FormControl size="small" sx={{ minWidth: 160 }}>
+            <FormControl size="small" sx={{ minWidth: 200 }}>
               <InputLabel id="upload-source-label">Source</InputLabel>
               <Select
                 labelId="upload-source-label"
                 label="Source"
                 value={source}
-                onChange={(e: SelectChangeEvent) => setSource(e.target.value as SanctionSource)}
+                onChange={(e: SelectChangeEvent) => setSource(e.target.value as SanctionSourceOption)}
                 disabled={isBusy}
               >
                 {SOURCES.map((s) => (
-                  <MenuItem key={s} value={s}>{s}</MenuItem>
+                  <MenuItem key={s.value} value={s.value}>{s.label}</MenuItem>
                 ))}
               </Select>
             </FormControl>
@@ -250,6 +407,7 @@ export default function UploadTab({ onViewImport }: UploadTabProps) {
             <input
               type="file"
               hidden
+              multiple
               aria-label="Sanctions list file"
               onChange={handleFileSelected}
               accept=".csv,.xml"
@@ -257,10 +415,14 @@ export default function UploadTab({ onViewImport }: UploadTabProps) {
             />
             <CloudUploadIcon sx={{ fontSize: 60, color: 'primary.main', mb: 2 }} />
             <Typography variant="h6" gutterBottom>
-              {previewing ? 'Previewing...' : applying ? 'Applying...' : 'Click or Drag & Drop to upload files'}
+              {previewing
+                ? 'Previewing...'
+                : applying
+                ? 'Uploading & Processing...'
+                : 'Click or Drag & Drop single or multiple files here'}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              Supported formats: CSV, XML
+              Supported formats: EU XML, UN XML, US XML, UK XML, CSV
             </Typography>
           </Paper>
 
@@ -270,6 +432,7 @@ export default function UploadTab({ onViewImport }: UploadTabProps) {
             </Box>
           )}
 
+          {/* Single File Preview Card */}
           {preview && (
             <Card variant="outlined" sx={{ mt: 3, p: 2 }}>
               <Typography variant="h6" gutterBottom>
@@ -326,6 +489,58 @@ export default function UploadTab({ onViewImport }: UploadTabProps) {
                   Discard
                 </Button>
               </Box>
+            </Card>
+          )}
+
+          {/* Batch Upload Queue */}
+          {batchQueue.length > 0 && (
+            <Card variant="outlined" sx={{ mt: 3, p: 2 }}>
+              <Typography variant="h6" gutterBottom>
+                Batch Upload Queue ({batchQueue.length} files)
+              </Typography>
+              <TableContainer>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>File</TableCell>
+                      <TableCell>Size</TableCell>
+                      <TableCell>Status</TableCell>
+                      <TableCell>Details</TableCell>
+                      <TableCell align="right">Action</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {batchQueue.map((item) => (
+                      <TableRow key={item.id}>
+                        <TableCell><strong>{item.filename}</strong></TableCell>
+                        <TableCell>{(item.size / 1024).toFixed(1)} KB</TableCell>
+                        <TableCell>
+                          {item.status === 'pending' && <Chip label="Pending" size="small" />}
+                          {item.status === 'uploading' && (
+                            <Chip
+                              icon={<CircularProgress size={14} color="inherit" />}
+                              label="Uploading"
+                              size="small"
+                              color="primary"
+                            />
+                          )}
+                          {item.status === 'applied' && <Chip label="Applied" size="small" color="success" />}
+                          {item.status === 'skipped' && <Chip label="Skipped (Duplicate)" size="small" color="default" />}
+                          {item.status === 'failed' && <Chip label="Failed" size="small" color="error" />}
+                        </TableCell>
+                        <TableCell>{item.message || '-'}</TableCell>
+                        <TableCell align="right">
+                          {item.duplicateImportId && (
+                            <Button size="small" onClick={() => onViewImport(item.duplicateImportId!)}>
+                              View Import
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
             </Card>
           )}
 

@@ -51,12 +51,13 @@ function formatToSource(format: DetectedFormat, sourceHint: SanctionSource): San
   if (format === 'eu-xml-1.1' || format === 'eu-csv-1.0' || format === 'eu-csv-1.1') return 'EU';
   if (format === 'un-xml') return 'UN';
   if (format === 'us-xml') return 'US';
+  if (format === 'uk-xml') return 'UK';
   return sourceHint;
 }
 
-function formatForRunImport(format: DetectedFormat): 'eu-xml-1.1' | 'un-xml' | 'us-xml' | 'csv' {
+function formatForRunImport(format: DetectedFormat): 'eu-xml-1.1' | 'un-xml' | 'us-xml' | 'uk-xml' | 'csv' {
   // eu-csv-1.0/1.1 never reach runImport — handled as unsupported below.
-  return format === 'eu-xml-1.1' || format === 'un-xml' || format === 'us-xml' ? format : 'csv';
+  return format === 'eu-xml-1.1' || format === 'un-xml' || format === 'us-xml' || format === 'uk-xml' ? format : 'csv';
 }
 
 // The client-supplied filename must never reach the Cloud Storage object
