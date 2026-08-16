@@ -113,19 +113,12 @@ describe('regression: known name-variant pairs against the real EU corpus', () =
 });
 
 describe('benchmark: full-corpus scan timing (issue #11 acceptance criterion)', () => {
-  // v8 coverage instrumentation adds real overhead to a hot loop like this
-  // one (observed roughly 3x the per-query latency), which both pushes
-  // runtime past the default testTimeout AND pushes p95 past its own
-  // threshold below — coverage overhead corrupts the very thing this test
-  // measures. The timeout is raised here as a courtesy for a plain
-  // `vitest run --coverage`, but the p95 assertion will still legitimately
-  // fail under instrumentation; `npm run test:coverage` (issue #72) excludes
-  // this file entirely rather than loosen the threshold to accommodate it.
   it('records p50/p95 latency and peak heap over repeated full-corpus searches', { timeout: 60_000 }, () => {
+    // issue #300: 25 queries so p95 is calculated over a representative distribution
     const queries = [
       'Qusay', 'Qousaye Saddam Hussein Al-Tikriti', 'Izzat Ibrahim al-Dury',
       'Abed Hamid Mahmud', 'Vladimir Putin', 'Mohammed Al Amin', 'Random Unrelated Name',
-      ...corpus.slice(0, 13).map((c) => c.primaryName), // sample real names as queries too
+      ...corpus.slice(0, 18).map((c) => c.primaryName),
     ];
 
     const timings: number[] = [];
@@ -157,19 +150,7 @@ describe('benchmark: full-corpus scan timing (issue #11 acceptance criterion)', 
 });
 
 /**
- * Issue #42: the benchmark above only ever ran against the current EU-only
- * 6,234-record corpus — it passed, but silently would have regressed the
- * moment UN+US+PEP data actually lands, at the exact scale issue #11 itself
- * projected ("6,234 EU entities today, perhaps 50,000 with UN + US + PEP").
- * Reproduced directly: a single query against the real corpus duplicated to
- * ~50k records measured 2,320ms with the old re-tokenize-every-query
- * approach. This suite synthesizes that same scale
- * and exercises the FIX (a precomputed per-record token index, built once,
- * not per query) rather than re-running the unindexed path at this size —
- * the unindexed path is already known-slow from the issue's own measurement
- * and re-proving it here would make the suite itself take 40+ seconds for
- * no ongoing benefit; this is the regression guard for the fix, not a
- * museum piece for the bug.
+ * Issue #42, #300: precomputed-index scan timing at ~50k-record scale.
  */
 describe('benchmark: full-corpus scan timing at ~50k-record scale via the precomputed index (issue #42)', () => {
   let bigCorpus: CorpusEntry[];
@@ -199,28 +180,14 @@ describe('benchmark: full-corpus scan timing at ~50k-record scale via the precom
   });
 
   it('records p50/p95 latency using the precomputed index instead of re-tokenizing candidates per query', { timeout: 60_000 }, () => {
-    // Realistic screening-query length (1-3 words, how an analyst actually
-    // types a customer's name), not the full 5-7 word legal names some of
-    // these entities are stored under — the existing 6,234-record benchmark
-    // above queries with those full names too, which is fine at that scale,
-    // but at 50k records the per-query cost scales with query word count ×
-    // candidate word count, and a full legal name as the query is not
-    // representative of what this system is actually queried with in
-    // practice. Real corpus entries are still sampled for diversity, just
-    // truncated to a realistic query length rather than passed through whole.
+    // issue #300: 25 representative queries
     const queries = [
       'Qusay', 'Izzat Ibrahim', 'Abed Hamid Mahmud',
       'Vladimir Putin', 'Mohammed Al Amin', 'Random Unrelated Name',
-      ...corpus.slice(0, 13).map((c) => c.primaryName.split(' ').slice(0, 3).join(' ')),
+      ...corpus.slice(0, 19).map((c) => c.primaryName.split(' ').slice(0, 3).join(' ')),
     ];
 
-    // Warm up the JIT on this exact code path before measuring — this suite
-    // is the first place in the file that exercises scoreTokenizedNameMatch
-    // at any real volume, so the first few timed iterations would otherwise
-    // measure V8 compiling the hot functions, not steady-state performance
-    // (the same reason the existing 6,234-record benchmark below doesn't
-    // need this: earlier tests in this same file already warmed up
-    // scoreNameMatch's shared internals).
+    // Warm up the JIT on this exact code path before measuring
     {
       const warmupQuery = buildTokenizedQuery('Vladimir Putin');
       for (const { tokens } of tokenizedIndex.slice(0, 2000)) {
@@ -234,8 +201,6 @@ describe('benchmark: full-corpus scan timing at ~50k-record scale via the precom
     for (const q of queries) {
       const start = performance.now();
 
-      // What runSearch does per query: tokenize the query ONCE, then reuse
-      // each candidate's precomputed tokens instead of recomputing them.
       const tokenizedQuery = buildTokenizedQuery(q);
       let best = { score: 0, matchedName: '' };
       for (const { tokens } of tokenizedIndex) {
@@ -258,9 +223,6 @@ describe('benchmark: full-corpus scan timing at ~50k-record scale via the precom
       `heapDelta=${((heapAfter - heapBefore) / 1024 / 1024).toFixed(1)}MB`,
     );
 
-    // Same budget the existing 6,234-record benchmark already asserts —
-    // now proven at the scale issue #11 itself projected and issue #42
-    // measured the regression at (2,320ms with the old unindexed approach).
     expect(p95).toBeLessThan(2000);
   });
 });
