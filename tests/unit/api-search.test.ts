@@ -175,6 +175,25 @@ describe('GET /api/search', () => {
     expect(runSearch).toHaveBeenCalledWith('Vladimir', expect.objectContaining({ limit: 20 }));
   });
 
+  it('issue #148: clamps threshold to 0-100 range and parses valid integer thresholds', async () => {
+    await agent.get('/api/search').query({ q: 'Vladimir', threshold: '75' });
+    expect(runSearch).toHaveBeenCalledWith('Vladimir', expect.objectContaining({ threshold: 75 }));
+
+    await agent.get('/api/search').query({ q: 'Vladimir', threshold: '500' });
+    expect(runSearch).toHaveBeenCalledWith('Vladimir', expect.objectContaining({ threshold: 100 }));
+
+    await agent.get('/api/search').query({ q: 'Vladimir', threshold: '-10' });
+    expect(runSearch).toHaveBeenCalledWith('Vladimir', expect.objectContaining({ threshold: 0 }));
+  });
+
+  it('issue #148: ignores invalid/non-numeric threshold instead of passing NaN to search engine', async () => {
+    await agent.get('/api/search').query({ q: 'Vladimir', threshold: 'high' });
+    expect(runSearch).toHaveBeenCalledWith('Vladimir', expect.not.objectContaining({ threshold: expect.anything() }));
+
+    await agent.get('/api/search').query({ q: 'Vladimir', threshold: '' });
+    expect(runSearch).toHaveBeenCalledWith('Vladimir', expect.not.objectContaining({ threshold: expect.anything() }));
+  });
+
   it('returns 500 with details when the search engine throws', async () => {
     runSearch.mockRejectedValue(new Error('boom'));
     const res = await agent.get('/api/search').query({ q: 'Vladimir' });

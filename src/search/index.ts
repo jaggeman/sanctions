@@ -138,7 +138,10 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
     ? options.source.split(',').map((s) => s.trim().toUpperCase())
     : null;
   const typeFilter = options.type ? options.type.trim().toLowerCase() : null;
-  const threshold = options.threshold ?? DEFAULT_THRESHOLD;
+  const rawThreshold = options.threshold !== undefined && !Number.isNaN(options.threshold)
+    ? options.threshold
+    : DEFAULT_THRESHOLD;
+  const threshold = Math.max(0, Math.min(rawThreshold, 100));
   const limit = Math.min(options.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
 
   const candidates = records.filter((r) => {

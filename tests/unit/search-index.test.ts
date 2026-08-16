@@ -322,3 +322,27 @@ describe('runSearch — overrides merged into the index (issue #35)', () => {
     expect(results[0].sanctionReason).toBe('Corrected');
   });
 });
+
+describe('runSearch — threshold validation & NaN resilience (issue #148)', () => {
+  beforeEach(() => {
+    allRecords = [record({ id: 'EU-1', names: namesOverride('Vladimir Putin') })];
+    invalidateSearchIndex();
+  });
+
+  it('falls back to DEFAULT_THRESHOLD when threshold is NaN, returning matches normally', async () => {
+    const { results } = await runSearch('Vladimir Putin', { threshold: NaN });
+    expect(results).toHaveLength(1);
+    expect(results[0].id).toBe('EU-1');
+  });
+
+  it('clamps negative threshold to 0', async () => {
+    const { results } = await runSearch('Vladimir', { threshold: -50 });
+    expect(results).toHaveLength(1);
+  });
+
+  it('clamps threshold > 100 to 100', async () => {
+    const { results } = await runSearch('Vlad', { threshold: 200 });
+    expect(results).toHaveLength(0);
+  });
+});
+
