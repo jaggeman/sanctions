@@ -40,32 +40,38 @@ describe('App component navigation tabs', () => {
     await renderLoggedIn();
     fireEvent.click(screen.getByText('Official Sources'));
 
-    expect(screen.getByText('EU Sanctions Map')).toBeInTheDocument();
-    expect(screen.getByText('UN Security Council Consolidated List')).toBeInTheDocument();
-    expect(screen.getByText('OFAC Sanctions List Search')).toBeInTheDocument();
-    expect(screen.getByText('The UK Sanctions List (FCDO)')).toBeInTheDocument();
-    expect(screen.getByText('SECO SESAM Sanctions Database')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('EU Sanctions Map')).toBeInTheDocument();
+      expect(screen.getByText('UN Security Council Consolidated List')).toBeInTheDocument();
+      expect(screen.getByText('OFAC Sanctions List Search')).toBeInTheDocument();
+      expect(screen.getByText('The UK Sanctions List (FCDO)')).toBeInTheDocument();
+      expect(screen.getByText('SECO SESAM Sanctions Database')).toBeInTheDocument();
+    });
   });
 
   it('navigates to Help & Manual tab', async () => {
     await renderLoggedIn();
     fireEvent.click(screen.getByText('Help & Manual'));
 
-    expect(screen.getByText('User Manual & Help')).toBeInTheDocument();
-    expect(screen.getByText('How to Search')).toBeInTheDocument();
-    expect(screen.getByText('Uploading Lists')).toBeInTheDocument();
-    expect(screen.getByText('Managing API Tokens')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Official Sources' })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('User Manual & Help')).toBeInTheDocument();
+      expect(screen.getByText('How to Search')).toBeInTheDocument();
+      expect(screen.getByText('Uploading Lists')).toBeInTheDocument();
+      expect(screen.getByText('Managing API Tokens')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Official Sources' })).toBeInTheDocument();
+    });
   });
 
   it('documents fuzzy match scoring and all upload sources in the manual', async () => {
     await renderLoggedIn();
     fireEvent.click(screen.getByText('Help & Manual'));
 
-    expect(screen.getByText(/match score/i)).toBeInTheDocument();
-    expect(screen.getByText(/non-Latin/i)).toBeInTheDocument();
-    expect(screen.getByText(/duplicate/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/Import History/i).length).toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(screen.getByText(/match score/i)).toBeInTheDocument();
+      expect(screen.getByText(/non-Latin/i)).toBeInTheDocument();
+      expect(screen.getByText(/duplicate/i)).toBeInTheDocument();
+      expect(screen.getAllByText(/Import History/i).length).toBeGreaterThan(0);
+    });
   });
 
   it('stays on the login screen when there is no session', async () => {
@@ -153,7 +159,7 @@ describe('App component navigation tabs', () => {
     
     // 2. Switch tab
     fireEvent.click(screen.getByText('Official Sources'));
-    expect(screen.getByText('EU Sanctions Map')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('EU Sanctions Map')).toBeInTheDocument());
     
     // 3. Switch back
     fireEvent.click(screen.getByRole('tab', { name: /^search$/i }));
@@ -215,6 +221,7 @@ describe('App — session-expiry handling (issue #59)', () => {
     await renderLoggedIn();
     fireEvent.click(screen.getByText('Upload Lists'));
 
+    await waitFor(() => expect(document.querySelector('input[type="file"]')).toBeInTheDocument());
     const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
     const file = new File(['x'], 'list.csv', { type: 'text/csv' });
     fireEvent.change(fileInput, { target: { files: [file] } });
