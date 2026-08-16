@@ -37,6 +37,18 @@ function str(val: any): string {
   return String(val).trim();
 }
 
+// issue #283: a target can have more than one sibling <justification> (or
+// <other-information>) element — fast-xml-parser then returns an array of
+// nodes instead of a single one. str() only extracts a single node's text;
+// falling through to String(array) joined each element via its own default
+// Object.prototype.toString(), producing the literal garbage
+// "[object Object],[object Object]" in production (CH-52941). toArray()
+// normalizes the single-or-array shape uniformly; str() already extracts
+// each individual node's text correctly.
+function joinTextNodes(val: any, separator = '; '): string {
+  return toArray(val).map(str).filter(Boolean).join(separator);
+}
+
 function parseNum(val: any): number | undefined {
   if (val === undefined || val === null) return undefined;
   const n = parseInt(String(val).trim(), 10);
@@ -246,15 +258,11 @@ export async function parseChXmlStream(
       }
     }
 
-    // Justification / legal basis
-    const justification = str(
-      targetNode.justification?.value ||
-      targetNode.justification?.['#text'] ||
-      targetNode.justification ||
-      targetNode['other-information']?.value ||
-      targetNode['other-information']?.['#text'] ||
-      targetNode['other-information']
-    );
+    // Justification / legal basis. Prefers justification over
+    // other-information, same as before — other-information is only used
+    // when there's no justification at all.
+    const justification =
+      joinTextNodes(targetNode.justification) || joinTextNodes(targetNode['other-information']);
 
     // Search names
     const searchNamesSet = new Set<string>();
