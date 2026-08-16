@@ -230,7 +230,12 @@ function App() {
               />
             )}
 
-            {tabValue === 2 && <ImportHistoryTab focusImportId={historyFocusId} />}
+            {tabValue === 2 && (
+              <ImportHistoryTab
+                focusImportId={historyFocusId}
+                onFocusConsumed={() => setHistoryFocusId(undefined)}
+              />
+            )}
 
             {tabValue === 3 && <OfficialSourcesTab />}
 

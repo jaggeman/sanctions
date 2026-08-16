@@ -88,6 +88,72 @@ describe('App component navigation tabs', () => {
     await waitFor(() => expect(screen.getByText(/no imports yet/i)).toBeInTheDocument());
   });
 
+  it('issue #165: does not reopen the import-detail dialog on a later visit to Import History', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('/api/auth/session')) {
+          return { ok: true, json: async () => ({ email: 'analyst@example.com' }) } as Response;
+        }
+        if (url.includes('/api/upload')) {
+          return {
+            ok: false,
+            status: 409,
+            json: async () => ({
+              error: 'Identical file already imported as import #abc123.',
+              duplicateOfImportId: 'abc123',
+            }),
+          } as Response;
+        }
+        if (url.includes('/api/imports')) {
+          return {
+            ok: true,
+            json: async () => [
+              {
+                importId: 'abc123',
+                filename: 'eu_list.xml',
+                source: 'EU',
+                format: 'eu-xml-1.1',
+                uploadedAt: '2026-08-15T10:00:00.000Z',
+                uploadedBy: 'analyst@example.com',
+                status: 'applied',
+                counts: { parsed: 100, uploaded: 100 },
+              },
+            ],
+          } as Response;
+        }
+        return { ok: true, json: async () => ({}) } as Response;
+      }),
+    );
+
+    await renderLoggedIn();
+
+    // 1. Upload a duplicate file, follow "View import".
+    fireEvent.click(screen.getByText('Upload Lists'));
+    await waitFor(() => expect(document.querySelector('input[type="file"]')).toBeInTheDocument());
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [new File(['x'], 'eu_list.xml', { type: 'text/xml' })] } });
+
+    await waitFor(() => expect(screen.getByText(/already imported/i)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /view import/i }));
+
+    // 2. Import History opens with the detail dialog already showing.
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+
+    // 3. Close it.
+    fireEvent.click(screen.getByRole('button', { name: /close/i }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    // 4. Leave the tab and come back.
+    fireEvent.click(screen.getByRole('tab', { name: /^search$/i }));
+    fireEvent.click(screen.getByText('Import History'));
+
+    // 5. The list loads again, but the dialog must not reopen on its own.
+    await waitFor(() => expect(screen.getAllByText('eu_list.xml').length).toBeGreaterThan(0));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
   it('opens the record detail view when a search result is clicked (issue #12)', async () => {
     vi.stubGlobal(
       'fetch',
