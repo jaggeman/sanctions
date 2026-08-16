@@ -14,6 +14,7 @@ import { systemRouter } from './routes/system';
 import { authRouter } from './routes/auth';
 import { searchRouter } from './routes/search';
 import { importsRouter } from './routes/imports';
+import { exportRouter } from './routes/export';
 import { requireAuth } from '../auth/middleware';
 import { findMisconfiguredAdminEmails } from '../auth/admins';
 import { requestLogger } from './middleware/requestLogger';
@@ -148,6 +149,9 @@ app.use('/api', searchRouter);
 
 // Import and upload routes (issue #195, split from index.ts)
 app.use('/api', importsRouter);
+
+// CSV Export routes (issue #233)
+app.use('/api', exportRouter);
 
 // Catch-all error logger — must be registered after every route/middleware
 // above so Express routes uncaught errors to it.
