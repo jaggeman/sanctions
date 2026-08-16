@@ -117,8 +117,8 @@ authRouter.get('/session', requireAuth, (req, res) => {
 /**
  * POST /api/auth/logout
  * Deliberately not gated by requireAuth (issue #108, explicit decision):
- * it only ever destroys the session matching whatever `sid` cookie the
- * caller presents, so at most a caller logs out their own (possibly
+ * it only ever destroys the session matching whatever `SESSION_COOKIE_NAME`
+ * cookie the caller presents, so at most a caller logs out their own (possibly
  * already-invalid) session — there is no cross-account effect to guard
  * against, and requiring a still-valid session just to end that session
  * would reject the exact "my session already looks broken" case logout
