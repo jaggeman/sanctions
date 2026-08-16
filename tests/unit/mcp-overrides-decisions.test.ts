@@ -67,6 +67,24 @@ describe('handleGetOverride — MCP get_override tool', () => {
     expect(result.content[0].text).toMatch(/ingen|no override|EU-404/i);
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  // issue #263: entityId reaches getOverride() -> db.collection('overrides').doc(entityId)
+  // unvalidated — a "/" silently addresses a nested subcollection doc instead of erroring.
+  it('rejects an entityId containing "/" before it ever reaches getOverride', async () => {
+    const result = await handleGetOverride({ entityId: 'EU-1234/history/secretDoc' });
+
+    expect(result.isError).toBe(true);
+    expect(getOverride).not.toHaveBeenCalled();
+    expect(result.content[0].text).toMatch(/invalid id/i);
+  });
+
+  it('rejects a Firestore-reserved-pattern entityId without ever calling getOverride', async () => {
+    const result = await handleGetOverride({ entityId: '__proto__' });
+
+    expect(result.isError).toBe(true);
+    expect(getOverride).not.toHaveBeenCalled();
+    expect(result.content[0].text).toMatch(/invalid id/i);
+  });
 });
 
 describe('handleListDecisionsForEntity — MCP list_decisions_for_entity tool', () => {
@@ -88,6 +106,26 @@ describe('handleListDecisionsForEntity — MCP list_decisions_for_entity tool', 
     const result = await handleListDecisionsForEntity({ entityId: 'EU-1' });
 
     expect(result.content[0].text).toMatch(/inga|no decisions/i);
+  });
+
+  // issue #263: lower severity than the .doc()-based tools (a where() query
+  // isn't path-traversable) but the same missing-guard pattern, and an
+  // unvalidated id could still surface a raw driver error for a reserved
+  // pattern in a different query shape.
+  it('rejects an entityId containing "/" before it ever reaches listDecisionsForEntity', async () => {
+    const result = await handleListDecisionsForEntity({ entityId: 'EU-1234/history/secretDoc' });
+
+    expect(result.isError).toBe(true);
+    expect(listDecisionsForEntity).not.toHaveBeenCalled();
+    expect(result.content[0].text).toMatch(/invalid id/i);
+  });
+
+  it('rejects a Firestore-reserved-pattern entityId without ever calling listDecisionsForEntity', async () => {
+    const result = await handleListDecisionsForEntity({ entityId: '__proto__' });
+
+    expect(result.isError).toBe(true);
+    expect(listDecisionsForEntity).not.toHaveBeenCalled();
+    expect(result.content[0].text).toMatch(/invalid id/i);
   });
 });
 

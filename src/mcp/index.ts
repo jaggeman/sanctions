@@ -13,6 +13,22 @@ import { runSearch } from '../search';
 import { getOverride } from '../overrides';
 import { listDecisionsForEntity } from '../decisions';
 import { primaryNameOf, aliasNamesOf, formatBirthDates } from '../shared/types';
+import { isValidEntityId } from '../shared/entityId';
+
+// issue #263: three read tools took a caller-supplied id straight into
+// Firestore (two via .doc(id), one via a where() query) without the same
+// isValidEntityId guard REST enforces via validateEntityIdParam. A "/" in
+// the id doesn't error against .doc(id) — it silently addresses a nested
+// subcollection document instead — and a Firestore-reserved id (e.g.
+// "__proto__") throws a raw driver error whose message leaks straight back
+// to the MCP caller through the generic catch below. Mirrors
+// validateEntityIdParam's REST error message.
+function invalidIdResult(id: string) {
+  return {
+    content: [{ type: 'text', text: `Invalid id "${id}" — must contain only letters, numbers, hyphens, and underscores.` }],
+    isError: true,
+  };
+}
 
 // Create the MCP server instance
 const server = new Server(
@@ -303,6 +319,7 @@ export async function callSanctionsApi(
  */
 export async function handleGetOverride(args: any) {
   const entityId = String(args?.entityId || '');
+  if (!isValidEntityId(entityId)) return invalidIdResult(entityId);
   const override = await getOverride(entityId);
 
   if (!override) {
@@ -369,6 +386,7 @@ export async function handleRecordDecision(args: any) {
  */
 export async function handleListDecisionsForEntity(args: any) {
   const entityId = String(args?.entityId || '');
+  if (!isValidEntityId(entityId)) return invalidIdResult(entityId);
   const decisions = await listDecisionsForEntity(entityId);
 
   if (decisions.length === 0) {
@@ -388,6 +406,7 @@ export async function handleListDecisionsForEntity(args: any) {
  */
 export async function handleGetSanctionDetails(args: any) {
   const id = String(args?.id || '');
+  if (!isValidEntityId(id)) return invalidIdResult(id);
   const doc = await db.collection('sanctions').doc(id).get();
 
   if (!doc.exists) {

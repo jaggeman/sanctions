@@ -63,6 +63,28 @@ describe('handleGetSanctionDetails — MCP get_sanction_details tool', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('DOES-NOT-EXIST');
   });
+
+  // issue #263: a "/" in the id addresses a nested subcollection document
+  // via .doc(id) instead of erroring — the same hazard REST's
+  // validateEntityIdParam guards against, but this tool never called it.
+  it('rejects an id containing "/" before it ever reaches Firestore', async () => {
+    const result = await handleGetSanctionDetails({ id: 'EU-1234/history/secretDoc' });
+
+    expect(result.isError).toBe(true);
+    expect(docGet).not.toHaveBeenCalled();
+    expect(result.content[0].text).toMatch(/invalid id/i);
+  });
+
+  // issue #263: a Firestore-reserved id (e.g. "__proto__") throws a raw
+  // driver error whose message leaks the real project id/doc path back to
+  // the caller when unguarded.
+  it('rejects a Firestore-reserved-pattern id without ever calling Firestore', async () => {
+    const result = await handleGetSanctionDetails({ id: '__proto__' });
+
+    expect(result.isError).toBe(true);
+    expect(docGet).not.toHaveBeenCalled();
+    expect(result.content[0].text).toMatch(/invalid id/i);
+  });
 });
 
 describe('handleRunDatabaseImport — MCP run_database_import tool', () => {
