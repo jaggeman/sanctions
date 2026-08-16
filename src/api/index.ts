@@ -123,6 +123,26 @@ app.use((req, res, next) => {
   applyHeaders(req, res, next);
 });
 
+// Every /api/* response is dynamic and cookie-authenticated — never
+// cacheable. Without this, Firebase Hosting's CDN (Fastly) treats a
+// response with no Cache-Control as publicly cacheable and, per its default
+// policy for cacheable paths, STRIPS the inbound Cookie request header
+// before it ever reaches this function. That's silent and total: every
+// GET route gating on requireAuth/requireAuthOrScope would 401 for every
+// caller, session cookie or not, because req.cookies is empty by the time
+// Express sees the request — confirmed live (a real incident): the session
+// cookie was correctly set by POST /api/auth/verify-otp, but GET
+// /api/auth/session immediately 401'd through Hosting's rewrite while the
+// exact same request against the underlying Cloud Run URL directly worked.
+// POST responses happened to still work because Google Frontend
+// auto-appends Cache-Control: private whenever a response sets a cookie —
+// but GET routes returning no cookie of their own got no such header and
+// were silently broken for cookie-forwarding on every request.
+app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
+
 // requestLogger must run before express.json()/cookieParser() (issue #66):
 // Express treats it as regular (3-arg) middleware, so if either of those
 // throws (a malformed JSON body, a bad cookie), Express skips every
