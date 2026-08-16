@@ -67,8 +67,10 @@ const MIN_PASSPORT_QUERY_LENGTH = 4; // avoids matching every ID on a 1-2 char q
 type IndexedRecord = SanctionRecord & { overriddenFields: string[] };
 
 let cachedRecords: IndexedRecord[] | null = null;
+let cachedRecordsById: Map<string, IndexedRecord> | null = null;
 let cachedVersion: number | null = null;
 let cachedNameIndex: Map<string, TokenizedName[]> | null = null;
+let cachedInvertedIndex: Map<string, Set<string>> | null = null;
 
 const searchIndexMetaDoc = () => db.collection('meta').doc('searchIndex');
 
@@ -104,14 +106,69 @@ async function getRecords(): Promise<IndexedRecord[]> {
     });
 
     const nameIndex = new Map<string, TokenizedName[]>();
+    const recordsById = new Map<string, IndexedRecord>();
+    const invertedIndex = new Map<string, Set<string>>();
+
+    const addIndexKey = (key: string, recordId: string) => {
+      if (!key) return;
+      let set = invertedIndex.get(key);
+      if (!set) {
+        set = new Set<string>();
+        invertedIndex.set(key, set);
+      }
+      set.add(recordId);
+    };
+
     cachedRecords = sanctionsSnapshot.docs.map((doc: any) => {
       const record = doc.data() as SanctionRecord;
       const { record: merged, overriddenFields } = applyOverride(record, overridesByEntityId.get(record.id));
       const candidateNames = allNamesOf(merged.names);
-      nameIndex.set(merged.id, candidateNames.map(buildTokenizedName));
-      return { ...merged, overriddenFields };
+      const tokenizedNames = candidateNames.map(buildTokenizedName);
+      nameIndex.set(merged.id, tokenizedNames);
+
+      const indexedRecord: IndexedRecord = { ...merged, overriddenFields };
+      recordsById.set(merged.id, indexedRecord);
+
+      // Fast ID / Passport index
+      for (const ident of merged.identifications || []) {
+        const num = normalizeForExactMatch(ident.number);
+        if (num.length >= MIN_PASSPORT_QUERY_LENGTH) {
+          addIndexKey(`id:${num}`, merged.id);
+        }
+      }
+
+      // Inverted index for candidate pruning (issue #223)
+      for (const tName of tokenizedNames) {
+        for (const group of tName.wordGroups) {
+          for (const w of group) {
+            const text = w.text.toLowerCase();
+            if (text.length >= 1) {
+              addIndexKey(`w:${text}`, merged.id);
+              if (text.length >= 2) {
+                addIndexKey(`p2:${text.slice(0, 2)}`, merged.id);
+              }
+              if (text.length >= 3) {
+                addIndexKey(`p3:${text.slice(0, 3)}`, merged.id);
+              }
+              if (text.length >= 4) {
+                for (let i = 0; i <= text.length - 3; i++) {
+                  addIndexKey(`ng3:${text.slice(i, i + 3)}`, merged.id);
+                }
+              }
+            }
+            if (w.soundex) {
+              addIndexKey(`sx:${w.soundex}`, merged.id);
+            }
+          }
+        }
+      }
+
+      return indexedRecord;
     });
+
+    cachedRecordsById = recordsById;
     cachedNameIndex = nameIndex;
+    cachedInvertedIndex = invertedIndex;
     cachedVersion = currentVersion;
   }
   return cachedRecords;
@@ -159,35 +216,86 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
       : DEFAULT_LIMIT;
   const limit = Math.min(Math.max(0, rawLimit), MAX_LIMIT);
 
-  const candidates = records.filter((r) => {
-    // A delisted person is no longer sanctioned; returning them as a confident
-    // match is the exact failure issue #9 exists to prevent. Records predating
-    // the status field have no `status` and are treated as active.
+  const passesFilters = (r: IndexedRecord) => {
     if (!options.includeDelisted && r.status === 'delisted') return false;
     if (sourcesFilter && !sourcesFilter.includes(r.source.toUpperCase())) return false;
     if (typeFilter && r.type !== typeFilter) return false;
     return true;
-  });
+  };
 
   const normalizedQuery = normalizeForExactMatch(trimmedQuery);
   const scored: ScoredResult[] = [];
   const matchedIds = new Set<string>();
 
-  // Exact passport/ID fast path takes priority — highest-precision key available.
-  for (const record of candidates) {
-    if (matchesPassportQuery(record, normalizedQuery)) {
-      scored.push({ ...record, score: 100, matchedAlias: 'Passport/ID match' });
-      matchedIds.add(record.id);
+  // 1. Exact passport/ID fast path via inverted index lookup
+  if (normalizedQuery.length >= MIN_PASSPORT_QUERY_LENGTH) {
+    const idMatches = cachedInvertedIndex?.get(`id:${normalizedQuery}`);
+    if (idMatches) {
+      for (const id of idMatches) {
+        const record = cachedRecordsById?.get(id);
+        if (record && passesFilters(record)) {
+          scored.push({ ...record, score: 100, matchedAlias: 'Passport/ID match' });
+          matchedIds.add(record.id);
+        }
+      }
     }
   }
 
-  // Tokenized once per search (issue #42), not once per candidate record —
-  // the query is identical across every comparison within this call.
+  // 2. Candidate Pruning via Inverted Index (issue #223)
   const tokenizedQuery = buildTokenizedQuery(trimmedQuery);
-  const nameIndex = cachedNameIndex!; // populated by the getRecords() call above
+  const nameIndex = cachedNameIndex!;
+  const candidateIdSet = new Set<string>();
 
-  for (const record of candidates) {
-    if (matchedIds.has(record.id)) continue;
+  for (const group of tokenizedQuery.wordGroups) {
+    for (const w of group) {
+      const text = w.text.toLowerCase();
+      // Exact word lookup
+      const exact = cachedInvertedIndex?.get(`w:${text}`);
+      if (exact) for (const id of exact) candidateIdSet.add(id);
+
+      // Soundex lookup
+      if (w.soundex) {
+        const sx = cachedInvertedIndex?.get(`sx:${w.soundex}`);
+        if (sx) for (const id of sx) candidateIdSet.add(id);
+      }
+
+      // 2-char & 3-char prefix lookups
+      if (text.length >= 2) {
+        const p2 = cachedInvertedIndex?.get(`p2:${text.slice(0, 2)}`);
+        if (p2) for (const id of p2) candidateIdSet.add(id);
+      }
+      if (text.length >= 3) {
+        const p3 = cachedInvertedIndex?.get(`p3:${text.slice(0, 3)}`);
+        if (p3) for (const id of p3) candidateIdSet.add(id);
+      }
+
+      // 3-gram lookups
+      if (text.length >= 4) {
+        for (let i = 0; i <= text.length - 3; i++) {
+          const ng = cachedInvertedIndex?.get(`ng3:${text.slice(i, i + 3)}`);
+          if (ng) for (const id of ng) candidateIdSet.add(id);
+        }
+      } else if (text.length === 1) {
+        // Single-character query: match all words starting with this character
+        for (let c = 97; c <= 122; c++) {
+          const p2 = cachedInvertedIndex?.get(`p2:${text}${String.fromCharCode(c)}`);
+          if (p2) for (const id of p2) candidateIdSet.add(id);
+        }
+      }
+    }
+  }
+
+  // Evaluate candidate records (pruned via inverted index when threshold > 0,
+  // or full record set when threshold === 0 per test contract)
+  const candidateIds: Iterable<string> =
+    threshold === 0
+      ? records.map((r) => r.id)
+      : candidateIdSet;
+
+  for (const id of candidateIds) {
+    if (matchedIds.has(id)) continue;
+    const record = cachedRecordsById?.get(id);
+    if (!record || !passesFilters(record)) continue;
 
     const candidateTokens = nameIndex.get(record.id) ?? [];
     const { score, matchedName } = scoreTokenizedNameMatch(tokenizedQuery, candidateTokens);

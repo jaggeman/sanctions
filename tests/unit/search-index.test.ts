@@ -403,4 +403,42 @@ describe('runSearch — limit validation & negative resilience (issue #161)', ()
   });
 });
 
+describe('runSearch — candidate pruning via inverted index (issue #223)', () => {
+  beforeEach(() => {
+    allRecords = [
+      record({ id: 'EU-1', names: namesOverride('Vladimir Putin') }),
+      record({ id: 'EU-2', names: namesOverride('Mohammed Al-Bakr') }),
+      record({ id: 'EU-3', names: namesOverride('Alexander Lukashenko'), identifications: [{ number: 'PASS-987654' }] }),
+      record({ id: 'EU-4', names: namesOverride('Zhang Wei') }),
+      record({ id: 'EU-5', names: namesOverride('Jean-Luc Picard') }),
+    ];
+    invalidateSearchIndex();
+  });
+
+  it('prunes candidate set to find exact and fuzzy matches efficiently', async () => {
+    const res = await runSearch('Vladimir Putin');
+    expect(res.results).toHaveLength(1);
+    expect(res.results[0].id).toBe('EU-1');
+  });
+
+  it('retrieves phonetic and Soundex variants through the inverted index', async () => {
+    const res = await runSearch('Muhammad Al-Bakr');
+    expect(res.results).toHaveLength(1);
+    expect(res.results[0].id).toBe('EU-2');
+  });
+
+  it('retrieves passport/ID matches instantly via inverted index', async () => {
+    const res = await runSearch('PASS-987654');
+    expect(res.results).toHaveLength(1);
+    expect(res.results[0].id).toBe('EU-3');
+    expect(res.results[0].score).toBe(100);
+  });
+
+  it('returns empty results quickly when no candidates match the inverted index', async () => {
+    const res = await runSearch('Totally Unrelated Nonexistent Name XYZ');
+    expect(res.results).toEqual([]);
+    expect(res.totalMatches).toBe(0);
+  });
+});
+
 
