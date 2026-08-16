@@ -20,6 +20,7 @@ export const SOURCE_URLS = {
   EU: 'https://webgate.ec.europa.eu/europeaid/fsd/fsf/public/files/xmlFullSanctionsList_1_1/content',
   UN: 'https://scsanctions.un.org/resources/xml/en/consolidated.xml',
   US: 'https://www.treasury.gov/ofac/downloads/sdn.xml',
+  UK: 'https://sanctionslist.fcdo.gov.uk/docs/UK-Sanctions-List.xml',
 };
 
 /**
@@ -109,6 +110,12 @@ export async function downloadAllSources(): Promise<Record<string, string>> {
     paths.US = await downloadFile(SOURCE_URLS.US, 'us_sdn.xml');
   } catch (error: any) {
     log.error('download.failed', { source: 'US', error });
+  }
+
+  try {
+    paths.UK = await downloadFile(SOURCE_URLS.UK, 'uk_sanctions.xml');
+  } catch (error: any) {
+    log.error('download.failed', { source: 'UK', error });
   }
 
   return paths;
