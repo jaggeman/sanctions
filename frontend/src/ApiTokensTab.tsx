@@ -120,8 +120,17 @@ export default function ApiTokensTab() {
         body: JSON.stringify({ name: name.trim(), scopes }),
       });
       if (res.status === 401) throw new Error(SESSION_EXPIRED_MESSAGE);
+      if (!res.ok) {
+        let serverError: string | undefined;
+        try {
+          const body = await res.json();
+          serverError = body?.error;
+        } catch {
+          // Non-JSON response body (e.g. 502 Bad Gateway HTML)
+        }
+        throw new Error(serverError || 'Failed to create token.');
+      }
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `Server returned ${res.status}`);
 
       setRevealedToken(data.token);
       setName('');
@@ -130,7 +139,13 @@ export default function ApiTokensTab() {
       await loadTokens();
     } catch (err: any) {
       console.error(err);
-      setError(err.message || 'Failed to create token.');
+      setError(
+        err.message === SESSION_EXPIRED_MESSAGE
+          ? SESSION_EXPIRED_MESSAGE
+          : err.message && !err.message.includes('JSON') && !err.message.includes('fetch')
+            ? err.message
+            : 'Failed to create token.',
+      );
     }
     setCreating(false);
   };
