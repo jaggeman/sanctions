@@ -598,3 +598,125 @@ describe('runSearch — single-character queries (issue #253)', () => {
 });
 
 
+
+/**
+ * Issue #254's acceptance criteria: no selectivity/performance change to the
+ * candidate-pruning path may land without proof it does not drop matches.
+ *
+ * The invariant is one-directional and that direction is the whole point:
+ * pruning is an optimisation, so the set of records it surfaces must be a
+ * SUPERSET of nothing and a subset of nothing in particular — what matters is
+ * that every record the SCORER would accept at the threshold still comes back.
+ * A pruning change that speeds things up by quietly dropping a match is the
+ * exact failure mode this repo cannot ship (a false negative clears someone
+ * who is actually listed).
+ *
+ * `threshold: 0` is the unpruned path (see runSearch's candidateIds branch),
+ * so it stands in for "what the scorer alone would have found" without
+ * needing to reach into module internals. Scoring each record at threshold 0
+ * and keeping those at or above the real threshold gives the ground truth
+ * that the pruned path must reproduce exactly.
+ */
+describe('runSearch — pruning must never drop a record the scorer accepts (issue #254)', () => {
+  const THRESHOLD = 65;
+
+  /** Ground truth: score every record via the unpruned path, keep those >= threshold. */
+  async function scorerGroundTruth(query: string): Promise<Set<string>> {
+    const { results } = await runSearch(query, { threshold: 0, limit: 100 });
+    return new Set(results.filter((r) => r.score >= THRESHOLD).map((r) => r.id));
+  }
+
+  async function prunedResults(query: string): Promise<Set<string>> {
+    const { results } = await runSearch(query, { threshold: THRESHOLD, limit: 100 });
+    return new Set(results.map((r) => r.id));
+  }
+
+  /**
+   * The single-key-class fixtures below are NOT invented. They were found by
+   * probing every word pair in the real UN consolidated list
+   * (`downloads/un_sanctions.xml`) for pairs that both score at or above the
+   * threshold AND share exactly ONE inverted-index key class — so deleting
+   * that class provably drops the match.
+   *
+   * This matters: an earlier draft of this test used only the plausible-
+   * looking names above and passed completely unchanged with the entire
+   * Soundex lookup deleted from `runSearch`. A fixture whose every record is
+   * reachable through several key classes cannot detect a pruning regression
+   * at all. These three pairs are what make the test bite.
+   *
+   * The same probe found `p3:` and `w:` carry no unique recall on real data
+   * (every pair they connect is also connected by another class), so their
+   * absence here is a measured finding rather than a gap.
+   */
+  beforeEach(() => {
+    allRecords = [
+      record({ id: 'A-1', source: 'EU', names: namesOverride('Vladimir Putin') }),
+      record({ id: 'A-2', source: 'EU', names: namesOverride('Vladimir Petrov') }),
+      record({ id: 'A-3', source: 'UN', names: namesOverride('Wladimir Putin') }),
+      record({ id: 'A-4', source: 'UN', names: namesOverride('Ivan Ivanovich Ivanov') }),
+      record({ id: 'A-5', source: 'US', names: namesOverride('Mohammed Ali Hassan') }),
+      record({ id: 'A-6', source: 'US', names: namesOverride('Muhammad Ali Hasan') }),
+      record({ id: 'A-7', source: 'EU', names: namesOverride('Kim Jong Un') }),
+      record({ id: 'A-8', source: 'EU', names: namesOverride('Kim Kwang Il') }),
+      record({ id: 'A-9', source: 'UN', names: namesOverride('Abu Bakr al-Baghdadi') }),
+      record({ id: 'A-10', source: 'UN', names: namesOverride('Sergei Sergeevich Ivanov') }),
+      record({ id: 'A-11', source: 'US', names: namesOverride('Maria Gonzalez Rodriguez') }),
+      record({ id: 'A-12', source: 'US', names: namesOverride('Chen Wei') }),
+
+      // Reachable ONLY via `sx:` for the query "Khawa" — Soundex K000 on both
+      // sides, while p2 (kh/ka), p3 (kha/kah) and every 3-gram differ.
+      record({ id: 'K-SX', source: 'UN', names: namesOverride('Kahwa') }),
+      // Reachable ONLY via `ng3:` for the query "Germain" — shares the "erm"
+      // 3-gram, while soundex (G655/G656), p2 (ge/gh) and p3 (ger/ghe) differ.
+      record({ id: 'K-NG3', source: 'UN', names: namesOverride('Ghermay') }),
+      // Reachable ONLY via `p2:` for the query "Kakorere" — shares just the
+      // leading "ka"; soundex, p3 and every 3-gram differ.
+      record({ id: 'K-P2', source: 'UN', names: namesOverride('Kareemi') }),
+    ];
+  });
+
+  const QUERIES = [
+    'Vladimir Putin',
+    'Vladmir Putin',
+    'Putin',
+    'Ivanov',
+    'Kim',
+    'Mohammed Ali',
+    'Ali',
+    'Hassan',
+    'Sergei Ivanov',
+    'Abu Bakr',
+    'Chen',
+    'Maria',
+    // one query per single-key-class fixture above — each of these fails if
+    // its corresponding lookup is removed from the pruning path
+    'Khawa',
+    'Germain',
+    'Kakorere',
+  ];
+
+  it.each(QUERIES)('pruned results reproduce the scorer ground truth for %j', async (query) => {
+    const truth = await scorerGroundTruth(query);
+    const pruned = await prunedResults(query);
+
+    const dropped = [...truth].filter((id) => !pruned.has(id));
+    expect(
+      dropped,
+      `pruning dropped ${dropped.length} record(s) the scorer accepted at >= ${THRESHOLD}: ${dropped.join(', ')}`,
+    ).toEqual([]);
+  });
+
+  it('reports the same totalMatches through the pruned path as the scorer finds', async () => {
+    for (const query of QUERIES) {
+      const truth = await scorerGroundTruth(query);
+      const { totalMatches } = await runSearch(query, { threshold: THRESHOLD, limit: 100 });
+      expect(totalMatches, `totalMatches mismatch for "${query}"`).toBe(truth.size);
+    }
+  });
+
+  it('holds for a single-character query, which takes its own lookup branch', async () => {
+    const truth = await scorerGroundTruth('K');
+    const pruned = await prunedResults('K');
+    expect([...truth].filter((id) => !pruned.has(id))).toEqual([]);
+  });
+});

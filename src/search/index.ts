@@ -61,18 +61,48 @@ const MIN_PASSPORT_QUERY_LENGTH = 4; // avoids matching every ID on a 1-2 char q
  * variants, Soundex codes, particle weights) is precomputed once here, when
  * the cache is (re)built, instead of being recomputed by `runSearch` on
  * every single query — none of that work depends on what's being searched
- * for. Kept in a separate map (`cachedNameIndex`), keyed by record id,
- * rather than as a field on `IndexedRecord` itself: spreading a record into
- * a `ScoredResult` (`{...record, score, matchedAlias}`) would otherwise leak
- * these precomputed tokens into the `/api/search` JSON response.
+ * for. Kept in a separate structure (`cachedNameIndex`, a parallel array
+ * since #254) rather than as a field on `IndexedRecord` itself: spreading a
+ * record into a `ScoredResult` (`{...record, score, matchedAlias}`) would
+ * otherwise leak these precomputed tokens into the `/api/search` JSON
+ * response.
  */
 type IndexedRecord = SanctionRecord & { overriddenFields: string[] };
 
+/**
+ * Issue #254: the inverted index stores each record's POSITION in
+ * `cachedRecords`, not its string id, and `cachedNameIndex` is a parallel
+ * array rather than a Map keyed by id.
+ *
+ * Measured against the real UN + US SDN corpora (20 210 records): the pruned
+ * path was costing ~10.8 µs per candidate against ~5.4 µs per record for a
+ * plain array scan — pruning was examining 14% of the corpus yet only running
+ * ~3.5x faster than looking at all of it. The gap was not the algorithm but
+ * the representation: every candidate paid three separate string-hash lookups
+ * (`matchedIds.has(id)`, `cachedRecordsById.get(id)`, `nameIndex.get(id)`) on
+ * top of hashing thousands of id strings into a `Set<string>` while the
+ * candidate set was being unioned together.
+ *
+ * Positions turn all of that into direct array indexing. This is a
+ * representation change only: exactly the same records are considered, in the
+ * same order, and scored by the same code — see the pruning-superset
+ * invariant tests in tests/unit/search-index.test.ts, which assert that every
+ * record the scorer accepts still comes back.
+ */
+type Postings = number[];
+
 let cachedRecords: IndexedRecord[] | null = null;
-let cachedRecordsById: Map<string, IndexedRecord> | null = null;
 let cachedVersion: number | null = null;
-let cachedNameIndex: Map<string, TokenizedName[]> | null = null;
-let cachedInvertedIndex: Map<string, Set<string>> | null = null;
+let cachedNameIndex: TokenizedName[][] | null = null;
+let cachedInvertedIndex: Map<string, Postings> | null = null;
+
+/**
+ * Reused across searches so a query does not allocate a fresh buffer of
+ * corpus size every time. Marked with a monotonically increasing stamp rather
+ * than being cleared, so resetting between queries is O(1) instead of O(n).
+ */
+let candidateMarks: Int32Array | null = null;
+let candidateStamp = 0;
 
 const searchIndexMetaDoc = () => db.collection('meta').doc('searchIndex');
 
@@ -107,35 +137,37 @@ async function getRecords(): Promise<IndexedRecord[]> {
       overridesByEntityId.set(doc.id, doc.data() as Override);
     });
 
-    const nameIndex = new Map<string, TokenizedName[]>();
-    const recordsById = new Map<string, IndexedRecord>();
-    const invertedIndex = new Map<string, Set<string>>();
+    const nameIndex: TokenizedName[][] = [];
+    const invertedIndex = new Map<string, Postings>();
 
-    const addIndexKey = (key: string, recordId: string) => {
+    // Records are indexed in position order, so a key's postings are always
+    // appended non-decreasing — checking only the last entry is enough to
+    // dedupe (the same record hits the same key repeatedly, e.g. two aliases
+    // sharing a 3-gram) without the per-insert hashing a Set would cost.
+    const addIndexKey = (key: string, position: number) => {
       if (!key) return;
-      let set = invertedIndex.get(key);
-      if (!set) {
-        set = new Set<string>();
-        invertedIndex.set(key, set);
+      let postings = invertedIndex.get(key);
+      if (!postings) {
+        postings = [];
+        invertedIndex.set(key, postings);
       }
-      set.add(recordId);
+      if (postings[postings.length - 1] !== position) postings.push(position);
     };
 
-    cachedRecords = sanctionsSnapshot.docs.map((doc: any) => {
+    cachedRecords = sanctionsSnapshot.docs.map((doc: any, position: number) => {
       const record = doc.data() as SanctionRecord;
       const { record: merged, overriddenFields } = applyOverride(record, overridesByEntityId.get(record.id));
       const candidateNames = allNamesOf(merged.names);
       const tokenizedNames = candidateNames.map(buildTokenizedName);
-      nameIndex.set(merged.id, tokenizedNames);
+      nameIndex[position] = tokenizedNames;
 
       const indexedRecord: IndexedRecord = { ...merged, overriddenFields };
-      recordsById.set(merged.id, indexedRecord);
 
       // Fast ID / Passport index
       for (const ident of merged.identifications || []) {
         const num = normalizeForExactMatch(ident.number);
         if (num.length >= MIN_PASSPORT_QUERY_LENGTH) {
-          addIndexKey(`id:${num}`, merged.id);
+          addIndexKey(`id:${num}`, position);
         }
       }
 
@@ -145,26 +177,26 @@ async function getRecords(): Promise<IndexedRecord[]> {
           for (const w of group) {
             const text = w.text.toLowerCase();
             if (text.length >= 1) {
-              addIndexKey(`w:${text}`, merged.id);
+              addIndexKey(`w:${text}`, position);
               // Leading character, any script (issue #253) — backs the
               // single-character query path, which previously enumerated a
               // hardcoded ASCII a-z range and so found nothing for a
               // Cyrillic, Greek or Arabic single-character query.
-              addIndexKey(`p1:${text.slice(0, 1)}`, merged.id);
+              addIndexKey(`p1:${text.slice(0, 1)}`, position);
               if (text.length >= 2) {
-                addIndexKey(`p2:${text.slice(0, 2)}`, merged.id);
+                addIndexKey(`p2:${text.slice(0, 2)}`, position);
               }
               if (text.length >= 3) {
-                addIndexKey(`p3:${text.slice(0, 3)}`, merged.id);
+                addIndexKey(`p3:${text.slice(0, 3)}`, position);
               }
               if (text.length >= 4) {
                 for (let i = 0; i <= text.length - 3; i++) {
-                  addIndexKey(`ng3:${text.slice(i, i + 3)}`, merged.id);
+                  addIndexKey(`ng3:${text.slice(i, i + 3)}`, position);
                 }
               }
             }
             if (w.soundex) {
-              addIndexKey(`sx:${w.soundex}`, merged.id);
+              addIndexKey(`sx:${w.soundex}`, position);
               // Soundex minus its retained leading letter (issue #253). Every
               // other key class here is anchored on the exact token, its
               // leading characters, or a Soundex code that keeps the first
@@ -180,7 +212,7 @@ async function getRecords(): Promise<IndexedRecord[]> {
               // ng3 already bridges words of 4+ characters (osama/usama share
               // "sam" and "ama"); this is what rescues the SHORT words, where
               // ng3 is neither built nor looked up.
-              addIndexKey(`sxd:${w.soundex.slice(1)}`, merged.id);
+              addIndexKey(`sxd:${w.soundex.slice(1)}`, position);
             }
           }
         }
@@ -189,10 +221,12 @@ async function getRecords(): Promise<IndexedRecord[]> {
       return indexedRecord;
     });
 
-    cachedRecordsById = recordsById;
     cachedNameIndex = nameIndex;
     cachedInvertedIndex = invertedIndex;
     cachedVersion = currentVersion;
+    // Sized to the new corpus; the stamp keeps resets O(1) (see declaration).
+    candidateMarks = new Int32Array(cachedRecords.length);
+    candidateStamp = 0;
   }
   return cachedRecords;
 }
@@ -257,17 +291,40 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
 
   const normalizedQuery = normalizeForExactMatch(trimmedQuery);
   const scored: ScoredResult[] = [];
-  const matchedIds = new Set<string>();
+  const nameIndex = cachedNameIndex!;
+  const invertedIndex = cachedInvertedIndex;
 
-  // 1. Exact passport/ID fast path via inverted index lookup
+  // Positions already emitted (passport hits) or already collected as
+  // candidates, marked with this search's stamp. Bumping the stamp is the
+  // reset, so a query never pays an O(corpus) clear (issue #254).
+  // Int32Array holds the stamp, so wrapping past its range could collide with
+  // a stamp still sitting in the buffer and silently skip a candidate. That
+  // needs ~2 billion searches on one warm instance to reach, but a silently
+  // dropped record is the one failure mode this system cannot have, so reset
+  // rather than rely on it being unreachable. Must happen before `marks` is
+  // captured below, or the search would write into the discarded buffer.
+  if (candidateStamp >= 0x7ffffffe) {
+    candidateMarks = new Int32Array(records.length);
+    candidateStamp = 0;
+  }
+  const marks = candidateMarks!;
+  const stamp = ++candidateStamp;
+
+  // 1. Exact passport/ID fast path via inverted index lookup. Marking these
+  // positions with the stamp keeps `collect` below from re-adding them, so a
+  // passport hit is never scored a second time as a name candidate. Tracked
+  // separately as well because the threshold === 0 branch walks every record
+  // and needs to tell "already emitted" from "merely collected".
+  const passportPositions = new Set<number>();
   if (normalizedQuery.length >= MIN_PASSPORT_QUERY_LENGTH) {
-    const idMatches = cachedInvertedIndex?.get(`id:${normalizedQuery}`);
+    const idMatches = invertedIndex?.get(`id:${normalizedQuery}`);
     if (idMatches) {
-      for (const id of idMatches) {
-        const record = cachedRecordsById?.get(id);
+      for (const position of idMatches) {
+        const record = records[position];
         if (record && passesFilters(record)) {
           scored.push({ ...record, score: 100, matchedAlias: 'Passport/ID match' });
-          matchedIds.add(record.id);
+          marks[position] = stamp;
+          passportPositions.add(position);
         }
       }
     }
@@ -275,44 +332,44 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
 
   // 2. Candidate Pruning via Inverted Index (issue #223)
   const tokenizedQuery = buildTokenizedQuery(trimmedQuery);
-  const nameIndex = cachedNameIndex!;
-  const candidateIdSet = new Set<string>();
+  const candidatePositions: number[] = [];
+
+  const collect = (key: string) => {
+    const postings = invertedIndex?.get(key);
+    if (!postings) return;
+    for (let i = 0; i < postings.length; i++) {
+      const position = postings[i];
+      if (marks[position] === stamp) continue;
+      marks[position] = stamp;
+      candidatePositions.push(position);
+    }
+  };
 
   for (const group of tokenizedQuery.wordGroups) {
     for (const w of group) {
       const text = w.text.toLowerCase();
       // Exact word lookup
-      const exact = cachedInvertedIndex?.get(`w:${text}`);
-      if (exact) for (const id of exact) candidateIdSet.add(id);
+      collect(`w:${text}`);
 
       // Soundex lookup
       if (w.soundex) {
-        const sx = cachedInvertedIndex?.get(`sx:${w.soundex}`);
-        if (sx) for (const id of sx) candidateIdSet.add(id);
+        collect(`sx:${w.soundex}`);
 
         // First-char-insensitive lookup (issue #253) — mirrors the matcher's
         // transliteration-variant rule from #252, which scores a differing
         // initial over an identical phonetic body as a match. Without this
         // the scorer never gets to apply that rule to a short word.
-        const sxd = cachedInvertedIndex?.get(`sxd:${w.soundex.slice(1)}`);
-        if (sxd) for (const id of sxd) candidateIdSet.add(id);
+        collect(`sxd:${w.soundex.slice(1)}`);
       }
 
       // 2-char & 3-char prefix lookups
-      if (text.length >= 2) {
-        const p2 = cachedInvertedIndex?.get(`p2:${text.slice(0, 2)}`);
-        if (p2) for (const id of p2) candidateIdSet.add(id);
-      }
-      if (text.length >= 3) {
-        const p3 = cachedInvertedIndex?.get(`p3:${text.slice(0, 3)}`);
-        if (p3) for (const id of p3) candidateIdSet.add(id);
-      }
+      if (text.length >= 2) collect(`p2:${text.slice(0, 2)}`);
+      if (text.length >= 3) collect(`p3:${text.slice(0, 3)}`);
 
       // 3-gram lookups
       if (text.length >= 4) {
         for (let i = 0; i <= text.length - 3; i++) {
-          const ng = cachedInvertedIndex?.get(`ng3:${text.slice(i, i + 3)}`);
-          if (ng) for (const id of ng) candidateIdSet.add(id);
+          collect(`ng3:${text.slice(i, i + 3)}`);
         }
       } else if (text.length === 1) {
         // Single-character query: every word starting with this character.
@@ -322,25 +379,20 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
         // Arabic matched nothing at all — directly at odds with the
         // cross-script support #40 deliberately added. A `p1:` key built at
         // index time is script-agnostic, and one lookup replaces twenty-six.
-        const p1 = cachedInvertedIndex?.get(`p1:${text}`);
-        if (p1) for (const id of p1) candidateIdSet.add(id);
+        collect(`p1:${text}`);
       }
     }
   }
 
   // Evaluate candidate records (pruned via inverted index when threshold > 0,
-  // or full record set when threshold === 0 per test contract)
-  const candidateIds: Iterable<string> =
-    threshold === 0
-      ? records.map((r) => r.id)
-      : candidateIdSet;
+  // or full record set when threshold === 0 per test contract). A passport hit
+  // above already carries its position's stamp, so it is skipped either way
+  // and cannot be scored twice.
+  const scoreAt = (position: number) => {
+    const record = records[position];
+    if (!record || !passesFilters(record)) return;
 
-  for (const id of candidateIds) {
-    if (matchedIds.has(id)) continue;
-    const record = cachedRecordsById?.get(id);
-    if (!record || !passesFilters(record)) continue;
-
-    const candidateTokens = nameIndex.get(record.id) ?? [];
+    const candidateTokens = nameIndex[position] ?? [];
     const { score, matchedName } = scoreTokenizedNameMatch(tokenizedQuery, candidateTokens);
     const boostedScore = options.dob && matchesDob(record, options.dob)
       ? Math.min(100, score + DOB_MATCH_BOOST)
@@ -348,6 +400,17 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
 
     if (boostedScore >= threshold) {
       scored.push({ ...record, score: boostedScore, matchedAlias: matchedName });
+    }
+  };
+
+  if (threshold === 0) {
+    for (let position = 0; position < records.length; position++) {
+      if (passportPositions.has(position)) continue;
+      scoreAt(position);
+    }
+  } else {
+    for (let i = 0; i < candidatePositions.length; i++) {
+      scoreAt(candidatePositions[i]);
     }
   }
 
