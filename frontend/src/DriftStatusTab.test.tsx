@@ -72,11 +72,10 @@ const mockLogs = {
   ],
 };
 
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
-
 describe('DriftStatusTab', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
   it('renders system health, database counts, error logs, and releases', async () => {
     vi.stubGlobal(
       'fetch',
@@ -95,12 +94,12 @@ describe('DriftStatusTab', () => {
     render(<DriftStatusTab />);
 
     await waitFor(() => {
-      expect(screen.getByText(/Drift status & Systemhälsa/i)).toBeInTheDocument();
+      expect(screen.getByText(/System Status & Health/i)).toBeInTheDocument();
     });
 
-    expect(screen.getByText('DRIFT NORMAL')).toBeInTheDocument();
-    expect(screen.getByText('ANSLUTEN')).toBeInTheDocument();
-    expect(screen.getAllByText(/poster/i).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('OPERATIONAL')).toBeInTheDocument();
+    expect(screen.getByText('CONNECTED')).toBeInTheDocument();
+    expect(screen.getAllByText(/records/i).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/v1\.4\.2/)).toBeInTheDocument();
     expect(screen.getAllByText(/jaggeman/i).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/Sanctions sync completed for UN/i)).toBeInTheDocument();
@@ -117,7 +116,7 @@ describe('DriftStatusTab', () => {
     render(<DriftStatusTab />);
 
     await waitFor(() => {
-      expect(screen.getByText(/Kunde inte hämta systemstatus/i)).toBeInTheDocument();
+      expect(screen.getByText(/Could not load system status/i)).toBeInTheDocument();
     });
   });
 });
