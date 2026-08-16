@@ -56,4 +56,57 @@ describe('session store (issue #63: Firestore-backed, survives multi-instance/co
       expect((await getSessionFromFreshImport(sid))?.email).toBe('user@example.com');
     });
   });
+
+  describe('in-memory TTL cache in front of the Firestore read (issue #229)', () => {
+    it('serves a repeated lookup for the same session from cache, without hitting Firestore', async () => {
+      const sid = await createSession('user@example.com');
+      await getSession(sid); // warms the cache
+
+      const collectionSpy = vi.spyOn(fakeDb, 'collection');
+      collectionSpy.mockClear();
+
+      const cached = await getSession(sid);
+
+      expect(cached?.email).toBe('user@example.com');
+      expect(collectionSpy).not.toHaveBeenCalled();
+    });
+
+    it('falls back to Firestore once the cache entry has expired', async () => {
+      vi.useFakeTimers();
+      const sid = await createSession('user@example.com');
+      await getSession(sid); // warms the cache
+
+      vi.advanceTimersByTime(6_000); // cache TTL is 5s
+
+      const collectionSpy = vi.spyOn(fakeDb, 'collection');
+      collectionSpy.mockClear();
+
+      const result = await getSession(sid);
+
+      expect(result?.email).toBe('user@example.com');
+      expect(collectionSpy).toHaveBeenCalled();
+    });
+
+    it('evicts the cache entry immediately on destroySession, even while the TTL has not elapsed', async () => {
+      const sid = await createSession('user@example.com');
+      await getSession(sid); // warms the cache
+
+      await destroySession(sid);
+
+      // Must not be served stale from cache — this is the whole safety
+      // property destroySession exists for (logout must take effect on the
+      // very next request).
+      expect(await getSession(sid)).toBeNull();
+    });
+
+    it('never lets a cached entry outlive its own expiresAt (cache TTL is much shorter than session TTL)', async () => {
+      vi.useFakeTimers();
+      const sid = await createSession('user@example.com');
+      await getSession(sid); // warms the cache
+
+      vi.advanceTimersByTime(8 * 24 * 60 * 60 * 1000); // session TTL is 7 days, far past the 5s cache TTL
+
+      expect(await getSession(sid)).toBeNull();
+    });
+  });
 });
