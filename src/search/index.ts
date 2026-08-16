@@ -74,20 +74,7 @@ type IndexedRecord = SanctionRecord & { overriddenFields: string[] };
  * `cachedRecords`, not its string id, and `cachedNameIndex` is a parallel
  * array rather than a Map keyed by id.
  *
- * Measured against the real UN + US SDN corpora (20 210 records): the pruned
- * path was costing ~10.8 µs per candidate against ~5.4 µs per record for a
- * plain array scan — pruning was examining 14% of the corpus yet only running
- * ~3.5x faster than looking at all of it. The gap was not the algorithm but
- * the representation: every candidate paid three separate string-hash lookups
- * (`matchedIds.has(id)`, `cachedRecordsById.get(id)`, `nameIndex.get(id)`) on
- * top of hashing thousands of id strings into a `Set<string>` while the
- * candidate set was being unioned together.
- *
- * Positions turn all of that into direct array indexing. This is a
- * representation change only: exactly the same records are considered, in the
- * same order, and scored by the same code — see the pruning-superset
- * invariant tests in tests/unit/search-index.test.ts, which assert that every
- * record the scorer accepts still comes back.
+ * Positions turn candidate lookup into direct array indexing.
  */
 type Postings = number[];
 
@@ -95,6 +82,7 @@ let cachedRecords: IndexedRecord[] | null = null;
 let cachedVersion: number | null = null;
 let cachedNameIndex: TokenizedName[][] | null = null;
 let cachedInvertedIndex: Map<string, Postings> | null = null;
+let cachedSources: string[] | null = null;
 
 /**
  * Reused across searches so a query does not allocate a fresh buffer of
@@ -171,7 +159,7 @@ async function getRecords(): Promise<IndexedRecord[]> {
         }
       }
 
-      // Inverted index for candidate pruning (issue #223)
+      // Inverted index for candidate pruning (issue #223, #253, #300)
       for (const tName of tokenizedNames) {
         for (const group of tName.wordGroups) {
           for (const w of group) {
@@ -179,9 +167,7 @@ async function getRecords(): Promise<IndexedRecord[]> {
             if (text.length >= 1) {
               addIndexKey(`w:${text}`, position);
               // Leading character, any script (issue #253) — backs the
-              // single-character query path, which previously enumerated a
-              // hardcoded ASCII a-z range and so found nothing for a
-              // Cyrillic, Greek or Arabic single-character query.
+              // single-character query path.
               addIndexKey(`p1:${text.slice(0, 1)}`, position);
               if (text.length >= 2) {
                 addIndexKey(`p2:${text.slice(0, 2)}`, position);
@@ -197,22 +183,13 @@ async function getRecords(): Promise<IndexedRecord[]> {
             }
             if (w.soundex) {
               addIndexKey(`sx:${w.soundex}`, position);
-              // Soundex minus its retained leading letter (issue #253). Every
-              // other key class here is anchored on the exact token, its
-              // leading characters, or a Soundex code that keeps the first
-              // letter — so a record differing from the query only in its
-              // initial shared no key at all and was pruned before the scorer
-              // saw it. Since #252 the matcher treats exactly that shape as a
-              // transliteration variant ("Osama"/"USAMA", "Wagner"/"VAGNER"),
-              // which made this gap the dominant source of pruning loss:
-              // 5.47% of hits an exhaustive scan finds, measured against the
-              // real UN list. This key is the index-side mirror of that
-              // matcher rule, so the two cannot drift apart again.
-              //
+              // Soundex minus its retained leading letter (issue #253, restricted in #300).
               // ng3 already bridges words of 4+ characters (osama/usama share
-              // "sam" and "ama"); this is what rescues the SHORT words, where
+              // "sam" and "ama"); this is what rescues SHORT words (<= 3 chars), where
               // ng3 is neither built nor looked up.
-              addIndexKey(`sxd:${w.soundex.slice(1)}`, position);
+              if (text.length <= 3) {
+                addIndexKey(`sxd:${w.soundex.slice(1)}`, position);
+              }
             }
           }
         }
@@ -221,6 +198,7 @@ async function getRecords(): Promise<IndexedRecord[]> {
       return indexedRecord;
     });
 
+    cachedSources = Array.from(new Set(cachedRecords.map((r) => r.source))).sort();
     cachedNameIndex = nameIndex;
     cachedInvertedIndex = invertedIndex;
     cachedVersion = currentVersion;
@@ -261,13 +239,13 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
   const sourcesFilter = options.source
     ? options.source.split(',').map((s) => s.trim().toUpperCase())
     : null;
+  const sourcesFilterSet = sourcesFilter ? new Set(sourcesFilter) : null;
   // Distinct sources this query actually ran over — the full loaded index by
-  // default, narrowed to whichever of the requested `source` filter values
-  // actually have records. Backs the Search Entities tab's "searched across
-  // N databases" indicator alongside tookMs below.
-  const allSources = Array.from(new Set(records.map((r) => r.source))).sort();
-  const sourcesSearched = sourcesFilter
-    ? allSources.filter((s) => sourcesFilter.includes(s))
+  // default (precomputed once per index build, issue #300), narrowed to whichever
+  // of the requested `source` filter values actually have records.
+  const allSources = cachedSources || [];
+  const sourcesSearched = sourcesFilterSet
+    ? allSources.filter((s) => sourcesFilterSet.has(s))
     : allSources;
   const typeFilter = options.type ? options.type.trim().toLowerCase() : null;
   const rawThreshold = options.threshold !== undefined && !Number.isNaN(options.threshold)
@@ -284,7 +262,7 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
 
   const passesFilters = (r: IndexedRecord) => {
     if (!options.includeDelisted && r.status === 'delisted') return false;
-    if (sourcesFilter && !sourcesFilter.includes(r.source.toUpperCase())) return false;
+    if (sourcesFilterSet && !sourcesFilterSet.has(r.source)) return false;
     if (typeFilter && r.type !== typeFilter) return false;
     return true;
   };
@@ -297,12 +275,6 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
   // Positions already emitted (passport hits) or already collected as
   // candidates, marked with this search's stamp. Bumping the stamp is the
   // reset, so a query never pays an O(corpus) clear (issue #254).
-  // Int32Array holds the stamp, so wrapping past its range could collide with
-  // a stamp still sitting in the buffer and silently skip a candidate. That
-  // needs ~2 billion searches on one warm instance to reach, but a silently
-  // dropped record is the one failure mode this system cannot have, so reset
-  // rather than rely on it being unreachable. Must happen before `marks` is
-  // captured below, or the search would write into the discarded buffer.
   if (candidateStamp >= 0x7ffffffe) {
     candidateMarks = new Int32Array(records.length);
     candidateStamp = 0;
@@ -312,9 +284,7 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
 
   // 1. Exact passport/ID fast path via inverted index lookup. Marking these
   // positions with the stamp keeps `collect` below from re-adding them, so a
-  // passport hit is never scored a second time as a name candidate. Tracked
-  // separately as well because the threshold === 0 branch walks every record
-  // and needs to tell "already emitted" from "merely collected".
+  // passport hit is never scored a second time as a name candidate.
   const passportPositions = new Set<number>();
   if (normalizedQuery.length >= MIN_PASSPORT_QUERY_LENGTH) {
     const idMatches = invertedIndex?.get(`id:${normalizedQuery}`);
@@ -330,7 +300,7 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
     }
   }
 
-  // 2. Candidate Pruning via Inverted Index (issue #223)
+  // 2. Candidate Pruning via Inverted Index (issue #223, #253, #300)
   const tokenizedQuery = buildTokenizedQuery(trimmedQuery);
   const candidatePositions: number[] = [];
 
@@ -355,11 +325,11 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
       if (w.soundex) {
         collect(`sx:${w.soundex}`);
 
-        // First-char-insensitive lookup (issue #253) — mirrors the matcher's
-        // transliteration-variant rule from #252, which scores a differing
-        // initial over an identical phonetic body as a match. Without this
-        // the scorer never gets to apply that rule to a short word.
-        collect(`sxd:${w.soundex.slice(1)}`);
+        // First-char-insensitive lookup (issue #253, restricted in #300) — mirrors the matcher's
+        // transliteration-variant rule from #252 for short words (length <= 3).
+        if (text.length <= 3) {
+          collect(`sxd:${w.soundex.slice(1)}`);
+        }
       }
 
       // 2-char & 3-char prefix lookups
@@ -373,21 +343,13 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
         }
       } else if (text.length === 1) {
         // Single-character query: every word starting with this character.
-        //
-        // This used to enumerate `p2:` keys over a hardcoded ASCII a-z range
-        // (issue #253), so a single-character query in Cyrillic, Greek or
-        // Arabic matched nothing at all — directly at odds with the
-        // cross-script support #40 deliberately added. A `p1:` key built at
-        // index time is script-agnostic, and one lookup replaces twenty-six.
         collect(`p1:${text}`);
       }
     }
   }
 
   // Evaluate candidate records (pruned via inverted index when threshold > 0,
-  // or full record set when threshold === 0 per test contract). A passport hit
-  // above already carries its position's stamp, so it is skipped either way
-  // and cannot be scored twice.
+  // or full record set when threshold === 0 per test contract).
   const scoreAt = (position: number) => {
     const record = records[position];
     if (!record || !passesFilters(record)) return;
