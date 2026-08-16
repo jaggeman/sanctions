@@ -13,10 +13,7 @@
         "firebase-debug.log",
         "firebase-debug.*.log",
         "*.local",
-        "frontend",
-        ".env",
-        ".env.local",
-        ".env.*"
+        "frontend"
       ],
       "predeploy": [
         "npm --prefix \"$RESOURCE_DIR\" run build"
