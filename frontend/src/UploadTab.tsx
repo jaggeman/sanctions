@@ -130,19 +130,75 @@ export default function UploadTab({ onViewImport }: UploadTabProps) {
     setOverrideConfirmed(false);
   }
 
-  async function runUpload(file: File, dryRun: boolean, force: boolean) {
+  async function runUpload(
+    file: File,
+    dryRun: boolean,
+    force: boolean,
+    sourceOverride?: SanctionSourceOption,
+    modeOverride?: ImportMode,
+  ) {
+    const effectiveSource = sourceOverride ?? source;
+    const effectiveMode = modeOverride ?? mode;
     const formData = new FormData();
     formData.append('file', file);
-    if (source !== 'AUTO') {
-      formData.append('source', source);
+    if (effectiveSource !== 'AUTO') {
+      formData.append('source', effectiveSource);
     }
-    formData.append('mode', mode);
+    formData.append('mode', effectiveMode);
     formData.append('dryRun', dryRun ? 'true' : 'false');
     if (force) formData.append('force', 'true');
 
     const res = await apiFetch('/api/upload', { method: 'POST', body: formData });
     const data = await res.json().catch(() => ({}));
     return { res, data };
+  }
+
+  // A preview is only valid for the exact source/mode that produced it. If the
+  // user changes either afterwards, the stale preview must never drive Apply
+  // (issue #163) — re-run the dry run against the new settings instead of
+  // forcing the user to re-select the file.
+  async function rerunPreviewFor(nextSource: SanctionSourceOption, nextMode: ImportMode) {
+    if (!selectedFile || previewing) return;
+    setPreview(null);
+    setOverrideConfirmed(false);
+    setFeedback(null);
+    setPreviewing(true);
+
+    try {
+      const { res, data } = await runUpload(selectedFile, true, false, nextSource, nextMode);
+
+      if (res.status === 200 && data.status === 'dry_run') {
+        setPreview({ counts: data.counts || { parsed: 0, uploaded: 0 }, diffs: data.diffs || [] });
+      } else if (res.status === 409 && data.duplicateOfImportId) {
+        setFeedback({
+          severity: 'warning',
+          message: data.error || `Identical file already imported as import #${data.duplicateOfImportId}.`,
+          duplicateImportId: data.duplicateOfImportId,
+        });
+        setSelectedFile(null);
+      } else if (res.status === 422) {
+        setFeedback({ severity: 'error', message: data.error || 'This file format is not yet supported.' });
+        setSelectedFile(null);
+      } else {
+        setFeedback({ severity: 'error', message: data.error || 'Preview failed.' });
+        setSelectedFile(null);
+      }
+    } catch (err) {
+      console.error(err);
+      setFeedback({ severity: 'error', message: 'Preview failed. Please try again.' });
+      setSelectedFile(null);
+    }
+    setPreviewing(false);
+  }
+
+  function handleSourceChange(next: SanctionSourceOption) {
+    setSource(next);
+    if (preview) rerunPreviewFor(next, mode);
+  }
+
+  function handleModeChange(next: ImportMode) {
+    setMode(next);
+    if (preview) rerunPreviewFor(source, next);
   }
 
   async function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
@@ -362,7 +418,7 @@ export default function UploadTab({ onViewImport }: UploadTabProps) {
                 labelId="upload-source-label"
                 label="Source"
                 value={source}
-                onChange={(e: SelectChangeEvent) => setSource(e.target.value as SanctionSourceOption)}
+                onChange={(e: SelectChangeEvent) => handleSourceChange(e.target.value as SanctionSourceOption)}
                 disabled={isBusy}
               >
                 {SOURCES.map((s) => (
@@ -377,7 +433,7 @@ export default function UploadTab({ onViewImport }: UploadTabProps) {
                 labelId="upload-mode-label"
                 label="Mode"
                 value={mode}
-                onChange={(e: SelectChangeEvent) => setMode(e.target.value as ImportMode)}
+                onChange={(e: SelectChangeEvent) => handleModeChange(e.target.value as ImportMode)}
                 disabled={isBusy}
               >
                 <MenuItem value="append">Append</MenuItem>
