@@ -28,16 +28,28 @@ import { consumeGlobalOtpBudget } from '../auth/otpBudget';
 import { sendOtpEmail } from '../auth/mailer';
 import { createSession, destroySession } from '../auth/session';
 import { requireAuth, SESSION_COOKIE_NAME } from '../auth/middleware';
-import { isAdminEmail } from '../auth/admins';
+import { isAdminEmail, findMisconfiguredAdminEmails } from '../auth/admins';
 import { isAllowedEmail } from '../auth/emailAllowlist';
 import { TEST_LOGIN_EMAIL, TEST_LOGIN_CODE, isTestLoginEnabled, isTestLoginEmail } from '../auth/testAccount';
 import { requestLogger } from './middleware/requestLogger';
 import { errorLogger } from './middleware/errorLogger';
 import { scheduledSourceFetch } from '../scheduled';
 import { requireAuthOrScope } from './middleware/requireAuthOrScope';
+import { logger } from '../shared/logger';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// issue #65: ADMIN_EMAILS and ALLOWED_EMAIL_DOMAINS are independently
+// configured — an admin address whose domain isn't allow-listed gets
+// silently locked out at login with no indication of why. Not fatal (an
+// operator may be mid-rollout of a new domain); just surfaced in logs.
+for (const { maskedEmail, domain } of findMisconfiguredAdminEmails()) {
+  logger.warn(
+    'ADMIN_EMAILS contains an address whose domain is not in ALLOWED_EMAIL_DOMAINS — this admin will be locked out at login (issue #65).',
+    { maskedEmail, domain },
+  );
+}
 
 const MAX_UPLOAD_BYTES = 64 * 1024 * 1024; // real EU FSD export is ~25 MB
 const ALLOWED_UPLOAD_EXTENSIONS = new Set(['.csv', '.xml']);

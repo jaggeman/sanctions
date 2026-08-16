@@ -159,6 +159,8 @@ Outside production (`NODE_ENV !== 'production'`), an unset list falls back to th
 
 Membership is re-read on every request, so removing someone from the list revokes their admin access immediately rather than when their session expires.
 
+**Every `ADMIN_EMAILS` address's domain must also appear in `ALLOWED_EMAIL_DOMAINS`.** The two lists are checked independently — `ALLOWED_EMAIL_DOMAINS` gates login before `ADMIN_EMAILS` is ever consulted, so an admin whose domain is missing from the login allow-list is locked out entirely, with no indication of why (it just looks like a normal login rejection). The server logs a `warn`-level entry at startup for any misconfigured admin address, but it is not fatal — double-check both lists together before deploying.
+
 ### Model Context Protocol (MCP) server
 
 `src/mcp/index.ts` is a separate stdio process (run via `npm run dev:mcp`, or `node dist/mcp/index.js` after `npm run build`) that lets an AI agent search and manage sanctions data through the MCP protocol — it is not part of the Express app. It exposes read tools (`search_sanctions`, `get_sanction_details`, `get_override`, `list_decisions_for_entity`), a `sanctions://statistics` resource, and write tools (`run_database_import`, `create_override`, `record_decision`).
