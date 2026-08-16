@@ -128,4 +128,114 @@
       </nationality>
     </nationalityList>
   </sdnEntry>
+  <!-- issue #169: carved verbatim from the real 29 MB OFAC SDN export
+       (uid 9758) — the one real entry found with BOTH nationalityList and
+       citizenshipList populated, where the same country (India) appears in
+       both, exercising the cross-list dedup the fix needs. -->
+  <sdnEntry>
+    <uid>9758</uid>
+    <firstName>Dawood</firstName>
+    <lastName>IBRAHIM</lastName>
+    <sdnType>Individual</sdnType>
+    <programList>
+      <program>SDNTK</program>
+      <program>SDGT</program>
+    </programList>
+    <idList>
+      <id>
+        <uid>4263</uid>
+        <idType>Passport</idType>
+        <idNumber>M-110522</idNumber>
+        <idCountry>India</idCountry>
+        <issueDate>13 Nov 1978</issueDate>
+      </id>
+    </idList>
+    <akaList>
+      <aka>
+        <uid>9277</uid>
+        <type>a.k.a.</type>
+        <category>strong</category>
+        <lastName>EBRAHIM</lastName>
+        <firstName>Dawood</firstName>
+      </aka>
+    </akaList>
+    <addressList>
+      <address>
+        <uid>12207</uid>
+        <address1>617 CP Berar Society, Block 7-8</address1>
+        <city>Karachi</city>
+        <country>Pakistan</country>
+      </address>
+    </addressList>
+    <nationalityList>
+      <nationality>
+        <uid>4801</uid>
+        <country>India</country>
+        <mainEntry>true</mainEntry>
+      </nationality>
+    </nationalityList>
+    <citizenshipList>
+      <citizenship>
+        <uid>4798</uid>
+        <country>India</country>
+        <mainEntry>true</mainEntry>
+      </citizenship>
+      <citizenship>
+        <uid>4799</uid>
+        <country>Pakistan</country>
+        <mainEntry>false</mainEntry>
+      </citizenship>
+      <citizenship>
+        <uid>4800</uid>
+        <country>United Arab Emirates</country>
+        <mainEntry>false</mainEntry>
+      </citizenship>
+    </citizenshipList>
+    <dateOfBirthList>
+      <dateOfBirthItem>
+        <uid>4795</uid>
+        <dateOfBirth>26 Dec 1955</dateOfBirth>
+        <mainEntry>true</mainEntry>
+      </dateOfBirthItem>
+    </dateOfBirthList>
+    <placeOfBirthList>
+      <placeOfBirthItem>
+        <uid>4797</uid>
+        <placeOfBirth>Ratnagiri, Maharashtra, India</placeOfBirth>
+        <mainEntry>true</mainEntry>
+      </placeOfBirthItem>
+    </placeOfBirthList>
+  </sdnEntry>
+  <!-- issue #169: carved verbatim (uid 6944) — nationalityList only, no
+       citizenshipList, the other real shape the fix needs to cover. -->
+  <sdnEntry>
+    <uid>6944</uid>
+    <firstName>Sa'd Abdullah Hussein</firstName>
+    <lastName>AL-SHARIF</lastName>
+    <sdnType>Individual</sdnType>
+    <programList>
+      <program>SDGT</program>
+    </programList>
+    <nationalityList>
+      <nationality>
+        <uid>5413</uid>
+        <country>Saudi Arabia</country>
+        <mainEntry>true</mainEntry>
+      </nationality>
+    </nationalityList>
+    <dateOfBirthList>
+      <dateOfBirthItem>
+        <uid>1283</uid>
+        <dateOfBirth>1969</dateOfBirth>
+        <mainEntry>true</mainEntry>
+      </dateOfBirthItem>
+    </dateOfBirthList>
+    <placeOfBirthList>
+      <placeOfBirthItem>
+        <uid>1284</uid>
+        <placeOfBirth>Al-Medinah, Saudi Arabia</placeOfBirth>
+        <mainEntry>true</mainEntry>
+      </placeOfBirthItem>
+    </placeOfBirthList>
+  </sdnEntry>
 </sdnList>

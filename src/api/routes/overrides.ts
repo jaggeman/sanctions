@@ -51,7 +51,11 @@ overridesRouter.put('/:id', async (req, res): Promise<any> => {
 
     const overriddenBy = (req as any).userEmail;
     const override = await saveOverride(id, fields, { overriddenBy, reason: reason.trim() });
-    invalidateSearchIndex();
+    // Awaited (issue #170) — a client that reads-after-write (PUT then an
+    // immediate search) must never observe stale cached data. Any failure
+    // here is caught by this handler's own try/catch below, same as a
+    // failure in saveOverride itself.
+    await invalidateSearchIndex();
 
     res.json(override);
   } catch (error: any) {
@@ -68,7 +72,8 @@ overridesRouter.put('/:id', async (req, res): Promise<any> => {
 overridesRouter.delete('/:id', async (req, res): Promise<any> => {
   try {
     await deleteOverride(req.params.id);
-    invalidateSearchIndex();
+    // Awaited (issue #170) — same reasoning as the PUT handler above.
+    await invalidateSearchIndex();
     res.json({ ok: true });
   } catch (error: any) {
     console.error('Delete override error:', error);

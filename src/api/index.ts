@@ -88,12 +88,30 @@ const IMPORT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
  * sanctions source. `requireAuthOrScope('write')` alone only proves the
  * caller is logged in (or holds a write-scoped token), not that they're
  * trusted with overriding a safety mechanism — restricting it to real admin
- * sessions specifically (issue #105). A write-scoped API token has no
- * associated identity to check admin status against at all, so it's
- * rejected outright rather than silently treated as non-admin.
+ * sessions specifically (issue #105).
+ *
+ * The token check below is load-bearing and must not be reduced back to an
+ * `isAdminEmail` test alone (issue #153). This guard originally relied on a
+ * bearer token carrying no identity, so that `req.userEmail` being set
+ * implied a session. Token owner-attribution (#123) broke that assumption:
+ * `requireScope` now sets `req.userEmail` from the token's `ownerEmail`,
+ * and since only an admin can mint a token, that address always passes
+ * `isAdminEmail` — every write-scoped token silently satisfied this guard.
+ *
+ * Identity is therefore not sufficient; the *authentication method* is what
+ * matters. `req.apiTokenId` is set only by `requireScope`, never by
+ * `requireAuth`, and `requireAuthOrScope` routes to exactly one of the two,
+ * so its presence is a reliable "this caller is a token, not a session".
  */
 function assertForceAllowed(req: express.Request, res: express.Response, force: boolean): boolean {
   if (!force) return true;
+
+  if (req.apiTokenId) {
+    res.status(403).json({
+      error: '"force" (delist safety guard override) requires an admin session; an API token cannot be used for it.',
+    });
+    return false;
+  }
 
   const email = (req as any).userEmail;
   if (!email || !isAdminEmail(email)) {
@@ -123,6 +141,26 @@ app.use((req, res, next) => {
   applyHeaders(req, res, next);
 });
 
+// Every /api/* response is dynamic and cookie-authenticated — never
+// cacheable. Without this, Firebase Hosting's CDN (Fastly) treats a
+// response with no Cache-Control as publicly cacheable and, per its default
+// policy for cacheable paths, STRIPS the inbound Cookie request header
+// before it ever reaches this function. That's silent and total: every
+// GET route gating on requireAuth/requireAuthOrScope would 401 for every
+// caller, session cookie or not, because req.cookies is empty by the time
+// Express sees the request — confirmed live (a real incident): the session
+// cookie was correctly set by POST /api/auth/verify-otp, but GET
+// /api/auth/session immediately 401'd through Hosting's rewrite while the
+// exact same request against the underlying Cloud Run URL directly worked.
+// POST responses happened to still work because Google Frontend
+// auto-appends Cache-Control: private whenever a response sets a cookie —
+// but GET routes returning no cookie of their own got no such header and
+// were silently broken for cookie-forwarding on every request.
+app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
+
 // requestLogger must run before express.json()/cookieParser() (issue #66):
 // Express treats it as regular (3-arg) middleware, so if either of those
 // throws (a malformed JSON body, a bad cookie), Express skips every
@@ -136,6 +174,18 @@ app.use(requestLogger);
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN || false, credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
+
+// Every /api/* response is dynamic and cookie-authenticated — never
+// cacheable. Defense in depth against Firebase Hosting's CDN treating an
+// uncached-looking response as publicly cacheable; the real fix for the
+// session-cookie-not-forwarded incident this was found alongside is #151
+// (the cookie must be named __session for Hosting to forward it at all —
+// this alone does not fix that), but a dynamic, per-user API response
+// should never carry an implicit "cacheable" default regardless.
+app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
 
 // Rejects any :id route param before it can reach a Firestore .doc(id) call
 // (CLAUDE.md §6) — param callbacks are local to the router they're

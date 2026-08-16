@@ -167,6 +167,32 @@ describe('parseUSList', () => {
     }
   });
 
+  // issue #169: nationalityList/citizenshipList were dropped entirely.
+  it('maps citizenshipList into citizenships, deduping against a nationality already seen', async () => {
+    const records = await parseUSList(FIXTURE);
+    const dawood = records.find((r) => r.id === 'US-SDN-9758');
+
+    expect(dawood).toBeDefined();
+    // nationality is India, citizenships are India/Pakistan/UAE — India
+    // must appear only once in the merged list, not twice.
+    expect(dawood!.citizenships).toEqual(['India', 'Pakistan', 'United Arab Emirates']);
+  });
+
+  it('maps nationalityList alone when there is no citizenshipList', async () => {
+    const records = await parseUSList(FIXTURE);
+    const sharif = records.find((r) => r.id === 'US-SDN-6944');
+
+    expect(sharif).toBeDefined();
+    expect(sharif!.citizenships).toEqual(['Saudi Arabia']);
+  });
+
+  it('leaves citizenships undefined when neither list is present', async () => {
+    const records = await parseUSList(FIXTURE);
+    const airline = records.find((r) => r.id === 'US-SDN-36');
+
+    expect(airline!.citizenships).toBeUndefined();
+  });
+
   it('normalises a single sdnEntry (no array) into a one-element result', async () => {
     const os = await import('os');
     const fs = await import('fs-extra');
