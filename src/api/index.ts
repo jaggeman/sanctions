@@ -38,7 +38,7 @@ import { scheduledSourceFetch } from '../scheduled';
 import { requireAuthOrScope } from './middleware/requireAuthOrScope';
 import { logger } from '../shared/logger';
 
-const app = express();
+export const app = express();
 const PORT = process.env.PORT || 3000;
 
 // issue #144: trust 1 upstream hop (Cloud Run / Firebase Hosting reverse proxy)
@@ -193,18 +193,6 @@ app.use(requestLogger);
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN || false, credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
-
-// Every /api/* response is dynamic and cookie-authenticated — never
-// cacheable. Defense in depth against Firebase Hosting's CDN treating an
-// uncached-looking response as publicly cacheable; the real fix for the
-// session-cookie-not-forwarded incident this was found alongside is #151
-// (the cookie must be named __session for Hosting to forward it at all —
-// this alone does not fix that), but a dynamic, per-user API response
-// should never carry an implicit "cacheable" default regardless.
-app.use('/api', (req, res, next) => {
-  res.set('Cache-Control', 'no-store');
-  next();
-});
 
 // Rejects any :id route param before it can reach a Firestore .doc(id) call
 // (CLAUDE.md §6) — param callbacks are local to the router they're

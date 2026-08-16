@@ -14,7 +14,7 @@ vi.mock('../../src/shared/firebase', () => ({ db: { collection: vi.fn() } }));
 vi.mock('../../src/importer', () => ({ runImport: vi.fn(async () => ({ success: true, importedCounts: {} })) }));
 vi.mock('../../src/auth/mailer', () => ({ sendOtpEmail: vi.fn(async () => {}) }));
 
-const { api } = await import('../../src/api');
+const { api, app } = await import('../../src/api');
 
 describe('/api/* responses are never cacheable', () => {
   it('sets Cache-Control: no-store on an unauthenticated /api route', async () => {
@@ -31,5 +31,15 @@ describe('/api/* responses are never cacheable', () => {
   it('does not apply to non-/api routes like /openapi.json', async () => {
     const res = await request(api).get('/openapi.json');
     expect(res.headers['cache-control']).not.toBe('no-store');
+  });
+
+  it('registers Cache-Control: no-store on /api exactly once (issue #190)', () => {
+    const routerStack = app._router?.stack || [];
+    const cacheControlLayers = routerStack.filter((layer: any) => {
+      if (typeof layer.handle !== 'function') return false;
+      const fnStr = layer.handle.toString();
+      return fnStr.includes('no-store') || fnStr.includes('Cache-Control');
+    });
+    expect(cacheControlLayers).toHaveLength(1);
   });
 });
