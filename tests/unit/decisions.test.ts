@@ -1,10 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Decision } from '../../src/shared/types';
+import type { Decision, DecisionHistoryEntry } from '../../src/shared/types';
 
 // Same fake-Firestore pattern as tests/unit/customRecords.test.ts, but the
 // decisions collection is keyed by a composite entityId+subjectId id and
 // also needs a `where('entityId', '==', ...)` query for listDecisionsForEntity.
+// Issue #112: each doc also gets a `history` subcollection (auto-id docs,
+// queried via `.orderBy('changedAt', 'desc')`), tracked here as an
+// insertion-ordered array per doc id.
 let store: Record<string, Decision> = {};
+let historyStore: Record<string, DecisionHistoryEntry[]> = {};
 
 function makeQuery(matching: Decision[]) {
   return {
@@ -28,6 +32,25 @@ const fakeDb = {
         set: vi.fn(async (data: Decision) => {
           store[id] = data;
         }),
+        collection: vi.fn((subName: string) => {
+          if (subName !== 'history') throw new Error(`unexpected subcollection ${subName}`);
+          if (!historyStore[id]) historyStore[id] = [];
+          return {
+            doc: vi.fn(() => ({
+              set: vi.fn(async (data: DecisionHistoryEntry) => {
+                historyStore[id].push(data);
+              }),
+            })),
+            orderBy: vi.fn((field: string) => {
+              if (field !== 'changedAt') throw new Error(`unexpected orderBy(${field})`);
+              return {
+                get: vi.fn(async () => ({
+                  docs: (historyStore[id] || []).slice().reverse().map((h) => ({ data: () => h })),
+                })),
+              };
+            }),
+          };
+        }),
       })),
       where: vi.fn((field: string, op: string, value: any) => {
         if (field !== 'entityId' || op !== '==') throw new Error(`unexpected where(${field}, ${op})`);
@@ -39,10 +62,11 @@ const fakeDb = {
 
 vi.mock('../../src/shared/firebase', () => ({ db: fakeDb }));
 
-const { saveDecision, getDecision, listDecisionsForEntity } = await import('../../src/decisions');
+const { saveDecision, getDecision, listDecisionsForEntity, getDecisionHistory } = await import('../../src/decisions');
 
 beforeEach(() => {
   store = {};
+  historyStore = {};
   vi.clearAllMocks();
 });
 
@@ -173,5 +197,77 @@ describe('listDecisionsForEntity', () => {
     const decisions = await listDecisionsForEntity('EU-1');
     expect(decisions).toHaveLength(2);
     expect(decisions.map((d) => d.subjectId).sort()).toEqual(['customer-a', 'customer-b']);
+  });
+});
+
+describe('saveDecision — append-only history (issue #112)', () => {
+  it('writes a "created" history entry on the first decision', async () => {
+    const decision = await saveDecision({
+      entityId: 'EU-1',
+      subjectId: 'customer-acme',
+      verdict: 'false_positive',
+      decidedBy: 'analyst-a@example.com',
+    });
+
+    const history = await getDecisionHistory('EU-1', 'customer-acme');
+    expect(history).toHaveLength(1);
+    expect(history[0].changeType).toBe('created');
+    expect(history[0].decision).toEqual(decision);
+  });
+
+  it('writes a "replaced" history entry on re-adjudication, without losing the "created" entry', async () => {
+    await saveDecision({
+      entityId: 'EU-1',
+      subjectId: 'customer-acme',
+      verdict: 'false_positive',
+      decidedBy: 'analyst-a@example.com',
+    });
+    await saveDecision({
+      entityId: 'EU-1',
+      subjectId: 'customer-acme',
+      verdict: 'true_positive',
+      decidedBy: 'analyst-b@example.com',
+    });
+
+    const history = await getDecisionHistory('EU-1', 'customer-acme');
+    expect(history).toHaveLength(2);
+    // Most recent first.
+    expect(history[0].changeType).toBe('replaced');
+    expect(history[0].decision.decidedBy).toBe('analyst-b@example.com');
+    expect(history[1].changeType).toBe('created');
+    expect(history[1].decision.decidedBy).toBe('analyst-a@example.com');
+  });
+
+  it("the first analyst's original verdict/author/notes are recoverable from history after a second analyst overwrites the current state", async () => {
+    await saveDecision({
+      entityId: 'EU-1',
+      subjectId: 'customer-acme',
+      verdict: 'false_positive',
+      decidedBy: 'analyst-a@example.com',
+      notes: 'Initial read: no match',
+    });
+    await saveDecision({
+      entityId: 'EU-1',
+      subjectId: 'customer-acme',
+      verdict: 'true_positive',
+      decidedBy: 'analyst-b@example.com',
+      notes: 'Disagree — confirmed match',
+    });
+
+    // The current-state upsert behavior itself is unchanged (see the
+    // "re-adjudication overwrites..." test above) — this proves the prior
+    // state is still recoverable via history, not that the current-state
+    // read path changed.
+    const history = await getDecisionHistory('EU-1', 'customer-acme');
+    const original = history.find((h) => h.changeType === 'created')!;
+    expect(original.decision.verdict).toBe('false_positive');
+    expect(original.decision.decidedBy).toBe('analyst-a@example.com');
+    expect(original.decision.notes).toBe('Initial read: no match');
+  });
+});
+
+describe('getDecisionHistory', () => {
+  it('returns an empty array when no decision was ever made for this entity+subject', async () => {
+    expect(await getDecisionHistory('EU-404', 'customer-x')).toEqual([]);
   });
 });

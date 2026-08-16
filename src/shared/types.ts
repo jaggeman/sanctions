@@ -93,8 +93,6 @@ export interface Override {
   reason: string;
 }
 
-// Design-only for issue #10 — no persistence/CRUD/API built yet. Tracked for
-// the actual build in a follow-up issue (see PR description).
 export interface Decision {
   entityId: string;
   subjectId: string; // the customer/subject this adjudication was made for
@@ -102,6 +100,33 @@ export interface Decision {
   decidedBy: string;
   decidedAt: string; // ISO string
   notes?: string;
+}
+
+// One entry in `decisions/{entityId__subjectId}/history/{autoId}` (issue
+// #112) — same shape as sanctions/{id}/versions/{importId}: a full snapshot
+// of the state that resulted from this change, tagged with what kind of
+// change it was. `saveDecision`'s upsert-for-current-state behavior is
+// unchanged; this is what keeps the prior verdict/author/notes recoverable
+// once a second adjudication replaces them.
+export type DecisionChangeType = 'created' | 'replaced';
+export interface DecisionHistoryEntry {
+  changeType: DecisionChangeType;
+  changedAt: string; // ISO string
+  decision: Decision;
+}
+
+// One entry in `overrides/{entityId}/history/{autoId}` (issue #112). For
+// `changeType: 'deleted'`, `override` is the override as it stood just
+// before removal (the thing that got removed) — `changedBy`/`changedAt`
+// are the deleter's identity/time, not the original author's, so a delete
+// is attributable even though `saveOverride`/`overriddenBy` never recorded
+// a "deleter" field before this.
+export type OverrideChangeType = 'created' | 'replaced' | 'deleted';
+export interface OverrideHistoryEntry {
+  changeType: OverrideChangeType;
+  changedAt: string; // ISO string
+  changedBy: string;
+  override: Override;
 }
 
 export type ImportStatus = 'pending' | 'parsing' | 'applied' | 'failed' | 'rejected';
