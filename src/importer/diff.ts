@@ -1,6 +1,9 @@
 import { db } from '../shared/firebase';
 import { SanctionRecord, SanctionSource, NameAlias, primaryNameOf } from '../shared/types';
 import { computeContentHash, uploadRecords, delistRecords, filterAutomatedBatch } from './uploader';
+import { acquireSourceLock, SourceImportLockedError, isSourceLocked } from './importLock';
+
+export { SourceImportLockedError, isSourceLocked };
 
 export type ImportMode = 'sync' | 'append';
 
@@ -219,20 +222,30 @@ export async function runDiffForSource(
   records: SanctionRecord[],
   options: RunDiffOptions,
 ): Promise<DiffResult> {
-  const diff = await computeDiff(source, records, { mode: options.mode });
-
-  if (diff.guardTripped && !options.force) {
-    if (options.dryRun) {
-      return diff;
-    }
-    throw new DelistGuardError(source, diff.toDelistIds.length, diff.activeCount);
-  }
-
+  let releaseLock: (() => Promise<void>) | null = null;
   if (!options.dryRun) {
-    await applyDiff(diff, options.importId);
+    releaseLock = await acquireSourceLock(source, options.importId);
   }
+  try {
+    const diff = await computeDiff(source, records, { mode: options.mode });
 
-  return diff;
+    if (diff.guardTripped && !options.force) {
+      if (options.dryRun) {
+        return diff;
+      }
+      throw new DelistGuardError(source, diff.toDelistIds.length, diff.activeCount);
+    }
+
+    if (!options.dryRun) {
+      await applyDiff(diff, options.importId);
+    }
+
+    return diff;
+  } finally {
+    if (releaseLock) {
+      await releaseLock().catch(() => {});
+    }
+  }
 }
 
 /**
@@ -266,7 +279,20 @@ export async function startDiffSession(
   source: SanctionSource,
   options: RunDiffOptions,
 ): Promise<DiffSession> {
-  const existing = await fetchExistingSummaries(source);
+  let releaseLock: (() => Promise<void>) | null = null;
+  if (!options.dryRun) {
+    releaseLock = await acquireSourceLock(source, options.importId);
+  }
+
+  let existing: Map<string, ExistingSummary>;
+  try {
+    existing = await fetchExistingSummaries(source);
+  } catch (err) {
+    if (releaseLock) {
+      await releaseLock().catch(() => {});
+    }
+    throw err;
+  }
 
   let added = 0;
   let updated = 0;
@@ -333,29 +359,36 @@ export async function startDiffSession(
     },
 
     async finish(): Promise<StreamedDiffResult> {
-      let toDelistIds: string[] = [];
-      if (options.mode === 'sync' && source !== 'CUSTOM') {
-        toDelistIds = [...existing.entries()]
-          .filter(([id, e]) => e.status !== 'delisted' && !incomingIds.has(id))
-          .map(([id]) => id);
-        for (const id of toDelistIds) {
-          pushSample(samples.delisted, { id, names: existing.get(id)?.names || [] });
+      try {
+        let toDelistIds: string[] = [];
+        if (options.mode === 'sync' && source !== 'CUSTOM') {
+          toDelistIds = [...existing.entries()]
+            .filter(([id, e]) => e.status !== 'delisted' && !incomingIds.has(id))
+            .map(([id]) => id);
+          for (const id of toDelistIds) {
+            pushSample(samples.delisted, { id, names: existing.get(id)?.names || [] });
+          }
+        }
+
+        const guardTripped =
+          activeCount > 0 && toDelistIds.length / activeCount > DELIST_GUARD_THRESHOLD;
+
+        if (guardTripped && !options.force) {
+          if (options.dryRun) return summarise(toDelistIds, true);
+          throw new DelistGuardError(source, toDelistIds.length, activeCount);
+        }
+
+        if (!options.dryRun && toDelistIds.length > 0) {
+          await delistRecords(toDelistIds, options.importId);
+        }
+
+        return summarise(toDelistIds, guardTripped);
+      } finally {
+        if (releaseLock) {
+          await releaseLock().catch(() => {});
+          releaseLock = null;
         }
       }
-
-      const guardTripped =
-        activeCount > 0 && toDelistIds.length / activeCount > DELIST_GUARD_THRESHOLD;
-
-      if (guardTripped && !options.force) {
-        if (options.dryRun) return summarise(toDelistIds, true);
-        throw new DelistGuardError(source, toDelistIds.length, activeCount);
-      }
-
-      if (!options.dryRun && toDelistIds.length > 0) {
-        await delistRecords(toDelistIds, options.importId);
-      }
-
-      return summarise(toDelistIds, guardTripped);
     },
 
     abort(): StreamedDiffResult {
@@ -364,6 +397,10 @@ export async function startDiffSession(
       // and for the same reason, no partial sample is trustworthy either:
       // override the accumulated samples rather than reusing summarise()'s,
       // so a failed run never renders as a preview of anything.
+      if (releaseLock) {
+        releaseLock().catch(() => {});
+        releaseLock = null;
+      }
       return { ...summarise([], false), samples: emptySamples() };
     },
   };
