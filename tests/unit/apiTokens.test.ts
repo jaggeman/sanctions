@@ -59,6 +59,8 @@ import {
   listApiTokens,
   revokeApiToken,
   verifyApiToken,
+  isValidExpiryOption,
+  computeExpiresAt,
 } from '../../src/shared/apiTokens';
 
 beforeEach(() => {
@@ -144,6 +146,7 @@ describe('createApiToken', () => {
       lastUsedAt: null,
       revoked: false,
       revokedAt: null,
+      expiresAt: null,
     });
     expect(record).not.toHaveProperty('tokenHash');
   });
@@ -153,6 +156,57 @@ describe('createApiToken', () => {
       /ownerEmail/i
     );
     expect(mockSet).not.toHaveBeenCalled();
+  });
+
+  // Token lifetime: creation lets the caller opt into an expiry ('30d',
+  // '90d', '180d', '365d') instead of the token living forever by default.
+  describe('expiry (expiresIn)', () => {
+    it('defaults to no expiry (expiresAt: null) when expiresIn is omitted', async () => {
+      const { record } = await createApiToken('CI pipeline', ['read'], 'admin@corp.test');
+      expect(record.expiresAt).toBeNull();
+    });
+
+    it('"never" produces expiresAt: null', async () => {
+      const { record } = await createApiToken('CI pipeline', ['read'], 'admin@corp.test', 'never');
+      expect(record.expiresAt).toBeNull();
+    });
+
+    it.each([
+      ['30d', 30],
+      ['90d', 90],
+      ['180d', 180],
+      ['365d', 365],
+    ] as const)('"%s" sets expiresAt %d days from creation', async (option, days) => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+        const { record } = await createApiToken('CI pipeline', ['read'], 'admin@corp.test', option);
+        expect(record.expiresAt).toBe(new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString());
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+});
+
+describe('isValidExpiryOption', () => {
+  it.each(['30d', '90d', '180d', '365d', 'never'])('accepts "%s"', (value) => {
+    expect(isValidExpiryOption(value)).toBe(true);
+  });
+
+  it.each([undefined, null, '', 'forever', '30days', 30, {}])('rejects %p', (value) => {
+    expect(isValidExpiryOption(value)).toBe(false);
+  });
+});
+
+describe('computeExpiresAt', () => {
+  it('returns null for "never"', () => {
+    expect(computeExpiresAt('never', new Date('2026-01-01T00:00:00.000Z'))).toBeNull();
+  });
+
+  it('adds the right number of days for a timed option', () => {
+    const from = new Date('2026-01-01T00:00:00.000Z');
+    expect(computeExpiresAt('30d', from)).toBe(new Date('2026-01-31T00:00:00.000Z').toISOString());
   });
 });
 
@@ -333,6 +387,74 @@ describe('verifyApiToken', () => {
       scopes: ['read', 'write'],
     });
     expect(mockDocUpdate).not.toHaveBeenCalled();
+  });
+
+  describe('token expiry', () => {
+    it('rejects a token whose expiresAt is in the past', async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date('2026-06-01T00:00:00.000Z'));
+        const stored = {
+          id: 'tok-1',
+          scopes: ['read'],
+          revoked: false,
+          expiresAt: '2026-05-31T23:59:59.000Z',
+        };
+        mockWhereLimitGet.mockResolvedValueOnce({
+          empty: false,
+          docs: [{ data: () => stored, ref: { update: mockDocUpdate } }],
+        });
+
+        const result = await verifyApiToken('sanc_expired', 'read');
+
+        expect(result).toEqual({
+          valid: false,
+          reason: 'expired',
+          tokenId: 'tok-1',
+          scopes: ['read'],
+        });
+        expect(mockDocUpdate).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('accepts a token whose expiresAt is still in the future', async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date('2026-06-01T00:00:00.000Z'));
+        const stored = {
+          id: 'tok-1',
+          scopes: ['read'],
+          revoked: false,
+          expiresAt: '2026-06-02T00:00:00.000Z',
+        };
+        mockDocUpdate.mockResolvedValueOnce(undefined);
+        mockWhereLimitGet.mockResolvedValueOnce({
+          empty: false,
+          docs: [{ data: () => stored, ref: { update: mockDocUpdate } }],
+        });
+
+        const result = await verifyApiToken('sanc_not_yet_expired', 'read');
+
+        expect(result.valid).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('accepts a token with expiresAt: null (never expires)', async () => {
+      const stored = { id: 'tok-1', scopes: ['read'], revoked: false, expiresAt: null };
+      mockDocUpdate.mockResolvedValueOnce(undefined);
+      mockWhereLimitGet.mockResolvedValueOnce({
+        empty: false,
+        docs: [{ data: () => stored, ref: { update: mockDocUpdate } }],
+      });
+
+      const result = await verifyApiToken('sanc_no_expiry', 'read');
+
+      expect(result.valid).toBe(true);
+    });
   });
 
   describe('granular scope expansion & least privilege (issue #221)', () => {

@@ -29,13 +29,14 @@ export interface ApiTokenRecord {
   lastUsedAt: string | null; // ISO string
   revoked: boolean;
   revokedAt: string | null; // ISO string
+  expiresAt: string | null; // ISO string — null means the token never expires
 }
 
 export type ApiTokenPublic = Omit<ApiTokenRecord, 'tokenHash'>;
 
 export interface TokenVerificationResult {
   valid: boolean;
-  reason?: 'missing' | 'not_found' | 'revoked' | 'insufficient_scope' | 'no_owner_email' | 'disallowed_owner';
+  reason?: 'missing' | 'not_found' | 'revoked' | 'expired' | 'insufficient_scope' | 'no_owner_email' | 'disallowed_owner';
   tokenId?: string;
   scopes?: ApiTokenScope[];
   ownerEmail?: string;
@@ -43,6 +44,28 @@ export interface TokenVerificationResult {
 
 const TOKEN_PREFIX = 'sanc_';
 const TOKENS_COLLECTION = 'apiTokens';
+
+const EXPIRY_DAYS: Record<'30d' | '90d' | '180d' | '365d', number> = {
+  '30d': 30,
+  '90d': 90,
+  '180d': 180,
+  '365d': 365,
+};
+
+export type ApiTokenExpiryOption = keyof typeof EXPIRY_DAYS | 'never';
+
+export const EXPIRY_OPTIONS: readonly ApiTokenExpiryOption[] = ['30d', '90d', '180d', '365d', 'never'];
+
+export function isValidExpiryOption(value: unknown): value is ApiTokenExpiryOption {
+  return typeof value === 'string' && (EXPIRY_OPTIONS as readonly string[]).includes(value);
+}
+
+/** Never throws — 'never' (and any option, by construction) always returns a value. */
+export function computeExpiresAt(option: ApiTokenExpiryOption, from: Date = new Date()): string | null {
+  if (option === 'never') return null;
+  const days = EXPIRY_DAYS[option];
+  return new Date(from.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
+}
 
 export const READ_SCOPES: readonly GranularApiTokenScope[] = [
   'sanctions:read',
@@ -110,7 +133,8 @@ function toPublic(record: ApiTokenRecord): ApiTokenPublic {
 export async function createApiToken(
   name: string,
   scopes: ApiTokenScope[],
-  ownerEmail: string
+  ownerEmail: string,
+  expiresIn: ApiTokenExpiryOption = 'never'
 ): Promise<{ token: string; record: ApiTokenPublic }> {
   if (!ownerEmail || !ownerEmail.trim()) {
     throw new Error('"ownerEmail" is required to create an API token.');
@@ -130,6 +154,7 @@ export async function createApiToken(
     lastUsedAt: null,
     revoked: false,
     revokedAt: null,
+    expiresAt: computeExpiresAt(expiresIn),
   };
 
   await docRef.set(record);
@@ -180,6 +205,10 @@ export async function verifyApiToken(
 
   if (record.revoked) {
     return { valid: false, reason: 'revoked' };
+  }
+
+  if (record.expiresAt && new Date(record.expiresAt).getTime() <= Date.now()) {
+    return { valid: false, reason: 'expired', tokenId: record.id, scopes: record.scopes };
   }
 
   const effectiveScopes = expandScopes(record.scopes);

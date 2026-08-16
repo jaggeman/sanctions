@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import ApiTokensTab from './ApiTokensTab';
 import { setOnSessionExpired } from './apiFetch';
@@ -210,5 +210,101 @@ describe('ApiTokensTab token creation error handling (issue #166)', () => {
 
     const mcpSnippet = screen.getByTestId('mcp-config-snippet');
     expect(mcpSnippet.textContent).toContain('"MCP_API_TOKEN": "sanc_full_new_secret_key_789"');
+  });
+});
+
+// Token lifetime: creation lets the caller opt into an expiry instead of
+// the token living forever by default.
+describe('ApiTokensTab token expiry', () => {
+  function stubAdminSessionAndTokens(tokens: any[], onCreate?: (body: any) => any) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('/api/auth/session')) {
+          return { ok: true, status: 200, json: async () => ({ email: 'admin@example.com', isAdmin: true }) } as Response;
+        }
+        if (url.includes('/api/admin/tokens') && init?.method === 'POST') {
+          const body = JSON.parse(init.body as string);
+          return {
+            ok: true,
+            status: 201,
+            json: async () => (onCreate ? onCreate(body) : { id: 'tok-new', token: 'sanc_new', tokenPreview: 'sanc_...new', name: body.name, scopes: body.scopes, createdAt: new Date().toISOString(), expiresAt: null }),
+          } as unknown as Response;
+        }
+        if (url.includes('/api/admin/tokens')) {
+          return { ok: true, status: 200, json: async () => tokens } as Response;
+        }
+        return { ok: true, status: 200, json: async () => ({}) } as Response;
+      }),
+    );
+  }
+
+  it('defaults the Expires field to "Never" and sends expiresIn: "never" when creating', async () => {
+    let capturedBody: any;
+    stubAdminSessionAndTokens([], (body) => {
+      capturedBody = body;
+      return { id: 'tok-new', token: 'sanc_new', tokenPreview: 'sanc_...new', name: body.name, scopes: body.scopes, createdAt: new Date().toISOString(), expiresAt: null };
+    });
+
+    render(<ApiTokensTab />);
+    await waitFor(() => expect(screen.getByText('Create API Token')).toBeInTheDocument());
+
+    expect(screen.getByLabelText(/Expires/i)).toHaveValue('never');
+
+    fireEvent.change(screen.getByLabelText(/Token name/i), { target: { value: 'CI pipeline' } });
+    fireEvent.click(screen.getByRole('button', { name: /Create Token/i }));
+
+    await waitFor(() => expect(capturedBody).toBeDefined());
+    expect(capturedBody.expiresIn).toBe('never');
+  });
+
+  it('sends the selected expiry option when creating a token', async () => {
+    let capturedBody: any;
+    stubAdminSessionAndTokens([], (body) => {
+      capturedBody = body;
+      return { id: 'tok-new', token: 'sanc_new', tokenPreview: 'sanc_...new', name: body.name, scopes: body.scopes, createdAt: new Date().toISOString(), expiresAt: '2026-09-01T00:00:00.000Z' };
+    });
+
+    render(<ApiTokensTab />);
+    await waitFor(() => expect(screen.getByText('Create API Token')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText(/Token name/i), { target: { value: 'CI pipeline' } });
+    fireEvent.change(screen.getByLabelText(/Expires/i), { target: { value: '90d' } });
+    fireEvent.click(screen.getByRole('button', { name: /Create Token/i }));
+
+    await waitFor(() => expect(capturedBody).toBeDefined());
+    expect(capturedBody.expiresIn).toBe('90d');
+  });
+
+  it('shows "Never" for a token with no expiry, and the formatted date for one that does', async () => {
+    stubAdminSessionAndTokens([
+      { id: 'tok-1', name: 'Forever token', tokenPreview: 'sanc_...aaaa', scopes: ['read'], createdAt: '2026-01-01T00:00:00.000Z', lastUsedAt: null, revoked: false, revokedAt: null, expiresAt: null },
+      { id: 'tok-2', name: 'Timed token', tokenPreview: 'sanc_...bbbb', scopes: ['read'], createdAt: '2026-01-01T00:00:00.000Z', lastUsedAt: null, revoked: false, revokedAt: null, expiresAt: '2026-12-31T00:00:00.000Z' },
+    ]);
+
+    render(<ApiTokensTab />);
+    await waitFor(() => expect(screen.getByText('Forever token')).toBeInTheDocument());
+
+    const foreverRow = screen.getByText('Forever token').closest('tr')!;
+    // lastUsedAt: null also renders as "Never" — both columns share the fallback.
+    expect(within(foreverRow).getAllByText('Never')).toHaveLength(2);
+
+    const timedRow = screen.getByText('Timed token').closest('tr')!;
+    expect(within(timedRow).getByText(new Date('2026-12-31T00:00:00.000Z').toLocaleString())).toBeInTheDocument();
+  });
+
+  it('shows an "Expired" status for a token past its expiresAt that has not been revoked', async () => {
+    // A fixed date in the past, rather than fake timers, so this stays
+    // "expired" relative to real wall-clock time whenever the test runs.
+    stubAdminSessionAndTokens([
+      { id: 'tok-1', name: 'Expired token', tokenPreview: 'sanc_...cccc', scopes: ['read'], createdAt: '2020-01-01T00:00:00.000Z', lastUsedAt: null, revoked: false, revokedAt: null, expiresAt: '2020-02-01T00:00:00.000Z' },
+    ]);
+
+    render(<ApiTokensTab />);
+    await waitFor(() => expect(screen.getByText('Expired token')).toBeInTheDocument());
+
+    const row = screen.getByText('Expired token').closest('tr')!;
+    expect(within(row).getByText('Expired')).toBeInTheDocument();
   });
 });

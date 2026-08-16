@@ -111,6 +111,26 @@ describe('requireScope', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
+  it('responds 401 with an expiry message for an expired token', async () => {
+    mockVerifyApiToken.mockResolvedValueOnce({
+      valid: false,
+      reason: 'expired',
+      tokenId: 'tok-1',
+      scopes: ['read'],
+    });
+    const req = makeReq('Bearer sanc_expired');
+    const res = makeRes();
+    const next = vi.fn() as NextFunction;
+
+    await requireScope('read')(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.stringMatching(/expired/i) })
+    );
+    expect(next).not.toHaveBeenCalled();
+  });
+
   it('responds 401 with an authorization message when token owner is disallowed (issue #158)', async () => {
     mockVerifyApiToken.mockResolvedValueOnce({
       valid: false,
