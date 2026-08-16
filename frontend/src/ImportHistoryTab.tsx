@@ -18,6 +18,7 @@ import {
   DialogActions,
   Button,
 } from '@mui/material';
+import DownloadIcon from '@mui/icons-material/Download';
 import { apiFetch } from './apiFetch';
 
 interface ImportRecordData {
@@ -50,6 +51,28 @@ export default function ImportHistoryTab({ focusImportId }: { focusImportId?: st
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<ImportRecordData | null>(null);
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownloadCsv = async (importId: string) => {
+    try {
+      setDownloading(true);
+      const res = await apiFetch(`/api/export?importId=${encodeURIComponent(importId)}&status=all`);
+      if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `sanctions-import-${importId}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   useEffect(() => {
     (async () => {
@@ -156,6 +179,16 @@ export default function ImportHistoryTab({ focusImportId }: { focusImportId?: st
           )}
         </DialogContent>
         <DialogActions>
+          {selected?.status === 'applied' && (
+            <Button
+              variant="contained"
+              startIcon={downloading ? <CircularProgress size={16} color="inherit" /> : <DownloadIcon />}
+              disabled={downloading}
+              onClick={() => handleDownloadCsv(selected.importId)}
+            >
+              Export CSV
+            </Button>
+          )}
           <Button onClick={() => setSelected(null)}>Close</Button>
         </DialogActions>
       </Dialog>

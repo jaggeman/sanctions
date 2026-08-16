@@ -5,7 +5,8 @@ import { db } from '../shared/firebase';
 import { runImport } from '../importer';
 import { processUpload } from '../importer/uploadPipeline';
 import { runSearch } from '../search';
-import { primaryNameOf, aliasNamesOf, formatBirthDates, formatIdentifications } from '../shared/types';
+import { primaryNameOf, aliasNamesOf, formatBirthDates, formatIdentifications, SanctionRecord } from '../shared/types';
+import { recordsToCsv } from '../shared/csvSerializer';
 
 export const program = new Command();
 
@@ -313,6 +314,55 @@ program
       process.exit(0);
     } catch (error: any) {
       console.error('❌ Kunde inte hämta statistik:', error.message);
+      process.exit(1);
+    }
+  });
+
+/**
+ * CLI Command: export
+ */
+program
+  .command('export')
+  .description('Exportera sanktionsdata som CSV-fil')
+  .option('-s, --sources <sources>', 'Filtrera på källor (kommatecken-separerad, t.ex. EU,UN,US)')
+  .option('-t, --type <type>', 'Filtrera på typ (individual, entity, vessel, aircraft)')
+  .option('--status <status>', 'Filtrera på status (active, delisted, all)', 'active')
+  .option('--import-id <importId>', 'Filtrera på specifik importId')
+  .option('-o, --output <path>', 'Sökväg till output CSV-fil (om ej angiven skrivs till stdout)')
+  .action(async (options) => {
+    try {
+      const sourcesFilter = options.sources
+        ? options.sources.split(',').map((s: string) => s.trim().toUpperCase())
+        : null;
+      const typeFilter = options.type ? options.type.trim().toLowerCase() : null;
+      const statusFilter = options.status ? options.status.trim().toLowerCase() : 'active';
+      const importIdFilter = options.importId ? options.importId.trim() : null;
+
+      const snapshot = await db.collection('sanctions').get();
+      const records: SanctionRecord[] = [];
+
+      snapshot.docs.forEach((doc: any) => {
+        const r = doc.data() as SanctionRecord;
+        const recordStatus = r.status || 'active';
+        if (statusFilter !== 'all' && recordStatus !== statusFilter) return;
+        if (sourcesFilter && !sourcesFilter.includes(r.source.toUpperCase())) return;
+        if (typeFilter && r.type.toLowerCase() !== typeFilter) return;
+        if (importIdFilter && r.firstSeenImport !== importIdFilter && r.lastSeenImport !== importIdFilter) return;
+        records.push(r);
+      });
+
+      const csv = recordsToCsv(records);
+
+      if (options.output) {
+        const outPath = path.resolve(process.cwd(), options.output);
+        await fs.outputFile(outPath, csv, 'utf-8');
+        console.log(`✅ Exporterade ${records.length} poster till: ${outPath}`);
+      } else {
+        process.stdout.write(csv + '\n');
+      }
+      process.exit(0);
+    } catch (error: any) {
+      console.error('❌ Kunde inte exportera data:', error.message);
       process.exit(1);
     }
   });

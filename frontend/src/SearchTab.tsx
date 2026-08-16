@@ -11,6 +11,7 @@ import {
   Alert,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
+import DownloadIcon from '@mui/icons-material/Download';
 import { apiFetch } from './apiFetch';
 
 // issue #46: SanctionRecord no longer has flat primaryName/aliases/
@@ -85,6 +86,38 @@ export default function SearchTab({ onSelectRecord }: SearchTabProps) {
     }
   };
 
+  const handleExportResultsCsv = () => {
+    const headers = ['id', 'source', 'type', 'primaryName', 'aliases', 'score', 'matchedAlias', 'status', 'birthDates'];
+    const escapeField = (val: unknown) => {
+      if (val === null || val === undefined) return '';
+      const str = String(val);
+      if (/[",\r\n]/.test(str)) return `"${str.replace(/"/g, '""')}"`;
+      return str;
+    };
+    const rows = results.map((r) => [
+      escapeField(r.id),
+      escapeField(r.source),
+      escapeField(r.type),
+      escapeField(primaryNameOf(r.names)),
+      escapeField(aliasNamesOf(r.names).join('; ')),
+      escapeField(r.score ?? ''),
+      escapeField(r.matchedAlias ?? ''),
+      escapeField(r.status || 'active'),
+      escapeField(formatBirthDates(r.birthDates).join('; ')),
+    ].join(','));
+
+    const csvContent = [headers.join(','), ...rows].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `sanctions-search-${encodeURIComponent(searchQuery || 'results')}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+  };
+
   return (
     <Box>
       <Card sx={{ mb: 4, p: 2 }}>
@@ -122,11 +155,21 @@ export default function SearchTab({ onSelectRecord }: SearchTabProps) {
       )}
 
       {results.length > 0 && (
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          {truncated
-            ? `Showing ${results.length} of ${totalMatches} matches — narrow your search or raise the limit to see more.`
-            : `${totalMatches} match${totalMatches === 1 ? '' : 'es'}`}
-        </Typography>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 1 }}>
+          <Typography variant="body2" color="text.secondary">
+            {truncated
+              ? `Showing ${results.length} of ${totalMatches} matches — narrow your search or raise the limit to see more.`
+              : `${totalMatches} match${totalMatches === 1 ? '' : 'es'}`}
+          </Typography>
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<DownloadIcon />}
+            onClick={handleExportResultsCsv}
+          >
+            Export Results (CSV)
+          </Button>
+        </Box>
       )}
 
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: '1fr 1fr 1fr' }, gap: 3 }}>
