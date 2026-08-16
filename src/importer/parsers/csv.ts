@@ -2,6 +2,7 @@ import * as fs from 'fs-extra';
 import { SanctionRecord, SanctionType, SanctionSource, Address, NameAlias, BirthDate, Identification } from '../../shared/types';
 import { logger } from '../../shared/logger';
 import { isValidEntityId } from '../../shared/entityId';
+import { stripBom } from '../formatDetection';
 
 const log = logger.child({ module: 'importer.parsers.csv' });
 
@@ -70,15 +71,16 @@ export async function parseCSVList(
       : 'PEP';
 
   log.info('parse.start', { filePath, defaultSource });
-  const content = await fs.readFile(filePath, 'utf-8');
+  const rawContent = await fs.readFile(filePath, 'utf-8');
+  const content = stripBom(rawContent);
   const lines = content.split(/\r?\n/).filter(line => line.trim() !== '');
 
   if (lines.length === 0) {
     return [];
   }
 
-  // Parse header line to dynamically map fields
-  const headers = parseCSVLine(lines[0], separator).map(h => h.toLowerCase());
+  // Parse header line to dynamically map fields (strip any residual BOM from tokens)
+  const headers = parseCSVLine(stripBom(lines[0]), separator).map(h => stripBom(h).toLowerCase());
   const hasIdHeader = headers.some(h => ['id', 'key', 'uid'].includes(h));
   const hasSourceHeader = headers.includes('source');
   const records: SanctionRecord[] = [];
