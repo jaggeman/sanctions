@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, Suspense, lazy } from 'react';
 import {
   ThemeProvider,
   createTheme,
@@ -17,17 +17,19 @@ import type { PaletteMode } from '@mui/material';
 import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Brightness7Icon from '@mui/icons-material/Brightness7';
 import ShieldOutlinedIcon from '@mui/icons-material/ShieldOutlined';
-import ApiTokensTab from './ApiTokensTab';
-import ImportHistoryTab from './ImportHistoryTab';
-import RecordDetail from './RecordDetail';
-import SearchTab from './SearchTab';
-import UploadTab from './UploadTab';
-import OfficialSourcesTab from './OfficialSourcesTab';
-import HelpManualTab from './HelpManualTab';
-import DriftStatusTab from './DriftStatusTab';
 import LogoutIcon from '@mui/icons-material/Logout';
 import Login from './components/Login';
 import { setOnSessionExpired } from './apiFetch';
+
+// Issue #228: Code splitting & lazy loading of tab components to reduce initial bundle size
+const SearchTab = lazy(() => import('./SearchTab'));
+const UploadTab = lazy(() => import('./UploadTab'));
+const ImportHistoryTab = lazy(() => import('./ImportHistoryTab'));
+const OfficialSourcesTab = lazy(() => import('./OfficialSourcesTab'));
+const ApiTokensTab = lazy(() => import('./ApiTokensTab'));
+const HelpManualTab = lazy(() => import('./HelpManualTab'));
+const DriftStatusTab = lazy(() => import('./DriftStatusTab'));
+const RecordDetail = lazy(() => import('./RecordDetail'));
 
 // Brand bar stays a consistent deep navy in both light and dark mode —
 // a fixed identity color reads as more "product" than a bar that changes
@@ -84,6 +86,14 @@ const getTheme = (mode: PaletteMode) => createTheme({
     },
   },
 });
+
+function TabLoadingFallback() {
+  return (
+    <Box sx={{ display: 'flex', justifyContent: 'center', p: 6 }}>
+      <CircularProgress />
+    </Box>
+  );
+}
 
 function App() {
   // Theme State
@@ -203,31 +213,35 @@ function App() {
           </Tabs>
         </Box>
 
-        <Box sx={{ display: tabValue === 0 ? 'block' : 'none' }}>
-          <SearchTab onSelectRecord={setSelectedRecordId} />
-        </Box>
+        <Suspense fallback={<TabLoadingFallback />}>
+          <Box sx={{ display: tabValue === 0 ? 'block' : 'none' }}>
+            <SearchTab onSelectRecord={setSelectedRecordId} />
+          </Box>
 
-        {tabValue === 1 && (
-          <UploadTab
-            onViewImport={(importId) => {
-              setHistoryFocusId(importId);
-              setTabValue(2);
-            }}
-          />
-        )}
+          {tabValue === 1 && (
+            <UploadTab
+              onViewImport={(importId) => {
+                setHistoryFocusId(importId);
+                setTabValue(2);
+              }}
+            />
+          )}
 
-        {tabValue === 2 && <ImportHistoryTab focusImportId={historyFocusId} />}
+          {tabValue === 2 && <ImportHistoryTab focusImportId={historyFocusId} />}
 
-        {tabValue === 3 && <OfficialSourcesTab />}
+          {tabValue === 3 && <OfficialSourcesTab />}
 
-        {tabValue === 4 && <ApiTokensTab />}
+          {tabValue === 4 && <ApiTokensTab />}
 
-        {tabValue === 5 && <HelpManualTab />}
+          {tabValue === 5 && <HelpManualTab />}
 
-        {tabValue === 6 && <DriftStatusTab />}
+          {tabValue === 6 && <DriftStatusTab />}
+        </Suspense>
       </Container>
 
-      <RecordDetail recordId={selectedRecordId} onClose={() => setSelectedRecordId(null)} />
+      <Suspense fallback={null}>
+        <RecordDetail recordId={selectedRecordId} onClose={() => setSelectedRecordId(null)} />
+      </Suspense>
     </ThemeProvider>
   );
 }
