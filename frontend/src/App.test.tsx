@@ -69,7 +69,7 @@ describe('App component navigation tabs', () => {
     await waitFor(() => {
       expect(screen.getByText(/match score/i)).toBeInTheDocument();
       expect(screen.getByText(/non-Latin/i)).toBeInTheDocument();
-      expect(screen.getByText(/duplicate/i)).toBeInTheDocument();
+      expect(screen.getAllByText(/duplicate/i).length).toBeGreaterThan(0);
       expect(screen.getAllByText(/Import History/i).length).toBeGreaterThan(0);
     });
   });
