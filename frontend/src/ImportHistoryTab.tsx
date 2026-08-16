@@ -46,7 +46,12 @@ function formatDate(value: string): string {
   return new Date(value).toLocaleString();
 }
 
-export default function ImportHistoryTab({ focusImportId }: { focusImportId?: string } = {}) {
+interface ImportHistoryTabProps {
+  focusImportId?: string;
+  onFocusConsumed?: () => void;
+}
+
+export default function ImportHistoryTab({ focusImportId, onFocusConsumed }: ImportHistoryTabProps = {}) {
   const [imports, setImports] = useState<ImportRecordData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -87,6 +92,7 @@ export default function ImportHistoryTab({ focusImportId }: { focusImportId?: st
         if (focusImportId) {
           const match = list.find((i: ImportRecordData) => i.importId === focusImportId);
           if (match) setSelected(match);
+          onFocusConsumed?.();
         }
       } catch (err) {
         console.error(err);
