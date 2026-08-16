@@ -120,3 +120,90 @@ describe('DriftStatusTab', () => {
     });
   });
 });
+
+/**
+ * The "Module / Function" log table had hardcoded 180px/100px/180px column
+ * widths (issue #264, item 1) that force horizontal scroll under ~460px,
+ * before the Event/Message column even gets any room. Fixed by dropping to
+ * fewer visible columns under the `sm` breakpoint, matching the
+ * useMediaQuery + window.matchMedia-stub pattern PR #265 established for
+ * App.tsx's own responsive tab bar/header.
+ */
+function stubViewportMatches(matches: boolean) {
+  const original = window.matchMedia;
+  window.matchMedia = (query: string) =>
+    ({
+      matches,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }) as unknown as MediaQueryList;
+  return () => {
+    window.matchMedia = original;
+  };
+}
+
+function stubFetchOk() {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/api/system/status')) {
+        return { ok: true, status: 200, json: async () => mockStatus } as Response;
+      }
+      if (url.includes('/api/system/logs')) {
+        return { ok: true, status: 200, json: async () => mockLogs } as Response;
+      }
+      return { ok: true, status: 200, json: async () => ({}) } as Response;
+    }),
+  );
+}
+
+describe('DriftStatusTab — responsive log table (issue #264, item 1)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('shows all four log-table columns on a normal-width viewport', async () => {
+    const restore = stubViewportMatches(false);
+    stubFetchOk();
+    render(<DriftStatusTab />);
+
+    await waitFor(() => expect(screen.getByText(/Sanctions sync completed for UN/i)).toBeInTheDocument());
+
+    expect(screen.getByRole('columnheader', { name: 'Timestamp' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Module / Function' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Level' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Event / Message' })).toBeInTheDocument();
+    restore();
+  });
+
+  it('drops the Timestamp and Module/Function columns on a narrow viewport, keeping only Level and Event/Message', async () => {
+    const restore = stubViewportMatches(true);
+    stubFetchOk();
+    render(<DriftStatusTab />);
+
+    await waitFor(() => expect(screen.getByText(/Sanctions sync completed for UN/i)).toBeInTheDocument());
+
+    expect(screen.queryByRole('columnheader', { name: 'Timestamp' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Module / Function' })).not.toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Level' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Event / Message' })).toBeInTheDocument();
+    restore();
+  });
+
+  it('still surfaces the module name on a narrow viewport, folded into the message cell rather than silently dropped', async () => {
+    const restore = stubViewportMatches(true);
+    stubFetchOk();
+    render(<DriftStatusTab />);
+
+    await waitFor(() => expect(screen.getByText(/Sanctions sync completed for UN/i)).toBeInTheDocument());
+
+    expect(screen.getByText(/importer\.uploader/)).toBeInTheDocument();
+    restore();
+  });
+});
