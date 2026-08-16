@@ -211,7 +211,7 @@ function App() {
             <Tab label="Official Sources" />
             <Tab label="API Tokens" />
             <Tab label="Help & Manual" />
-            <Tab label="Drift status" />
+            <Tab label="System Status" />
           </Tabs>
         </Box>
 

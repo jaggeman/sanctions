@@ -84,10 +84,10 @@ export default function DriftStatusTab() {
       ]);
 
       if (!statusRes.ok) {
-        throw new Error(`Kunde inte hämta systemstatus (${statusRes.status})`);
+        throw new Error(`Could not load system status (${statusRes.status})`);
       }
       if (!logsRes.ok) {
-        throw new Error(`Kunde inte hämta systemloggar (${logsRes.status})`);
+        throw new Error(`Could not load system logs (${logsRes.status})`);
       }
 
       const statusJson: SystemStatusResponse = await statusRes.json();
@@ -96,7 +96,7 @@ export default function DriftStatusTab() {
       setStatusData(statusJson);
       setLogs(logsJson.logs || []);
     } catch (err: any) {
-      setError(err.message || 'Ett fel uppstod vid hämtning av driftstatus.');
+      setError(err.message || 'An error occurred while loading system status.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -141,13 +141,13 @@ export default function DriftStatusTab() {
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Box>
           <Typography variant="h5" gutterBottom sx={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: 1.5 }}>
-            <StorageIcon color="primary" /> Drift status & Systemhälsa
+            <StorageIcon color="primary" /> System Status & Health
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Realtidsövervakning av Firebase Firestore, Cloud Functions, felloggar och deployhistorik.
+            Real-time monitoring of Firebase Firestore, Cloud Functions, error logs, and deployment history.
           </Typography>
         </Box>
-        <Tooltip title="Uppdatera driftstatus">
+        <Tooltip title="Refresh system status">
           <span>
             <Button
               variant="outlined"
@@ -155,7 +155,7 @@ export default function DriftStatusTab() {
               onClick={handleManualRefresh}
               disabled={refreshing}
             >
-              Uppdatera
+              Refresh
             </Button>
           </span>
         </Tooltip>
@@ -180,21 +180,21 @@ export default function DriftStatusTab() {
               <CardContent sx={{ p: 2.5 }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
                   <Typography variant="subtitle2" color="text.secondary">
-                    Total Systemstatus
+                    Total System Status
                   </Typography>
                   <Chip
                     icon={statusData?.status === 'healthy' ? <CheckCircleIcon /> : <WarningIcon />}
-                    label={statusData?.status === 'healthy' ? 'DRIFT NORMAL' : 'DEGRADERAD'}
+                    label={statusData?.status === 'healthy' ? 'OPERATIONAL' : 'DEGRADED'}
                     color={statusData?.status === 'healthy' ? 'success' : 'warning'}
                     size="small"
                     sx={{ fontWeight: 700 }}
                   />
                 </Box>
                 <Typography variant="h4" sx={{ fontWeight: 700, my: 1 }}>
-                  {statusData?.status === 'healthy' ? '100% Operativ' : 'Varningar'}
+                  {statusData?.status === 'healthy' ? '100% Operational' : 'Warnings'}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Miljö: <strong>{statusData?.environment}</strong> ({statusData?.database?.projectId})
+                  Environment: <strong>{statusData?.environment}</strong> ({statusData?.database?.projectId})
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
                   Uptime: <strong>{statusData ? formatUptime(statusData.uptimeSeconds) : '-'}</strong>
@@ -209,23 +209,23 @@ export default function DriftStatusTab() {
               <CardContent sx={{ p: 2.5 }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
                   <Typography variant="subtitle2" color="text.secondary">
-                    Firestore Databas
+                    Firestore Database
                   </Typography>
                   <Chip
-                    label={statusData?.database?.connected ? 'ANSLUTEN' : 'FRÅNKOPPLAD'}
+                    label={statusData?.database?.connected ? 'CONNECTED' : 'DISCONNECTED'}
                     color={statusData?.database?.connected ? 'success' : 'error'}
                     size="small"
                     sx={{ fontWeight: 700 }}
                   />
                 </Box>
                 <Typography variant="h4" sx={{ fontWeight: 700, my: 1 }}>
-                  {(statusData?.database?.counts?.total ?? 0).toLocaleString()} <span style={{ fontSize: '1rem', fontWeight: 500 }}>poster</span>
+                  {(statusData?.database?.counts?.total ?? 0).toLocaleString()} <span style={{ fontSize: '1rem', fontWeight: 500 }}>records</span>
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Svarstid / Latens: <strong>{statusData?.database?.latencyMs} ms</strong>
+                  Latency: <strong>{statusData?.database?.latencyMs} ms</strong>
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Projekt: <strong>{statusData?.database?.projectId}</strong>
+                  Project: <strong>{statusData?.database?.projectId}</strong>
                 </Typography>
               </CardContent>
             </Card>
@@ -236,7 +236,7 @@ export default function DriftStatusTab() {
             <Card variant="outlined" sx={{ height: '100%', borderRadius: 2 }}>
               <CardContent sx={{ p: 2.5 }}>
                 <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1.5 }}>
-                  Aktiva Cloud Functions
+                  Active Cloud Functions
                 </Typography>
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                   {statusData?.functions?.map((fn) => (
@@ -272,7 +272,7 @@ export default function DriftStatusTab() {
       {/* Database Breakdown per Source */}
       <Box>
         <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1.5 }}>
-          Sanktionsposter per källa i databasen
+          Sanctions records per source in database
         </Typography>
         <Grid container spacing={2}>
           {Object.entries(statusData?.database?.counts || {})
@@ -298,7 +298,7 @@ export default function DriftStatusTab() {
       <Box>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
           <Typography variant="h6" sx={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 1 }}>
-            <BugReportIcon color="error" fontSize="small" /> Felloggar & Systemhändelser
+            <BugReportIcon color="error" fontSize="small" /> Error Logs & System Events
           </Typography>
           <Box sx={{ display: 'flex', gap: 1 }}>
             {(['ALL', 'error', 'warn', 'info'] as const).map((filter) => (
@@ -309,7 +309,7 @@ export default function DriftStatusTab() {
                 onClick={() => setLogFilter(filter)}
                 sx={{ textTransform: 'uppercase', fontSize: '0.75rem', px: 1.5 }}
               >
-                {filter === 'ALL' ? 'Alla' : filter}
+                {filter === 'ALL' ? 'All' : filter}
               </Button>
             ))}
           </Box>
@@ -319,24 +319,24 @@ export default function DriftStatusTab() {
           <Table size="small">
             <TableHead sx={{ bgcolor: 'action.hover' }}>
               <TableRow>
-                <TableCell sx={{ fontWeight: 700, width: '180px' }}>Tidpunkt</TableCell>
-                <TableCell sx={{ fontWeight: 700, width: '100px' }}>Nivå</TableCell>
-                <TableCell sx={{ fontWeight: 700, width: '180px' }}>Modul / Funktion</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Händelse / Meddelande</TableCell>
+                <TableCell sx={{ fontWeight: 700, width: '180px' }}>Timestamp</TableCell>
+                <TableCell sx={{ fontWeight: 700, width: '100px' }}>Level</TableCell>
+                <TableCell sx={{ fontWeight: 700, width: '180px' }}>Module / Function</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>Event / Message</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {filteredLogs.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={4} align="center" sx={{ py: 3, color: 'text.secondary' }}>
-                    Inga loggar matchar det valda filtret.
+                    No logs match the selected filter.
                   </TableCell>
                 </TableRow>
               ) : (
                 filteredLogs.map((log) => (
                   <TableRow key={log.id} hover>
                     <TableCell sx={{ fontSize: '0.8rem', color: 'text.secondary', fontFamily: 'monospace' }}>
-                      {new Date(log.timestamp).toLocaleString('sv-SE')}
+                      {new Date(log.timestamp).toLocaleString('en-US')}
                     </TableCell>
                     <TableCell>
                       <Chip
@@ -363,7 +363,7 @@ export default function DriftStatusTab() {
       {/* SECTION 3: Recent 3 Releases */}
       <Box>
         <Typography variant="h6" sx={{ fontWeight: 600, mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-          <HistoryEduIcon color="primary" fontSize="small" /> Senaste 3 Releaserna & Deployhistorik
+          <HistoryEduIcon color="primary" fontSize="small" /> Recent Releases & Deployment History
         </Typography>
 
         <Grid container spacing={2.5}>
@@ -388,7 +388,7 @@ export default function DriftStatusTab() {
                       {release.version}
                     </Typography>
                     <Chip
-                      label={idx === 0 ? 'LIVE / AKTUELL' : 'ARKIVERAD'}
+                      label={idx === 0 ? 'LIVE / CURRENT' : 'ARCHIVED'}
                       color={idx === 0 ? 'success' : 'default'}
                       size="small"
                       sx={{ fontWeight: 700, fontSize: '0.7rem' }}
@@ -396,11 +396,11 @@ export default function DriftStatusTab() {
                   </Box>
 
                   <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-                    📅 {new Date(release.timestamp).toLocaleString('sv-SE')} ({release.environment})
+                    📅 {new Date(release.timestamp).toLocaleString('en-US')} ({release.environment})
                   </Typography>
 
                   <Typography variant="body2" sx={{ mb: 1.5, color: 'text.secondary' }}>
-                    Deployad av: <strong>{release.deployedBy}</strong>
+                    Deployed by: <strong>{release.deployedBy}</strong>
                   </Typography>
 
                   <Paper variant="outlined" sx={{ p: 1.5, bgcolor: 'action.hover', borderRadius: 1.5, mb: 1.5 }}>
