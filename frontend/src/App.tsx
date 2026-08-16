@@ -24,6 +24,7 @@ import SearchTab from './SearchTab';
 import UploadTab from './UploadTab';
 import EuListsTab from './EuListsTab';
 import HelpManualTab from './HelpManualTab';
+import DriftStatusTab from './DriftStatusTab';
 import LogoutIcon from '@mui/icons-material/Logout';
 import Login from './components/Login';
 import { setOnSessionExpired } from './apiFetch';
@@ -198,6 +199,7 @@ function App() {
             <Tab label="Official EU Lists" />
             <Tab label="API Tokens" />
             <Tab label="Help & Manual" />
+            <Tab label="Drift status" />
           </Tabs>
         </Box>
 
@@ -221,6 +223,8 @@ function App() {
         {tabValue === 4 && <ApiTokensTab />}
 
         {tabValue === 5 && <HelpManualTab />}
+
+        {tabValue === 6 && <DriftStatusTab />}
       </Container>
 
       <RecordDetail recordId={selectedRecordId} onClose={() => setSelectedRecordId(null)} />

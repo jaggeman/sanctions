@@ -50,6 +50,19 @@ export function createFakeDb() {
   const db = {
     collection: (name: string) => ({
       doc: (id: string) => makeDocRef(name, id),
+      get: async () => {
+        const coll = getCollectionMap(name);
+        const docs = Array.from(coll.entries()).map(([id, data]) => ({
+          id,
+          data: () => data,
+        }));
+        return {
+          empty: docs.length === 0,
+          size: docs.length,
+          docs,
+          forEach: (fn: (doc: any) => void) => docs.forEach(fn),
+        };
+      },
     }),
     // Minimal, non-isolated shim: just runs the callback against the same
     // doc refs (get/set), so offline unit tests can exercise the
