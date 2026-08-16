@@ -441,4 +441,111 @@ describe('runSearch — candidate pruning via inverted index (issue #223)', () =
   });
 });
 
+/**
+ * The index side of first-letter transliteration matching (issue #253).
+ *
+ * #252 taught the matcher that a differing initial over an identical
+ * phonetic body is a transliteration variant, so "Osama" now scores well
+ * against the listed "USAMA". That is not sufficient on its own: every key
+ * this index builds is anchored on either the exact token, its leading
+ * characters, or a Soundex code that RETAINS the first letter — so such a
+ * record was pruned out before the scorer was ever given the chance.
+ *
+ * Measured against the real UN list after #252 landed, pruning dropped 5.47%
+ * of the hits an exhaustive scan finds — far above the 0.159% recorded on
+ * #253 itself, which was measured before the matcher could make these
+ * matches at all. A `sxd:` key (Soundex minus its retained initial) is what
+ * closes it, being the exact index-side mirror of the matcher's rule.
+ *
+ * ng3 keys already cover words of 4+ characters — osama/usama share "sam"
+ * and "ama" — so these tests deliberately exercise SHORT words, where ng3 is
+ * neither built nor looked up and sxd is the only key class that can bridge.
+ */
+describe('runSearch — first-char-insensitive pruning key (issue #253)', () => {
+  beforeEach(() => {
+    allRecords = [
+      record({ id: 'UN-1', names: namesOverride('Ali Kony') }),
+      record({ id: 'UN-2', names: namesOverride('Usama bin Laden') }),
+      record({ id: 'UN-3', names: namesOverride('Vagner Group') }),
+      record({ id: 'UN-4', names: namesOverride('Zhang Wei') }),
+    ];
+    invalidateSearchIndex();
+  });
+
+  // SINGLE-word queries on purpose. A multi-word query ("Bli Kony") reaches
+  // the record through its OTHER word and would pass with or without this
+  // fix — a test that passes without the feature is not a test.
+  it('reaches a short-word initial variant no other key class can (Bli -> Ali)', async () => {
+    // 3 characters: no ng3 is built or looked up, and w:/p2:/p3:/sx: all
+    // disagree (B400 vs A400). Only sxd:400 can bridge it.
+    const res = await runSearch('Bli');
+    expect(res.results.map((r) => r.id)).toContain('UN-1');
+  });
+
+  it('finds the listed USAMA spelling when the user types Osama', async () => {
+    const res = await runSearch('Osama');
+    expect(res.results.map((r) => r.id)).toContain('UN-2');
+  });
+
+  it('finds the real OFAC VAGNER alias when the user types Wagner', async () => {
+    const res = await runSearch('Wagner');
+    expect(res.results.map((r) => r.id)).toContain('UN-3');
+  });
+
+  it('does not turn the new key class into a match-everything wildcard', async () => {
+    const res = await runSearch('Totally Unrelated Nonexistent Name XYZ');
+    expect(res.results).toEqual([]);
+  });
+});
+
+/**
+ * Single-character queries (issue #253, second finding).
+ *
+ * #253 reported that the single-character query path enumerated `p2:` keys
+ * over a hardcoded ASCII a-z range, so a one-character query in Cyrillic,
+ * Greek or Arabic reached no candidates — at odds with the cross-script
+ * matching #40 added. That is accurate, and the range is now a script-
+ * agnostic `p1:` key built at index time (one lookup instead of twenty-six).
+ *
+ * But measuring it showed the reported bug has NO user-visible symptom,
+ * because the scorer rejects these queries regardless of which candidates
+ * the index hands it:
+ *
+ *   "V"   vs "Vladimir Putin"   -> 0    (Latin, too)
+ *   "Vl"  vs "Vladimir"         -> 0
+ *   "В"   vs "Владимир Путин"   -> 0
+ *
+ * `MIN_LENGTH_FOR_EDIT_DISTANCE` is 3, so a 1-2 character word has no
+ * edit-distance path at all, and a short Soundex code (V000) does not equal
+ * a longer word's (V435). So the candidate set was always scored to zero and
+ * discarded — the a-z range was reaching dead code, not losing results.
+ *
+ * These tests pin the real behaviour so the next person measures rather than
+ * assuming the `p1:` change fixed a user-facing bug. Making short prefixes
+ * actually searchable is a scorer change, not an index one, and is not in
+ * scope here.
+ */
+describe('runSearch — single-character queries (issue #253)', () => {
+  beforeEach(() => {
+    allRecords = [
+      record({ id: 'RU-1', names: namesOverride('Владимир Путин') }),
+      record({ id: 'EN-1', names: namesOverride('Vladimir Putin') }),
+    ];
+    invalidateSearchIndex();
+  });
+
+  it('returns nothing for a single character, in Latin and Cyrillic alike', async () => {
+    // Not an endorsement — documentation. If a future scorer change makes
+    // short prefixes matchable, this test should fail and be rewritten.
+    expect((await runSearch('V', { threshold: 1 })).results).toEqual([]);
+    expect((await runSearch('В', { threshold: 1 })).results).toEqual([]);
+  });
+
+  it('does not throw or degrade on a non-Latin single character', async () => {
+    // The p1: path must at least be safe for any script, since the a-z
+    // enumeration it replaced silently did nothing outside ASCII.
+    await expect(runSearch('Γ', { threshold: 1 })).resolves.toBeDefined();
+  });
+});
+
 
