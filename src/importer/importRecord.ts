@@ -10,6 +10,13 @@ const COLLECTION = 'imports';
  */
 export class ImportAlreadyInFlightError extends Error {}
 
+/**
+ * Thrown when createFetchImportRecord encounters an existing document with the
+ * same importId (issue #295) — a collision from reusing an importId is a
+ * meaningful client error (409 Conflict).
+ */
+export class ImportAlreadyExistsError extends Error {}
+
 // issue #60: a failed or rejected prior attempt for the same content must
 // not block this exact file from ever being uploaded again — retrying is
 // always safe for these statuses.
@@ -81,7 +88,14 @@ export async function createFetchImportRecord(
   record: Omit<ImportRecord, 'status' | 'trigger'>,
 ): Promise<void> {
   const docRef = db.collection(COLLECTION).doc(record.importId);
-  await docRef.create({ ...record, trigger: 'fetch', status: 'pending' });
+  try {
+    await docRef.create({ ...record, trigger: 'fetch', status: 'pending' });
+  } catch (error: any) {
+    if (error?.code === 6 || error?.code === 'already-exists' || /already exists/i.test(error?.message)) {
+      throw new ImportAlreadyExistsError(`Import with ID "${record.importId}" already exists`);
+    }
+    throw error;
+  }
 }
 
 export async function findImportBySha256(sha256: string): Promise<ImportRecord | null> {

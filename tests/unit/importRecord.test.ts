@@ -86,6 +86,7 @@ const {
   findAppliedImportBySha256,
   listImports,
   ImportAlreadyInFlightError,
+  ImportAlreadyExistsError,
 } = await import('../../src/importer/importRecord');
 
 function baseRecord(overrides: Partial<Omit<ImportRecord, 'status'>> = {}): Omit<ImportRecord, 'status'> & { sha256: string } {
@@ -287,5 +288,41 @@ describe('listImports (issue #12)', () => {
     await createPendingImport(baseRecord({ sha256: 'c', importId: 'c', uploadedAt: '2026-01-03T00:00:00.000Z' }));
 
     expect(await listImports(2)).toHaveLength(2);
+  });
+});
+
+describe('createFetchImportRecord (issue #111 / issue #295)', () => {
+  it('creates a fetch-triggered pending import document', async () => {
+    await createFetchImportRecord({
+      importId: 'fetch-1',
+      sources: ['EU'],
+      uploadedBy: 'admin@sanctions.com',
+      uploadedAt: '2026-08-16T12:00:00.000Z',
+    });
+
+    const doc = await findImportBySha256('fetch-1');
+    expect(doc).not.toBeNull();
+    expect(doc?.importId).toBe('fetch-1');
+    expect(doc?.trigger).toBe('fetch');
+    expect(doc?.status).toBe('pending');
+    expect(doc?.sources).toEqual(['EU']);
+  });
+
+  it('throws ImportAlreadyExistsError on duplicate importId collision', async () => {
+    await createFetchImportRecord({
+      importId: 'fetch-dup',
+      sources: ['EU'],
+      uploadedBy: 'admin@sanctions.com',
+      uploadedAt: '2026-08-16T12:00:00.000Z',
+    });
+
+    await expect(
+      createFetchImportRecord({
+        importId: 'fetch-dup',
+        sources: ['UN'],
+        uploadedBy: 'other@sanctions.com',
+        uploadedAt: '2026-08-16T12:01:00.000Z',
+      }),
+    ).rejects.toThrow(ImportAlreadyExistsError);
   });
 });
