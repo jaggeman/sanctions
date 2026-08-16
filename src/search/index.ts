@@ -146,6 +146,11 @@ async function getRecords(): Promise<IndexedRecord[]> {
             const text = w.text.toLowerCase();
             if (text.length >= 1) {
               addIndexKey(`w:${text}`, merged.id);
+              // Leading character, any script (issue #253) — backs the
+              // single-character query path, which previously enumerated a
+              // hardcoded ASCII a-z range and so found nothing for a
+              // Cyrillic, Greek or Arabic single-character query.
+              addIndexKey(`p1:${text.slice(0, 1)}`, merged.id);
               if (text.length >= 2) {
                 addIndexKey(`p2:${text.slice(0, 2)}`, merged.id);
               }
@@ -160,6 +165,22 @@ async function getRecords(): Promise<IndexedRecord[]> {
             }
             if (w.soundex) {
               addIndexKey(`sx:${w.soundex}`, merged.id);
+              // Soundex minus its retained leading letter (issue #253). Every
+              // other key class here is anchored on the exact token, its
+              // leading characters, or a Soundex code that keeps the first
+              // letter — so a record differing from the query only in its
+              // initial shared no key at all and was pruned before the scorer
+              // saw it. Since #252 the matcher treats exactly that shape as a
+              // transliteration variant ("Osama"/"USAMA", "Wagner"/"VAGNER"),
+              // which made this gap the dominant source of pruning loss:
+              // 5.47% of hits an exhaustive scan finds, measured against the
+              // real UN list. This key is the index-side mirror of that
+              // matcher rule, so the two cannot drift apart again.
+              //
+              // ng3 already bridges words of 4+ characters (osama/usama share
+              // "sam" and "ama"); this is what rescues the SHORT words, where
+              // ng3 is neither built nor looked up.
+              addIndexKey(`sxd:${w.soundex.slice(1)}`, merged.id);
             }
           }
         }
@@ -268,6 +289,13 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
       if (w.soundex) {
         const sx = cachedInvertedIndex?.get(`sx:${w.soundex}`);
         if (sx) for (const id of sx) candidateIdSet.add(id);
+
+        // First-char-insensitive lookup (issue #253) — mirrors the matcher's
+        // transliteration-variant rule from #252, which scores a differing
+        // initial over an identical phonetic body as a match. Without this
+        // the scorer never gets to apply that rule to a short word.
+        const sxd = cachedInvertedIndex?.get(`sxd:${w.soundex.slice(1)}`);
+        if (sxd) for (const id of sxd) candidateIdSet.add(id);
       }
 
       // 2-char & 3-char prefix lookups
@@ -287,11 +315,15 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
           if (ng) for (const id of ng) candidateIdSet.add(id);
         }
       } else if (text.length === 1) {
-        // Single-character query: match all words starting with this character
-        for (let c = 97; c <= 122; c++) {
-          const p2 = cachedInvertedIndex?.get(`p2:${text}${String.fromCharCode(c)}`);
-          if (p2) for (const id of p2) candidateIdSet.add(id);
-        }
+        // Single-character query: every word starting with this character.
+        //
+        // This used to enumerate `p2:` keys over a hardcoded ASCII a-z range
+        // (issue #253), so a single-character query in Cyrillic, Greek or
+        // Arabic matched nothing at all — directly at odds with the
+        // cross-script support #40 deliberately added. A `p1:` key built at
+        // index time is script-agnostic, and one lookup replaces twenty-six.
+        const p1 = cachedInvertedIndex?.get(`p1:${text}`);
+        if (p1) for (const id of p1) candidateIdSet.add(id);
       }
     }
   }
