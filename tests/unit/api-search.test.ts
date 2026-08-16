@@ -165,6 +165,14 @@ describe('GET /api/search', () => {
     expect(runSearch).toHaveBeenCalledWith('Vladimir', expect.objectContaining({ limit: 20 }));
   });
 
+  it('issue #161: falls back to the default limit of 20 when limit is negative (-1, -40)', async () => {
+    await agent.get('/api/search').query({ q: 'Vladimir', limit: '-1' });
+    expect(runSearch).toHaveBeenCalledWith('Vladimir', expect.objectContaining({ limit: 20 }));
+
+    await agent.get('/api/search').query({ q: 'Vladimir', limit: '-40' });
+    expect(runSearch).toHaveBeenCalledWith('Vladimir', expect.objectContaining({ limit: 20 }));
+  });
+
   it('issue #37: honors an explicit limit=0 instead of silently falling back to the default', async () => {
     await agent.get('/api/search').query({ q: 'Vladimir', limit: '0' });
     expect(runSearch).toHaveBeenCalledWith('Vladimir', expect.objectContaining({ limit: 0 }));

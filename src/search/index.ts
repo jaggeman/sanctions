@@ -142,7 +142,13 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
     ? options.threshold
     : DEFAULT_THRESHOLD;
   const threshold = Math.max(0, Math.min(rawThreshold, 100));
-  const limit = Math.min(options.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
+  // issue #161: guard limit against NaN and negative values. A negative or NaN
+  // limit falls back to DEFAULT_LIMIT (20). Preserve explicit limit=0 per issue #37.
+  const rawLimit =
+    options.limit !== undefined && !Number.isNaN(options.limit)
+      ? (options.limit >= 0 ? options.limit : DEFAULT_LIMIT)
+      : DEFAULT_LIMIT;
+  const limit = Math.min(Math.max(0, rawLimit), MAX_LIMIT);
 
   const candidates = records.filter((r) => {
     // A delisted person is no longer sanctioned; returning them as a confident
@@ -189,5 +195,5 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
   const totalMatches = scored.length;
   const results = scored.slice(0, limit);
 
-  return { results, totalMatches, truncated: totalMatches > results.length };
+  return { results, totalMatches, truncated: results.length > 0 && totalMatches > results.length };
 }
