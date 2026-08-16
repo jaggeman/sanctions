@@ -28,22 +28,25 @@ function emailKey(email: string): string {
  */
 export async function createOtp(email: string): Promise<string | null> {
   const ref = db.collection(COLLECTION).doc(emailKey(email));
-  const existingDoc = await ref.get();
-  const existing = existingDoc.exists ? existingDoc.data() : undefined;
 
-  if (existing && Date.now() - new Date(existing.issuedAt).getTime() < OTP_REQUEST_COOLDOWN_MS) {
-    return null;
-  }
+  return db.runTransaction(async (tx: any) => {
+    const existingDoc = await tx.get(ref);
+    const existing = existingDoc.exists ? existingDoc.data() : undefined;
 
-  const code = generateOtpCode();
-  const now = new Date();
-  await ref.set({
-    codeHash: hashOtpCode(code),
-    expiresAt: new Date(now.getTime() + OTP_TTL_MS).toISOString(),
-    attempts: 0,
-    issuedAt: now.toISOString(),
+    if (existing && Date.now() - new Date(existing.issuedAt).getTime() < OTP_REQUEST_COOLDOWN_MS) {
+      return null;
+    }
+
+    const code = generateOtpCode();
+    const now = new Date();
+    tx.set(ref, {
+      codeHash: hashOtpCode(code),
+      expiresAt: new Date(now.getTime() + OTP_TTL_MS).toISOString(),
+      attempts: 0,
+      issuedAt: now.toISOString(),
+    });
+    return code;
   });
-  return code;
 }
 
 /**
@@ -68,24 +71,28 @@ export async function isInCooldown(email: string): Promise<boolean> {
 
 export async function verifyOtp(email: string, code: string): Promise<boolean> {
   const ref = db.collection(COLLECTION).doc(emailKey(email));
-  const doc = await ref.get();
-  if (!doc.exists) return false;
-  const entry = doc.data()!;
+  const candidateHash = hashOtpCode(code);
 
-  if (Date.now() > new Date(entry.expiresAt).getTime()) {
-    await ref.delete();
-    return false;
-  }
+  return db.runTransaction(async (tx: any) => {
+    const doc = await tx.get(ref);
+    if (!doc.exists) return false;
+    const entry = doc.data()!;
 
-  if (entry.attempts >= OTP_MAX_ATTEMPTS) {
-    return false;
-  }
+    if (Date.now() > new Date(entry.expiresAt).getTime()) {
+      tx.delete(ref);
+      return false;
+    }
 
-  if (entry.codeHash !== hashOtpCode(code)) {
-    await ref.update({ attempts: entry.attempts + 1 });
-    return false;
-  }
+    if (entry.attempts >= OTP_MAX_ATTEMPTS) {
+      return false;
+    }
 
-  await ref.delete();
-  return true;
+    if (entry.codeHash !== candidateHash) {
+      tx.update(ref, { attempts: entry.attempts + 1 });
+      return false;
+    }
+
+    tx.delete(ref);
+    return true;
+  });
 }

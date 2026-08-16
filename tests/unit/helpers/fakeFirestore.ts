@@ -61,6 +61,8 @@ export function createFakeDb() {
       updateFn: (tx: {
         get: (ref: any) => Promise<any>;
         set: (ref: any, data: any, options?: { merge?: boolean }) => void;
+        update: (ref: any, data: any) => void;
+        delete: (ref: any) => void;
       }) => Promise<any>,
     ) => {
       const tx = {
@@ -70,6 +72,12 @@ export function createFakeDb() {
           // synchronously under the hood (in-memory Map), only wrapped in a
           // Promise for interface parity with the real SDK.
           void ref.set(data, options);
+        },
+        update: (ref: any, data: any) => {
+          void ref.update(data);
+        },
+        delete: (ref: any) => {
+          void ref.delete();
         },
       };
       return updateFn(tx);
