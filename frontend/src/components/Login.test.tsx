@@ -1,5 +1,5 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Login from './Login';
 
 /**
@@ -21,7 +21,12 @@ function stubFetch(impl: (url: string, body: any) => { ok: boolean; body?: any }
   );
 }
 
+beforeEach(() => {
+  localStorage.clear();
+});
+
 afterEach(() => {
+  localStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -181,5 +186,59 @@ describe('Login — verify-otp step', () => {
     expect(screen.getByLabelText('Email address')).toBeInTheDocument();
     expect(screen.queryByLabelText('6-digit code')).not.toBeInTheDocument();
     expect(screen.queryByText('Invalid or expired code.')).not.toBeInTheDocument();
+  });
+});
+
+describe('Login — remember email between logins (issue #182)', () => {
+  it('prefills the email field from localStorage on mount if present', () => {
+    localStorage.setItem('sanctions.lastLoginEmail', 'saved@example.com');
+    render(<Login onLoggedIn={vi.fn()} />);
+
+    const emailInput = screen.getByLabelText('Email address') as HTMLInputElement;
+    expect(emailInput.value).toBe('saved@example.com');
+  });
+
+  it('starts with an empty email field when nothing is stored in localStorage', () => {
+    render(<Login onLoggedIn={vi.fn()} />);
+
+    const emailInput = screen.getByLabelText('Email address') as HTMLInputElement;
+    expect(emailInput.value).toBe('');
+  });
+
+  it('saves the email to localStorage on successful OTP verification', async () => {
+    const onLoggedIn = vi.fn();
+    render(<Login onLoggedIn={onLoggedIn} />);
+
+    stubFetch((url) => {
+      if (url.includes('/api/auth/request-otp')) return { ok: true, body: { ok: true } };
+      if (url.includes('/api/auth/verify-otp')) return { ok: true, body: { ok: true } };
+      return { ok: false };
+    });
+
+    fireEvent.change(screen.getByLabelText('Email address'), { target: { value: 'user@example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send code' }));
+
+    await waitFor(() => expect(screen.getByLabelText('6-digit code')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText('6-digit code'), { target: { value: '123456' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Verify & sign in' }));
+
+    await waitFor(() => expect(onLoggedIn).toHaveBeenCalledWith('user@example.com'));
+    expect(localStorage.getItem('sanctions.lastLoginEmail')).toBe('user@example.com');
+  });
+
+  it('"Use a different email" resets in-progress OTP step but does NOT clear remembered email from localStorage', async () => {
+    localStorage.setItem('sanctions.lastLoginEmail', 'previous@example.com');
+    render(<Login onLoggedIn={vi.fn()} />);
+
+    stubFetch(() => ({ ok: true, body: { ok: true } }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send code' }));
+
+    await waitFor(() => expect(screen.getByLabelText('6-digit code')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use a different email' }));
+
+    expect(screen.getByLabelText('Email address')).toBeInTheDocument();
+    expect(localStorage.getItem('sanctions.lastLoginEmail')).toBe('previous@example.com');
   });
 });

@@ -11,13 +11,22 @@ import {
 } from '@mui/material';
 import ShieldOutlinedIcon from '@mui/icons-material/ShieldOutlined';
 
+const LAST_LOGIN_EMAIL_KEY = 'sanctions.lastLoginEmail';
+
 interface LoginProps {
   onLoggedIn: (email: string) => void;
 }
 
 function Login({ onLoggedIn }: LoginProps) {
   const [step, setStep] = useState<'email' | 'code'>('email');
-  const [email, setEmail] = useState('');
+  // issue #182: Prefill email from client-side localStorage if previously remembered.
+  const [email, setEmail] = useState(() => {
+    try {
+      return localStorage.getItem(LAST_LOGIN_EMAIL_KEY) || '';
+    } catch {
+      return '';
+    }
+  });
   const [code, setCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,6 +65,12 @@ function Login({ onLoggedIn }: LoginProps) {
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || 'Invalid or expired code.');
+      }
+      // issue #182: Persist last successfully verified email for client-side prefill.
+      try {
+        localStorage.setItem(LAST_LOGIN_EMAIL_KEY, email);
+      } catch {
+        // Ignore localStorage quota or security errors (e.g. private browsing mode)
       }
       onLoggedIn(email);
     } catch (err: any) {
@@ -140,6 +155,10 @@ function Login({ onLoggedIn }: LoginProps) {
                 variant="text"
                 size="small"
                 onClick={() => {
+                  // issue #182: "Use a different email" resets the in-progress OTP
+                  // step/code for this session so the user can retype a different address.
+                  // It deliberately does NOT clear localStorage; only a fresh successful
+                  // login will update the remembered email.
                   setStep('email');
                   setCode('');
                   setError(null);
