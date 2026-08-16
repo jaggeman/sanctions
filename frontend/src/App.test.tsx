@@ -36,12 +36,15 @@ describe('App component navigation tabs', () => {
     expect(screen.getByText('Search Entities')).toBeInTheDocument();
   });
 
-  it('navigates to Official EU Lists tab', async () => {
+  it('navigates to Official Sources tab', async () => {
     await renderLoggedIn();
-    fireEvent.click(screen.getByText('Official EU Lists'));
+    fireEvent.click(screen.getByText('Official Sources'));
 
     expect(screen.getByText('EU Sanctions Map')).toBeInTheDocument();
-    expect(screen.getByText('Consolidated Financial Sanctions')).toBeInTheDocument();
+    expect(screen.getByText('UN Security Council Consolidated List')).toBeInTheDocument();
+    expect(screen.getByText('OFAC Sanctions List Search')).toBeInTheDocument();
+    expect(screen.getByText('The UK Sanctions List (FCDO)')).toBeInTheDocument();
+    expect(screen.getByText('SECO SESAM Sanctions Database')).toBeInTheDocument();
   });
 
   it('navigates to Help & Manual tab', async () => {
@@ -52,7 +55,7 @@ describe('App component navigation tabs', () => {
     expect(screen.getByText('How to Search')).toBeInTheDocument();
     expect(screen.getByText('Uploading Lists')).toBeInTheDocument();
     expect(screen.getByText('Managing API Tokens')).toBeInTheDocument();
-    expect(screen.getByText('Official Sources')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Official Sources' })).toBeInTheDocument();
   });
 
   it('documents fuzzy match scoring and all upload sources in the manual', async () => {
@@ -149,7 +152,7 @@ describe('App component navigation tabs', () => {
     await waitFor(() => expect(screen.getByText('Vladimir Putin')).toBeInTheDocument());
     
     // 2. Switch tab
-    fireEvent.click(screen.getByText('Official EU Lists'));
+    fireEvent.click(screen.getByText('Official Sources'));
     expect(screen.getByText('EU Sanctions Map')).toBeInTheDocument();
     
     // 3. Switch back
