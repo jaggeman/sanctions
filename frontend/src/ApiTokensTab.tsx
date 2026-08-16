@@ -45,6 +45,19 @@ interface ApiToken {
   lastUsedAt: string | null;
   revoked: boolean;
   revokedAt: string | null;
+  expiresAt: string | null;
+}
+
+const EXPIRY_OPTIONS = [
+  { value: 'never', label: 'Never' },
+  { value: '30d', label: '30 days' },
+  { value: '90d', label: '90 days' },
+  { value: '180d', label: '180 days' },
+  { value: '365d', label: '1 year' },
+];
+
+function isExpired(token: ApiToken): boolean {
+  return !!token.expiresAt && new Date(token.expiresAt).getTime() <= Date.now();
 }
 
 const GRANULAR_SCOPE_OPTIONS = [
@@ -76,6 +89,7 @@ export default function ApiTokensTab() {
   const [scopeWrite, setScopeWrite] = useState(false);
   const [useGranular, setUseGranular] = useState(false);
   const [selectedGranularScopes, setSelectedGranularScopes] = useState<string[]>(['sanctions:read']);
+  const [expiresIn, setExpiresIn] = useState('never');
   const [creating, setCreating] = useState(false);
 
   const [revealedToken, setRevealedToken] = useState<string | null>(null);
@@ -144,7 +158,7 @@ export default function ApiTokensTab() {
       const res = await apiFetch('/api/admin/tokens', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim(), scopes }),
+        body: JSON.stringify({ name: name.trim(), scopes, expiresIn }),
       });
       if (res.status === 401) throw new Error(SESSION_EXPIRED_MESSAGE);
       if (!res.ok) {
@@ -165,6 +179,7 @@ export default function ApiTokensTab() {
       setScopeRead(true);
       setScopeWrite(false);
       setSelectedGranularScopes(['sanctions:read']);
+      setExpiresIn('never');
       await loadTokens();
     } catch (err: any) {
       console.error(err);
@@ -242,6 +257,19 @@ export default function ApiTokensTab() {
                 disabled={creating}
                 sx={{ minWidth: 260 }}
               />
+              <TextField
+                select
+                label="Expires"
+                value={expiresIn}
+                onChange={(e) => setExpiresIn(e.target.value)}
+                disabled={creating}
+                slotProps={{ select: { native: true } }}
+                sx={{ minWidth: 140 }}
+              >
+                {EXPIRY_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </TextField>
               {!useGranular ? (
                 <FormGroup row>
                   <FormControlLabel
@@ -333,6 +361,7 @@ export default function ApiTokensTab() {
                     <TableCell>Scopes</TableCell>
                     <TableCell>Created</TableCell>
                     <TableCell>Last used</TableCell>
+                    <TableCell>Expires</TableCell>
                     <TableCell>Status</TableCell>
                     <TableCell align="right">Actions</TableCell>
                   </TableRow>
@@ -351,11 +380,12 @@ export default function ApiTokensTab() {
                       </TableCell>
                       <TableCell>{formatDate(t.createdAt)}</TableCell>
                       <TableCell>{formatDate(t.lastUsedAt)}</TableCell>
+                      <TableCell>{formatDate(t.expiresAt)}</TableCell>
                       <TableCell>
                         <Chip
-                          label={t.revoked ? 'Revoked' : 'Active'}
+                          label={t.revoked ? 'Revoked' : isExpired(t) ? 'Expired' : 'Active'}
                           size="small"
-                          color={t.revoked ? 'default' : 'success'}
+                          color={t.revoked ? 'default' : isExpired(t) ? 'warning' : 'success'}
                         />
                       </TableCell>
                       <TableCell align="right">

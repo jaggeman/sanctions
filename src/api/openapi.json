@@ -634,7 +634,7 @@
     "/api/admin/tokens": {
       "post": {
         "summary": "Skapa en ny API-token",
-        "description": "Skapar en API-token med angivna scopes (read/write). Den fullständiga token-strängen returneras endast i detta svar och sparas aldrig i klartext. Kräver en inloggad admin-session — admin-status kontrolleras på nytt vid varje anrop mot ADMIN_EMAILS (issue #17), inte cachad i sessionen.",
+        "description": "Skapar en API-token med angivna scopes (read/write) och en valfri livslängd (expiresIn). Den fullständiga token-strängen returneras endast i detta svar och sparas aldrig i klartext. Kräver en inloggad admin-session — admin-status kontrolleras på nytt vid varje anrop mot ADMIN_EMAILS (issue #17), inte cachad i sessionen.",
         "security": [{ "cookieAuth": [] }],
         "requestBody": {
           "required": true,
@@ -655,6 +655,12 @@
                       "enum": ["read", "write"]
                     },
                     "example": ["read"]
+                  },
+                  "expiresIn": {
+                    "type": "string",
+                    "enum": ["30d", "90d", "180d", "365d", "never"],
+                    "default": "never",
+                    "description": "Hur länge token ska vara giltig. Utelämnad = 'never' (aldrig)."
                   }
                 }
               }
@@ -676,7 +682,7 @@
             }
           },
           "400": {
-            "description": "Ogiltigt namn eller ogiltiga scopes"
+            "description": "Ogiltigt namn, ogiltiga scopes, eller ogiltigt expiresIn"
           },
           "401": {
             "description": "Ingen giltig session (ej inloggad)"
@@ -1041,7 +1047,8 @@
           "createdAt": { "type": "string", "format": "date-time" },
           "lastUsedAt": { "type": "string", "format": "date-time", "nullable": true },
           "revoked": { "type": "boolean" },
-          "revokedAt": { "type": "string", "format": "date-time", "nullable": true }
+          "revokedAt": { "type": "string", "format": "date-time", "nullable": true },
+          "expiresAt": { "type": "string", "format": "date-time", "nullable": true, "description": "null means the token never expires." }
         }
       },
       "Decision": {

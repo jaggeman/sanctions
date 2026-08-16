@@ -9,11 +9,13 @@ const {
   mockListApiTokens,
   mockRevokeApiToken,
   mockValidateScopes,
+  mockIsValidExpiryOption,
 } = vi.hoisted(() => ({
   mockCreateApiToken: vi.fn(),
   mockListApiTokens: vi.fn(),
   mockRevokeApiToken: vi.fn(),
   mockValidateScopes: vi.fn(),
+  mockIsValidExpiryOption: vi.fn(),
 }));
 
 vi.mock('../../src/shared/apiTokens', () => ({
@@ -21,6 +23,7 @@ vi.mock('../../src/shared/apiTokens', () => ({
   listApiTokens: mockListApiTokens,
   revokeApiToken: mockRevokeApiToken,
   validateScopes: mockValidateScopes,
+  isValidExpiryOption: mockIsValidExpiryOption,
 }));
 
 // src/auth/session.ts now persists sessions through `db` (issue #63).
@@ -57,6 +60,9 @@ beforeEach(() => {
   process.env.ADMIN_EMAILS = ADMIN_EMAIL;
   mockValidateScopes.mockImplementation(
     (scopes: unknown) => Array.isArray(scopes) && scopes.length > 0
+  );
+  mockIsValidExpiryOption.mockImplementation(
+    (value: unknown) => typeof value === 'string' && ['30d', '90d', '180d', '365d', 'never'].includes(value)
   );
 });
 
@@ -130,6 +136,7 @@ describe('POST /api/admin/tokens', () => {
         lastUsedAt: null,
         revoked: false,
         revokedAt: null,
+        expiresAt: null,
       },
     });
 
@@ -141,7 +148,43 @@ describe('POST /api/admin/tokens', () => {
     expect(res.status).toBe(201);
     expect(res.body.token).toBe('sanc_rawtoken');
     expect(res.body.id).toBe('tok-1');
-    expect(mockCreateApiToken).toHaveBeenCalledWith('CI pipeline', ['read'], ADMIN_EMAIL);
+    expect(mockCreateApiToken).toHaveBeenCalledWith('CI pipeline', ['read'], ADMIN_EMAIL, 'never');
+  });
+
+  // Token lifetime: the caller can opt into an expiry instead of the
+  // default-forever token.
+  describe('expiresIn', () => {
+    it('defaults to "never" when expiresIn is omitted', async () => {
+      mockCreateApiToken.mockResolvedValueOnce({ token: 'sanc_x', record: { id: 'tok-1', expiresAt: null } });
+
+      await request(buildApp())
+        .post('/api/admin/tokens')
+        .set('Cookie', await adminCookie())
+        .send({ name: 'CI pipeline', scopes: ['read'] });
+
+      expect(mockCreateApiToken).toHaveBeenCalledWith('CI pipeline', ['read'], ADMIN_EMAIL, 'never');
+    });
+
+    it('passes a valid expiresIn through to createApiToken', async () => {
+      mockCreateApiToken.mockResolvedValueOnce({ token: 'sanc_x', record: { id: 'tok-1', expiresAt: '2026-07-01T00:00:00.000Z' } });
+
+      await request(buildApp())
+        .post('/api/admin/tokens')
+        .set('Cookie', await adminCookie())
+        .send({ name: 'CI pipeline', scopes: ['read'], expiresIn: '90d' });
+
+      expect(mockCreateApiToken).toHaveBeenCalledWith('CI pipeline', ['read'], ADMIN_EMAIL, '90d');
+    });
+
+    it('rejects an invalid expiresIn value', async () => {
+      const res = await request(buildApp())
+        .post('/api/admin/tokens')
+        .set('Cookie', await adminCookie())
+        .send({ name: 'CI pipeline', scopes: ['read'], expiresIn: 'forever' });
+
+      expect(res.status).toBe(400);
+      expect(mockCreateApiToken).not.toHaveBeenCalled();
+    });
   });
 
   it('returns 500 with details when createApiToken throws', async () => {

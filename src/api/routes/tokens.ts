@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createApiToken, listApiTokens, revokeApiToken, validateScopes } from '../../shared/apiTokens';
+import { createApiToken, listApiTokens, revokeApiToken, validateScopes, isValidExpiryOption } from '../../shared/apiTokens';
 import { requireAdmin } from '../middleware/requireAdmin';
 import { validateEntityIdParam } from '../middleware/validateEntityIdParam';
 
@@ -27,9 +27,16 @@ tokensRouter.post('/', async (req, res): Promise<any> => {
     return res.status(400).json({ error: '"scopes" must be a non-empty array of "read" and/or "write".' });
   }
 
+  // Lifetime: opt into an expiry (30d/90d/180d/365d) instead of the
+  // default-forever token. Omitted means "never expires", not an error.
+  const expiresIn = req.body.expiresIn === undefined ? 'never' : req.body.expiresIn;
+  if (!isValidExpiryOption(expiresIn)) {
+    return res.status(400).json({ error: '"expiresIn" must be one of "30d", "90d", "180d", "365d", or "never".' });
+  }
+
   try {
     const ownerEmail = (req as any).userEmail;
-    const { token, record } = await createApiToken(name.trim(), scopes, ownerEmail);
+    const { token, record } = await createApiToken(name.trim(), scopes, ownerEmail, expiresIn);
     res.status(201).json({ token, ...record });
   } catch (error: any) {
     console.error('Create token error:', error);

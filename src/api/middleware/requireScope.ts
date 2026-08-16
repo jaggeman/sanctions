@@ -25,6 +25,8 @@ function messageFor(reason: TokenVerificationResult['reason']): string {
       return 'Invalid API token.';
     case 'revoked':
       return 'This API token has been revoked.';
+    case 'expired':
+      return 'This API token has expired.';
     case 'insufficient_scope':
       return 'This API token does not have the required scope.';
     case 'no_owner_email':
