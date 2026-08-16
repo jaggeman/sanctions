@@ -12,6 +12,7 @@ import {
   Tab,
   CircularProgress,
   IconButton,
+  useMediaQuery,
 } from '@mui/material';
 import type { PaletteMode } from '@mui/material';
 import Brightness4Icon from '@mui/icons-material/Brightness4';
@@ -119,6 +120,9 @@ function App() {
 
   // Generate theme dynamically
   const theme = useMemo(() => getTheme(mode), [mode]);
+  // Header has no room for the signed-in email once the toolbar squeezes
+  // below the sm breakpoint (title + toggle + logout already fill it).
+  const isNarrowScreen = useMediaQuery(theme.breakpoints.down('sm'));
 
   // Auth State
   const [authChecked, setAuthChecked] = useState(false);
@@ -190,9 +194,11 @@ function App() {
           <Typography variant="h6" component="div" sx={{ flexGrow: 1, color: '#fff' }}>
             Sanctions Intelligence
           </Typography>
-          <Typography variant="body2" sx={{ mr: 1, color: 'rgba(255,255,255,0.7)' }}>
-            {userEmail}
-          </Typography>
+          {!isNarrowScreen && (
+            <Typography variant="body2" sx={{ mr: 1, color: 'rgba(255,255,255,0.7)' }}>
+              {userEmail}
+            </Typography>
+          )}
           <IconButton sx={{ ml: 1 }} onClick={toggleColorMode} color="inherit">
             {mode === 'dark' ? <Brightness7Icon /> : <Brightness4Icon />}
           </IconButton>
@@ -204,7 +210,14 @@ function App() {
 
       <Container maxWidth="lg" sx={{ mt: 4, mb: 8 }}>
         <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 4 }}>
-          <Tabs value={tabValue} onChange={handleTabChange} aria-label="app tabs">
+          <Tabs
+            value={tabValue}
+            onChange={handleTabChange}
+            aria-label="app tabs"
+            variant="scrollable"
+            scrollButtons="auto"
+            allowScrollButtonsMobile
+          >
             <Tab label="Search" />
             <Tab label="Upload Lists" />
             <Tab label="Import History" />

@@ -30,10 +30,56 @@ async function renderLoggedIn() {
   await waitFor(() => expect(screen.getByText('Search Entities')).toBeInTheDocument());
 }
 
+/** Simulates every CSS media query matching (or not) — i.e. a narrow/mobile viewport. */
+function stubViewportMatches(matches: boolean) {
+  const original = window.matchMedia;
+  window.matchMedia = (query: string) =>
+    ({
+      matches,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }) as unknown as MediaQueryList;
+  return () => {
+    window.matchMedia = original;
+  };
+}
+
 describe('App component navigation tabs', () => {
   it('renders the Search tab by default', async () => {
     await renderLoggedIn();
     expect(screen.getByText('Search Entities')).toBeInTheDocument();
+  });
+
+  it('renders the main tab bar as scrollable so 7 tabs never clip on a narrow viewport', async () => {
+    await renderLoggedIn();
+    const tablist = screen.getByRole('tablist', { name: 'app tabs' });
+    // MUI only renders the MuiTabs-scroller wrapper with this class when variant="scrollable".
+    expect(tablist.closest('.MuiTabs-root')?.querySelector('.MuiTabs-scrollableX')).not.toBeNull();
+  });
+
+  it('hides the signed-in email in the header on a narrow (mobile) viewport', async () => {
+    const restore = stubViewportMatches(true);
+    try {
+      await renderLoggedIn();
+      expect(screen.queryByText('analyst@example.com')).not.toBeInTheDocument();
+    } finally {
+      restore();
+    }
+  });
+
+  it('shows the signed-in email in the header on a wide (desktop) viewport', async () => {
+    const restore = stubViewportMatches(false);
+    try {
+      await renderLoggedIn();
+      expect(screen.getByText('analyst@example.com')).toBeInTheDocument();
+    } finally {
+      restore();
+    }
   });
 
   it('navigates to Official Sources tab', async () => {
