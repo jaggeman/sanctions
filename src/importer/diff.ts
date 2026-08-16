@@ -198,6 +198,10 @@ export async function startDiffSession(
 
       const toWrite: SanctionRecord[] = [];
 
+      // `existing` is updated in place as records are written below (issue
+      // #186) so a duplicate id later in this same run — in this chunk or a
+      // later one — classifies against what this run already wrote, not the
+      // stale pre-import snapshot.
       for (const record of eligible) {
         incomingIds.add(record.id);
         const prior = existing.get(record.id);
@@ -206,16 +210,19 @@ export async function startDiffSession(
           added++;
           toWrite.push(record);
           pushSample(samples.added, record);
+          existing.set(record.id, { status: 'active', contentHash: computeContentHash(record), names: record.names });
         } else if (prior.status === 'delisted') {
           // A relist is a real state transition even when the content is
           // byte-identical to what was delisted.
           updated++;
           toWrite.push(record);
           pushSample(samples.updated, record);
+          existing.set(record.id, { status: 'active', contentHash: computeContentHash(record), names: record.names });
         } else if (prior.contentHash !== computeContentHash(record)) {
           updated++;
           toWrite.push(record);
           pushSample(samples.updated, record);
+          existing.set(record.id, { status: 'active', contentHash: computeContentHash(record), names: record.names });
         } else {
           unchanged++;
           pushSample(samples.unchanged, record);

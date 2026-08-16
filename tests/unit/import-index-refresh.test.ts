@@ -9,14 +9,18 @@ const invalidateSearchIndex = vi.fn();
 vi.mock('../../src/search', () => ({ invalidateSearchIndex }));
 
 const uploadRecords = vi.fn(async () => {});
-vi.mock('../../src/importer/uploader', () => ({
-  uploadRecords,
-  normalizeText: (s: string) => s,
-  // Passthrough: none of this file's fixture records carry source: 'CUSTOM',
-  // so the real filtering behaviour (see tests/unit/filter-automated-batch.test.ts)
-  // is exercised elsewhere; this mock just needs to satisfy the import shape.
-  filterAutomatedBatch: (records: any[]) => records.filter((r) => r.source !== 'CUSTOM'),
-}));
+vi.mock('../../src/importer/uploader', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/importer/uploader')>();
+  return {
+    ...actual,
+    uploadRecords,
+    normalizeText: (s: string) => s,
+    // Passthrough: none of this file's fixture records carry source: 'CUSTOM',
+    // so the real filtering behaviour (see tests/unit/filter-automated-batch.test.ts)
+    // is exercised elsewhere; this mock just needs to satisfy the import shape.
+    filterAutomatedBatch: (records: any[]) => records.filter((r) => r.source !== 'CUSTOM'),
+  };
+});
 
 vi.mock('../../src/importer/fetcher', () => ({
   downloadFile: vi.fn(async () => '/tmp/fake.xml'),

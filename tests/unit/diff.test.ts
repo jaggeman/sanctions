@@ -419,3 +419,61 @@ describe('startDiffSession — sample records per bucket, streaming path (issue 
     expect(result.samples).toEqual({ added: [], updated: [], unchanged: [], delisted: [] });
   });
 });
+
+describe('startDiffSession — duplicate id within one run (issue #186)', () => {
+  it('classifies a later occurrence of a brand-new id (across chunks) as updated, not added again', async () => {
+    mockExistingSnapshot([]); // id is unseen before this import
+
+    const session = await startDiffSession('EU', { mode: 'append' });
+    await session.addChunk([makeRecord({ id: 'EU-1', names: [{ wholeName: 'First', strong: true }] })]);
+    const result = await session.addChunk([makeRecord({ id: 'EU-1', names: [{ wholeName: 'Second', strong: true }] })]);
+    const summary = await session.finish();
+
+    expect(result).toBe(1);
+    expect(summary.counts.added).toBe(1);
+    expect(summary.counts.updated).toBe(1);
+  });
+
+  it('classifies a later occurrence with identical content (across chunks) as unchanged, not added again', async () => {
+    mockExistingSnapshot([]);
+    const record = makeRecord({ id: 'EU-1', names: [{ wholeName: 'Same Every Time', strong: true }] });
+
+    const session = await startDiffSession('EU', { mode: 'append' });
+    await session.addChunk([record]);
+    await session.addChunk([{ ...record }]);
+    const summary = await session.finish();
+
+    expect(summary.counts.added).toBe(1);
+    expect(summary.counts.updated).toBe(0);
+    expect(summary.counts.unchanged).toBe(1);
+  });
+
+  it('classifies two occurrences of the same new id within a single addChunk call correctly', async () => {
+    mockExistingSnapshot([]);
+
+    const session = await startDiffSession('EU', { mode: 'append' });
+    const written = await session.addChunk([
+      makeRecord({ id: 'EU-1', names: [{ wholeName: 'First', strong: true }] }),
+      makeRecord({ id: 'EU-1', names: [{ wholeName: 'Second', strong: true }] }),
+    ]);
+    const summary = await session.finish();
+
+    expect(written).toBe(2);
+    expect(summary.counts.added).toBe(1);
+    expect(summary.counts.updated).toBe(1);
+  });
+
+  it('a duplicate id that relists a previously-delisted record classifies the second occurrence against the relist, not the stale delisted state', async () => {
+    const record = makeRecord({ id: 'EU-1', names: [{ wholeName: 'Relisted', strong: true }] });
+    mockExistingSnapshot([{ id: 'EU-1', status: 'delisted', contentHash: 'old-hash', primaryName: 'Old' }]);
+
+    const session = await startDiffSession('EU', { mode: 'append' });
+    await session.addChunk([record]);
+    const second = await session.addChunk([{ ...record }]);
+    const finalSummary = await session.finish();
+
+    expect(second).toBe(0);
+    expect(finalSummary.counts.updated).toBe(1);
+    expect(finalSummary.counts.unchanged).toBe(1);
+  });
+});
