@@ -17,8 +17,10 @@ import {
   DialogContent,
   DialogActions,
   Button,
+  Link,
 } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import { apiFetch } from './apiFetch';
 
 interface ImportRecordData {
@@ -34,6 +36,46 @@ interface ImportRecordData {
   duplicateOfImportId?: string;
   error?: string;
 }
+
+interface SourceWebsiteInfo {
+  name: string;
+  authority: string;
+  websiteUrl: string;
+  downloadUrl?: string;
+}
+
+const SOURCE_WEBSITES: Record<string, SourceWebsiteInfo> = {
+  EU: {
+    name: 'Consolidated List of Sanctions',
+    authority: 'European Commission (EU)',
+    websiteUrl: 'https://data.europa.eu/data/datasets/consolidated-list-of-persons-groups-and-entities-subject-to-eu-financial-sanctions',
+    downloadUrl: 'https://webgate.ec.europa.eu/europeaid/fsd/fsf/public/files/xmlFullSanctionsList_1_1/content',
+  },
+  UN: {
+    name: 'UN Security Council Consolidated List',
+    authority: 'United Nations Security Council',
+    websiteUrl: 'https://www.un.org/securitycouncil/content/un-sc-consolidated-list',
+    downloadUrl: 'https://scsanctions.un.org/resources/xml/en/consolidated.xml',
+  },
+  US: {
+    name: 'Specially Designated Nationals and Blocked Persons (SDN)',
+    authority: 'US Department of the Treasury (OFAC)',
+    websiteUrl: 'https://ofac.treasury.gov/specially-designated-nationals-and-blocked-persons-list-sdn-human-readable-lists',
+    downloadUrl: 'https://www.treasury.gov/ofac/downloads/sdn.xml',
+  },
+  UK: {
+    name: 'The UK Sanctions List',
+    authority: 'Foreign, Commonwealth & Development Office (FCDO)',
+    websiteUrl: 'https://www.gov.uk/government/publications/the-uk-sanctions-list',
+    downloadUrl: 'https://sanctionslist.fcdo.gov.uk/docs/UK-Sanctions-List.xml',
+  },
+  CH: {
+    name: 'Swiss Overall List of Sanctions (SESAM)',
+    authority: 'State Secretariat for Economic Affairs (SECO)',
+    websiteUrl: 'https://www.seco.admin.ch/seco/en/home/Aussenwirtschaftspolitik_Wirtschaftliche_Zusammenarbeit/Wirtschaftsbeziehungen/exportkontrollen-und-sanktionen/sanktionen-embargos.html',
+    downloadUrl: 'https://www.sesam.search.admin.ch/sesam-search-web/pages/downloadXmlGesamtliste.xhtml?lang=en&action=downloadXmlGesamtlisteAction',
+  },
+};
 
 function statusColor(status: ImportRecordData['status']): 'success' | 'error' | 'warning' | 'default' {
   if (status === 'applied') return 'success';
@@ -159,30 +201,117 @@ export default function ImportHistoryTab({ focusImportId, onFocusConsumed }: Imp
       </Card>
 
       <Dialog open={!!selected} onClose={() => setSelected(null)} maxWidth="sm" fullWidth>
-        <DialogTitle>{selected?.filename}</DialogTitle>
+        <DialogTitle>{selected?.filename || selected?.importId}</DialogTitle>
         <DialogContent>
-          {selected && (
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-              <Typography variant="body2"><strong>Source:</strong> {selected.source}</Typography>
-              <Typography variant="body2"><strong>Format:</strong> {selected.format}</Typography>
-              <Typography variant="body2"><strong>Uploaded:</strong> {formatDate(selected.uploadedAt)} by {selected.uploadedBy || 'unknown'}</Typography>
-              <Chip label={selected.status} size="small" color={statusColor(selected.status)} sx={{ width: 'fit-content' }} />
+          {selected && (() => {
+            const sourceKey = selected.source?.toUpperCase();
+            const sourceInfo = sourceKey ? SOURCE_WEBSITES[sourceKey] : undefined;
 
-              {selected.status === 'applied' && selected.counts && (
+            return (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, mt: 0.5 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                  <Chip label={selected.source || 'Unknown'} color="primary" size="small" variant="outlined" />
+                  <Chip label={selected.format} size="small" variant="outlined" />
+                  <Chip label={selected.status} size="small" color={statusColor(selected.status)} />
+                </Box>
+
                 <Typography variant="body2">
-                  Parsed {selected.counts.parsed} record{selected.counts.parsed === 1 ? '' : 's'}, uploaded {selected.counts.uploaded}.
+                  <strong>Uploaded:</strong> {formatDate(selected.uploadedAt)} by {selected.uploadedBy || 'unknown'}
                 </Typography>
-              )}
-              {selected.status === 'failed' && selected.error && (
-                <Alert severity="error">{selected.error}</Alert>
-              )}
-              {selected.status === 'rejected' && selected.duplicateOfImportId && (
-                <Alert severity="warning">
-                  Identical file already imported as import #{selected.duplicateOfImportId}.
-                </Alert>
-              )}
-            </Box>
-          )}
+
+                {selected.fileGenerationDate && (
+                  <Typography variant="body2">
+                    <strong>File Generation Date:</strong> {formatDate(selected.fileGenerationDate)}
+                  </Typography>
+                )}
+
+                {sourceInfo ? (
+                  <Box
+                    sx={{
+                      p: 1.5,
+                      bgcolor: 'action.hover',
+                      borderRadius: 1,
+                      border: '1px solid',
+                      borderColor: 'divider',
+                    }}
+                  >
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5 }}>
+                      Official Source Website & Download Link
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                      <strong>Authority:</strong> {sourceInfo.authority} ({sourceInfo.name})
+                    </Typography>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+                      <Link
+                        href={sourceInfo.websiteUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        sx={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 0.5,
+                          fontSize: '0.875rem',
+                          textDecoration: 'none',
+                          '&:hover': { textDecoration: 'underline' },
+                        }}
+                      >
+                        Official Website / Portal <OpenInNewIcon sx={{ fontSize: 15 }} />
+                      </Link>
+                      {sourceInfo.downloadUrl && (
+                        <Link
+                          href={sourceInfo.downloadUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          sx={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 0.5,
+                            fontSize: '0.875rem',
+                            wordBreak: 'break-all',
+                            textDecoration: 'none',
+                            '&:hover': { textDecoration: 'underline' },
+                          }}
+                        >
+                          Direct Data Download URL <OpenInNewIcon sx={{ fontSize: 15 }} />
+                        </Link>
+                      )}
+                    </Box>
+                  </Box>
+                ) : (
+                  <Box
+                    sx={{
+                      p: 1.5,
+                      bgcolor: 'action.hover',
+                      borderRadius: 1,
+                      border: '1px solid',
+                      borderColor: 'divider',
+                    }}
+                  >
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5 }}>
+                      Source Origin
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Manual upload / custom dataset (no external website).
+                    </Typography>
+                  </Box>
+                )}
+
+                {selected.status === 'applied' && selected.counts && (
+                  <Typography variant="body2">
+                    Parsed {selected.counts.parsed} record{selected.counts.parsed === 1 ? '' : 's'}, uploaded {selected.counts.uploaded}.
+                  </Typography>
+                )}
+                {selected.status === 'failed' && selected.error && (
+                  <Alert severity="error">{selected.error}</Alert>
+                )}
+                {selected.status === 'rejected' && selected.duplicateOfImportId && (
+                  <Alert severity="warning">
+                    Identical file already imported as import #{selected.duplicateOfImportId}.
+                  </Alert>
+                )}
+              </Box>
+            );
+          })()}
         </DialogContent>
         <DialogActions>
           {selected?.status === 'applied' && (
@@ -201,3 +330,4 @@ export default function ImportHistoryTab({ focusImportId, onFocusConsumed }: Imp
     </Box>
   );
 }
+
