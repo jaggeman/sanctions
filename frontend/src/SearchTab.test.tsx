@@ -55,6 +55,50 @@ describe('SearchTab', () => {
     expect(screen.getByText('Delisted')).toBeInTheDocument();
   });
 
+  it('renders score breakdown tooltip details when hovered (issue #277)', async () => {
+    stubFetch(() => ({
+      status: 200,
+      body: {
+        results: [
+          {
+            id: 'EU-1',
+            source: 'EU',
+            type: 'individual',
+            names: [{ wholeName: 'Vladimir Vladimirovich PUTIN' }],
+            score: 85,
+            matchedAlias: 'Vladimir Vladimirovich PUTIN',
+            scoreBreakdown: {
+              mechanism: 'name',
+              matchedWords: [{ queryWord: 'putin', candidateWord: 'PUTIN', score: 100 }],
+              unmatchedCandidateWords: [
+                { word: 'Vladimir', isParticle: false },
+                { word: 'Vladimirovich', isParticle: false },
+              ],
+              unmatchedQueryWords: [],
+              queryCoverage: 1,
+              candidateCoverage: 0.33,
+            },
+          },
+        ],
+        totalMatches: 1,
+        truncated: false,
+      },
+    }));
+
+    render(<SearchTab onSelectRecord={vi.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText(/search by name/i), { target: { value: 'putin' } });
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }));
+
+    await waitFor(() => expect(screen.getByText('85%')).toBeInTheDocument());
+    fireEvent.mouseOver(screen.getByText('85%'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Score Breakdown: 85%/i)).toBeInTheDocument();
+      expect(screen.getByText(/Query coverage: 100%/i)).toBeInTheDocument();
+      expect(screen.getByText(/Name coverage: 33%/i)).toBeInTheDocument();
+    });
+  });
+
   it('calls onSelectRecord with the clicked result id', async () => {
     stubFetch(() => ({
       status: 200,

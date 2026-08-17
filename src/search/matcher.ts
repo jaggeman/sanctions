@@ -453,9 +453,151 @@ function tokenSetScore(
   return queryCoverage * (PARTIAL_MATCH_FLOOR + (1 - PARTIAL_MATCH_FLOOR) * candidateCoverage);
 }
 
+export interface WordMatch {
+  queryWord: string;
+  candidateWord: string;
+  score: number; // 0..100
+}
+
+export interface UnmatchedWord {
+  word: string;
+  isParticle: boolean;
+}
+
+export interface ScoreBreakdown {
+  mechanism: 'name' | 'passport_id';
+  matchedWords: WordMatch[];
+  unmatchedCandidateWords: UnmatchedWord[];
+  unmatchedQueryWords: string[];
+  queryCoverage: number;
+  candidateCoverage: number;
+  dobBoostApplied?: boolean;
+  summary?: string;
+}
+
 export interface NameMatch {
   score: number; // 0..100
   matchedName: string;
+  winningCandidate?: TokenizedName;
+  breakdown?: ScoreBreakdown;
+}
+
+/**
+ * Generates an on-demand detailed word-by-word explanation of the match
+ * score between a query and a candidate name (issue #277).
+ */
+export function explainTokenizedNameMatch(query: TokenizedQuery, candidate: TokenizedName): ScoreBreakdown {
+  const qLen = query.wordGroups.length;
+  const cLen = candidate.wordGroups.length;
+
+  if (qLen === 0 || cLen === 0) {
+    return {
+      mechanism: 'name',
+      matchedWords: [],
+      unmatchedCandidateWords: [],
+      unmatchedQueryWords: [],
+      queryCoverage: 0,
+      candidateCoverage: 0,
+    };
+  }
+
+  // Use candidate's original words where possible for display casing
+  const origCandWords = candidate.name.split(/\s+/).filter(Boolean);
+  const candDisplayWords = origCandWords.length === cLen
+    ? origCandWords
+    : candidate.wordGroups.map((g) => g[0].text);
+
+  const queryDisplayWords = query.normalizedQuery.split(' ').filter(Boolean).length === qLen
+    ? query.normalizedQuery.split(' ').filter(Boolean)
+    : query.wordGroups.map((g) => g[0].text);
+
+  // Compute pairwise matrix
+  const matrix: number[][] = [];
+  for (let qi = 0; qi < qLen; qi++) {
+    const row: number[] = [];
+    for (let ci = 0; ci < cLen; ci++) {
+      row.push(groupPairScore(query.wordGroups[qi], candidate.wordGroups[ci]));
+    }
+    matrix.push(row);
+  }
+
+  const usedQ = new Array(qLen).fill(false);
+  const usedC = new Array(cLen).fill(false);
+  const matchedPairs: { qi: number; ci: number; score: number }[] = [];
+  const qScores = new Array(qLen).fill(0);
+  const cScores = new Array(cLen).fill(0);
+
+  const maxAssignments = Math.min(qLen, cLen);
+  for (let step = 0; step < maxAssignments; step++) {
+    let bestScore = 0;
+    let bestQi = -1;
+    let bestCi = -1;
+
+    for (let qi = 0; qi < qLen; qi++) {
+      if (usedQ[qi]) continue;
+      for (let ci = 0; ci < cLen; ci++) {
+        if (usedC[ci]) continue;
+        if (matrix[qi][ci] > bestScore) {
+          bestScore = matrix[qi][ci];
+          bestQi = qi;
+          bestCi = ci;
+        }
+      }
+    }
+
+    if (bestScore <= 0 || bestQi === -1) break;
+
+    usedQ[bestQi] = true;
+    usedC[bestCi] = true;
+    qScores[bestQi] = bestScore;
+    cScores[bestCi] = bestScore;
+    matchedPairs.push({ qi: bestQi, ci: bestCi, score: bestScore });
+  }
+
+  let weightedSumQuery = 0;
+  for (let qi = 0; qi < qLen; qi++) {
+    weightedSumQuery += qScores[qi] * query.weights[qi];
+  }
+  const queryCoverage = query.totalWeight > 0 ? weightedSumQuery / query.totalWeight : 0;
+
+  let weightedSumCandidate = 0;
+  for (let ci = 0; ci < cLen; ci++) {
+    weightedSumCandidate += cScores[ci] * candidate.weights[ci];
+  }
+  const candidateCoverage = candidate.totalWeight > 0 ? weightedSumCandidate / candidate.totalWeight : 0;
+
+  const matchedWords: WordMatch[] = matchedPairs.map((p) => ({
+    queryWord: queryDisplayWords[p.qi],
+    candidateWord: candDisplayWords[p.ci],
+    score: Math.round(p.score * 100),
+  }));
+
+  const unmatchedCandidateWords: UnmatchedWord[] = [];
+  for (let ci = 0; ci < cLen; ci++) {
+    if (!usedC[ci]) {
+      const normWord = candidate.wordGroups[ci][0].text.toLowerCase();
+      unmatchedCandidateWords.push({
+        word: candDisplayWords[ci],
+        isParticle: GENERIC_PARTICLES.has(normWord),
+      });
+    }
+  }
+
+  const unmatchedQueryWords: string[] = [];
+  for (let qi = 0; qi < qLen; qi++) {
+    if (!usedQ[qi]) {
+      unmatchedQueryWords.push(queryDisplayWords[qi]);
+    }
+  }
+
+  return {
+    mechanism: 'name',
+    matchedWords,
+    unmatchedCandidateWords,
+    unmatchedQueryWords,
+    queryCoverage,
+    candidateCoverage,
+  };
 }
 
 /**
@@ -552,20 +694,20 @@ export function scoreTokenizedNameMatch(query: TokenizedQuery, candidates: Token
   }
 
   let best: NameMatch = { score: 0, matchedName: '' };
-  for (const { name, wordGroups, weights, totalWeight, normalizedName } of candidates) {
+  for (const candidate of candidates) {
     const rawScore = tokenSetScore(
       query.wordGroups,
       query.weights,
       query.totalWeight,
-      wordGroups,
-      weights,
-      totalWeight,
+      candidate.wordGroups,
+      candidate.weights,
+      candidate.totalWeight,
     );
-    const isLiteralMatch = query.normalizedQuery === normalizedName;
+    const isLiteralMatch = query.normalizedQuery === candidate.normalizedName;
     const boundedScore = isLiteralMatch ? rawScore : Math.min(rawScore, NON_LITERAL_MATCH_CAP);
     const score = Math.round(boundedScore * 100);
     if (score > best.score) {
-      best = { score, matchedName: name };
+      best = { score, matchedName: candidate.name, winningCandidate: candidate };
       if (score === 100) break;
     }
   }
