@@ -1020,6 +1020,96 @@
           }
         }
       }
+    "/api/webhooks": {
+      "get": {
+        "summary": "Lista alla webhook-prenumerationer",
+        "description": "Returnerar alla konfigurerade webhook-endpoints som lyssnar på händelser.",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Lista över webhook-prenumerationer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/WebhookSubscription" }
+                }
+              }
+            }
+          },
+          "401": { "description": "Obehörig" }
+        }
+      },
+      "post": {
+        "summary": "Skapa en ny webhook-prenumeration",
+        "description": "Registrerar en URL för händelsenotifieringar (HMAC-SHA256-signerad).",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["url"],
+                "properties": {
+                  "url": { "type": "string", "example": "https://api.example.com/webhooks" },
+                  "description": { "type": "string", "example": "Core Banking Alert Listener" },
+                  "events": {
+                    "type": "array",
+                    "items": { "type": "string", "enum": ["decision.recorded", "alert.created", "import.completed", "ping"] }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Webhook skapad",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/WebhookSubscription" }
+              }
+            }
+          },
+          "400": { "description": "Felaktiga parametrar" },
+          "401": { "description": "Obehörig" }
+        }
+      }
+    },
+    "/api/webhooks/{id}": {
+      "get": {
+        "summary": "Hämta webhook-detaljer",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": {
+            "description": "Webhook-prenumeration",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebhookSubscription" } } }
+          },
+          "404": { "description": "Hittades inte" }
+        }
+      },
+      "delete": {
+        "summary": "Ta bort webhook-prenumeration",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Borttagen" },
+          "404": { "description": "Hittades inte" }
+        }
+      }
+    },
+    "/api/webhooks/{id}/test": {
+      "post": {
+        "summary": "Skicka ett test-ping till webhook-endpointen",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Resultat av test-leveransen" },
+          "400": { "description": "Kunde inte leverera test-ping" }
+        }
+      }
     }
   },
   "components": {
@@ -1384,6 +1474,24 @@
           },
           "duplicateOfImportId": { "type": "string" },
           "error": { "type": "string" }
+        }
+      },
+      "WebhookSubscription": {
+        "type": "object",
+        "required": ["id", "url", "secret", "events", "active", "createdAt"],
+        "properties": {
+          "id": { "type": "string", "example": "whsub_123456" },
+          "url": { "type": "string", "example": "https://api.example.com/webhooks" },
+          "secret": { "type": "string", "example": "whsec_abcdef..." },
+          "events": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["decision.recorded", "alert.created", "import.completed", "ping"] }
+          },
+          "description": { "type": "string", "example": "Core Banking Alert Listener" },
+          "active": { "type": "boolean", "default": true },
+          "createdBy": { "type": "string", "example": "admin@example.com" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
         }
       }
     }

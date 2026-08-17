@@ -342,3 +342,38 @@ export function formatIdentifications(identifications?: Identification[]): strin
     })
     .filter(Boolean);
 }
+
+// --- Webhook Subscription & Event Types (issue #318) ---
+export type WebhookEventType = 'decision.recorded' | 'alert.created' | 'import.completed' | 'ping';
+
+export interface WebhookSubscription {
+  id: string; // e.g. "whsub_..."
+  url: string; // HTTPS target URL
+  secret: string; // HMAC-SHA256 signing secret ("whsec_...")
+  events: WebhookEventType[];
+  description?: string;
+  active: boolean;
+  createdBy: string;
+  createdAt: string; // ISO string
+  updatedAt: string; // ISO string
+}
+
+export interface WebhookEvent<T = any> {
+  id: string; // e.g. "evt_..."
+  type: WebhookEventType;
+  createdAt: string; // ISO string
+  data: T;
+}
+
+export interface WebhookDeliveryAttempt {
+  id: string;
+  subscriptionId: string;
+  eventId: string;
+  eventType: WebhookEventType;
+  url: string;
+  statusCode?: number;
+  success: boolean;
+  error?: string;
+  attemptedAt: string; // ISO string
+  durationMs: number;
+}
