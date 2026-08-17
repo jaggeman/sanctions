@@ -3,6 +3,7 @@ import * as fs from 'fs-extra';
 import { Command } from 'commander';
 import { db } from '../shared/firebase';
 import { processUpload, runFetchTriggeredImport } from '../importer/uploadPipeline';
+import { validateCsvPath } from '../importer/csvPath';
 import { runSearch } from '../search';
 import { primaryNameOf, aliasNamesOf, formatBirthDates, formatIdentifications, SanctionRecord } from '../shared/types';
 import { recordsToCsv } from '../shared/csvSerializer';
@@ -207,26 +208,32 @@ program
 
       let csvFailed = false;
       if (options.csv) {
-        const csvResult = await processUpload({
-          filePath: options.csv,
-          originalFilename: path.basename(options.csv),
-          sourceHint: options.csvSource,
-          uploadedBy: 'cli',
-          importOptions: { csvSeparator: options.csvSeparator },
-        });
+        const validation = validateCsvPath(options.csv);
+        if (!validation.valid) {
+          console.error(`❌ Ogiltig CSV-sökväg: ${validation.error}`);
+          csvFailed = true;
+        } else {
+          const csvResult = await processUpload({
+            filePath: validation.absolutePath!,
+            originalFilename: path.basename(validation.absolutePath!),
+            sourceHint: options.csvSource,
+            uploadedBy: 'cli',
+            importOptions: { csvSeparator: options.csvSeparator },
+          });
 
-        if (csvResult.outcome === 'applied') {
-          console.log(`\n✅ CSV-import applicerad: #${csvResult.importId}`);
-        } else if (csvResult.outcome === 'rejected') {
-          console.log(`\n⚪ CSV-import hoppades över: dubblett av #${csvResult.duplicateOfImportId}`);
-        } else if (csvResult.outcome === 'in_flight') {
-          console.log(`\n⏳ CSV-import pågår redan som #${csvResult.importId}`);
-        } else if (csvResult.outcome === 'unsupported_format') {
-          console.error(`❌ CSV-import: format stöds ej: ${csvResult.format}`);
-          csvFailed = true;
-        } else if (csvResult.outcome === 'failed') {
-          console.error(`❌ CSV-import misslyckades: ${csvResult.error}`);
-          csvFailed = true;
+          if (csvResult.outcome === 'applied') {
+            console.log(`\n✅ CSV-import applicerad: #${csvResult.importId}`);
+          } else if (csvResult.outcome === 'rejected') {
+            console.log(`\n⚪ CSV-import hoppades över: dubblett av #${csvResult.duplicateOfImportId}`);
+          } else if (csvResult.outcome === 'in_flight') {
+            console.log(`\n⏳ CSV-import pågår redan som #${csvResult.importId}`);
+          } else if (csvResult.outcome === 'unsupported_format') {
+            console.error(`❌ CSV-import: format stöds ej: ${csvResult.format}`);
+            csvFailed = true;
+          } else if (csvResult.outcome === 'failed') {
+            console.error(`❌ CSV-import misslyckades: ${csvResult.error}`);
+            csvFailed = true;
+          }
         }
       }
 
