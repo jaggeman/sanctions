@@ -41,7 +41,7 @@ let bucketInstance: ReturnType<ReturnType<typeof admin.storage>['bucket']> | und
 
 export function getBucket() {
   if (!bucketInstance) {
-    const bucketName = process.env.FIREBASE_STORAGE_BUCKET || `${projectId}.appspot.com`;
+    const bucketName = process.env.FIREBASE_STORAGE_BUCKET || `${projectId}-uploads`;
     bucketInstance = admin.storage().bucket(bucketName);
   }
   return bucketInstance;
