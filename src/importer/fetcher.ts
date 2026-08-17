@@ -24,6 +24,10 @@ export const SOURCE_URLS = {
   CH: 'https://www.sesam.search.admin.ch/sesam-search-web/pages/downloadXmlGesamtliste.xhtml?lang=en&action=downloadXmlGesamtlisteAction',
 };
 
+// Ukraine NSDC API base — requires NSDC_API_KEY env variable.
+// Request a key from sanctions@rnbo.gov.ua (issue #287).
+export const NSDC_API_BASE = 'https://api-drs.nsdc.gov.ua';
+
 /**
  * Downloads a file from a URL and saves it locally.
  */
