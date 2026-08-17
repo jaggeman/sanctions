@@ -9,7 +9,12 @@ import { runScheduledFetch } from '../importer/scheduledFetch';
  * silently mass-delisting.
  */
 export const scheduledSourceFetch = onSchedule(
-  { schedule: '0 6 * * *', timeZone: 'UTC' },
+  {
+    schedule: '0 6 * * *',
+    timeZone: 'UTC',
+    memory: '1GiB',
+    timeoutSeconds: 540,
+  },
   async () => {
     const outcomes = await runScheduledFetch();
     const failed = outcomes.filter((o) => o.status === 'error');
