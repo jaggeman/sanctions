@@ -64,6 +64,8 @@ program
   .argument('[queries...]', 'Sökord, t.ex. namn, alias eller passnummer (ett eller flera sökord)')
   .option('-s, --sources <sources>', 'Filtrera på källor (kommatecken-separerad, t.ex. EU,UN,US)')
   .option('-t, --type <type>', 'Filtrera på typ (individual, entity, vessel, aircraft)')
+  .option('-c, --country <country>', 'Jämför/filtrera land eller nationalitet (t.ex. SE, Sweden, RU)')
+  .option('-n, --nationality <nationality>', 'Synonym för --country')
   .option('-l, --limit <limit>', 'Max antal träffar att visa per sökning', '10')
   .option('--file <path>', 'Läs sökord från en textfil (ett per rad)')
   .action(async (queryArgs: string[], options) => {
@@ -100,6 +102,8 @@ program
       const searchOptions = {
         source: options.sources,
         type: options.type ? options.type.toLowerCase() : undefined,
+        country: options.country || options.nationality,
+        nationality: options.nationality,
         limit,
       };
 

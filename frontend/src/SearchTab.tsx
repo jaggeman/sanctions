@@ -60,13 +60,21 @@ function renderScoreTooltip(r: any) {
 
   return (
     <Box sx={{ p: 0.5, maxWidth: 320 }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5, flexWrap: 'wrap', gap: 0.5 }}>
         <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'inherit' }}>
           Score Breakdown: {r.score}%
         </Typography>
-        {b.dobBoostApplied && (
-          <Chip label="+10% DOB Match" size="small" color="primary" sx={{ height: 18, fontSize: '0.65rem' }} />
-        )}
+        <Box sx={{ display: 'flex', gap: 0.5 }}>
+          {b.dobBoostApplied && (
+            <Chip label="+10% DOB" size="small" color="primary" sx={{ height: 18, fontSize: '0.65rem' }} />
+          )}
+          {b.countryBoostApplied && (
+            <Chip label="+10% Country" size="small" color="success" sx={{ height: 18, fontSize: '0.65rem' }} />
+          )}
+          {b.countryPenaltyApplied && (
+            <Chip label="-20% Country Mismatch" size="small" color="error" sx={{ height: 18, fontSize: '0.65rem' }} />
+          )}
+        </Box>
       </Box>
 
       {b.matchedWords && b.matchedWords.length > 0 && (
@@ -102,6 +110,18 @@ function renderScoreTooltip(r: any) {
           </Typography>
           <Typography variant="caption" sx={{ display: 'block', pl: 1, color: 'warning.light' }}>
             {b.unmatchedQueryWords.join(', ')}
+          </Typography>
+        </Box>
+      )}
+
+      {b.countryMatchDetails && b.countryMatchDetails.status !== 'no_query' && (
+        <Box sx={{ mt: 0.5, mb: 0.5 }}>
+          <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', opacity: 0.85 }}>
+            Country comparison:
+          </Typography>
+          <Typography variant="caption" sx={{ display: 'block', pl: 1, opacity: 0.85 }}>
+            Query: {b.countryMatchDetails.queryCountry || 'N/A'} vs Candidate: [
+            {b.countryMatchDetails.candidateCountries?.join(', ') || 'none listed'}]
           </Typography>
         </Box>
       )}
@@ -161,6 +181,7 @@ const COLUMNS: { key: SortKey | null; label: string; numeric?: boolean }[] = [
 
 export default function SearchTab({ onSelectRecord }: SearchTabProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [countryQuery, setCountryQuery] = useState('');
   const [results, setResults] = useState<any[]>([]);
   const [sortKey, setSortKey] = useState<SortKey>('score');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -178,7 +199,11 @@ export default function SearchTab({ onSelectRecord }: SearchTabProps) {
     setHasSearched(true);
     setSearchError(null);
     try {
-      const res = await apiFetch(`/api/search?q=${encodeURIComponent(searchQuery)}`);
+      let url = `/api/search?q=${encodeURIComponent(searchQuery)}`;
+      if (countryQuery.trim()) {
+        url += `&country=${encodeURIComponent(countryQuery.trim())}`;
+      }
+      const res = await apiFetch(url);
       if (res.status === 401) {
         // Session expired — apiFetch's onSessionExpired callback (registered
         // by App) already flips userEmail back to null and returns to Login.
@@ -268,7 +293,7 @@ export default function SearchTab({ onSelectRecord }: SearchTabProps) {
           <Typography variant="h5" gutterBottom>
             Search Entities
           </Typography>
-          <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
+          <Box sx={{ display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 2, mt: 2 }}>
             <TextField
               fullWidth
               variant="outlined"
@@ -278,12 +303,22 @@ export default function SearchTab({ onSelectRecord }: SearchTabProps) {
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
               disabled={isLoading}
             />
+            <TextField
+              sx={{ minWidth: { sm: 240 } }}
+              variant="outlined"
+              placeholder="Country / Nationality (e.g. SE, RU)"
+              value={countryQuery}
+              onChange={(e) => setCountryQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+              disabled={isLoading}
+            />
             <Button
               variant="contained"
               size="large"
               startIcon={isLoading ? <CircularProgress size={20} color="inherit" /> : <SearchIcon />}
               onClick={handleSearch}
               disabled={isLoading}
+              sx={{ whiteSpace: 'nowrap' }}
             >
               Search
             </Button>

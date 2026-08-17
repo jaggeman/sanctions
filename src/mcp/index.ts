@@ -71,6 +71,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               enum: ['individual', 'entity', 'vessel', 'aircraft'],
               description: 'Filtrera på typ (t.ex. individual för personer, entity för organisationer).',
             },
+            country: {
+              type: 'string',
+              description: 'Jämför/filtrera land eller nationalitet (t.ex. SE, Sweden, RU). Ger bonus vid match och straffpoäng vid konflikt.',
+            },
+            nationality: {
+              type: 'string',
+              description: 'Synonym för country.',
+            },
             limit: {
               type: 'number',
               description: 'Max antal resultat att returnera (standard 10).',
@@ -231,6 +239,8 @@ export async function handleSearchSanctions(args: any) {
   const { results, totalMatches, truncated } = await runSearch(queryStr, {
     source: args?.source ? String(args.source) : undefined,
     type: args?.type ? String(args.type) : undefined,
+    country: args?.country ? String(args.country) : undefined,
+    nationality: args?.nationality ? String(args.nationality) : undefined,
     limit: parsedLimit,
   });
 
