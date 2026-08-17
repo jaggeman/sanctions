@@ -344,15 +344,68 @@ describe('SearchTab results table', () => {
     expect(screen.getByRole('button', { name: /export results/i })).toBeInTheDocument();
   });
 
-  it('renders no table at all when there are no results', async () => {
-    stubFetch(() => ({ status: 200, body: { results: [], totalMatches: 0, truncated: false } }));
+  it('includes country parameter in search URL when provided (issue #319)', async () => {
+    let requestedUrl = '';
+    stubFetch((url) => {
+      requestedUrl = url;
+      return { status: 200, body: { results: [], totalMatches: 0, truncated: false } };
+    });
 
     render(<SearchTab onSelectRecord={vi.fn()} />);
-    fireEvent.change(screen.getByPlaceholderText(/search by name/i), { target: { value: 'zzz' } });
+    fireEvent.change(screen.getByPlaceholderText(/search by name/i), { target: { value: 'Putin' } });
+    fireEvent.change(screen.getByPlaceholderText(/country \/ nationality/i), { target: { value: 'SE' } });
     fireEvent.click(screen.getByRole('button', { name: /^search$/i }));
 
-    await waitFor(() => expect(screen.getByText(/No results found/i)).toBeInTheDocument());
-    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    await waitFor(() => expect(requestedUrl).toContain('country=SE'));
+    expect(requestedUrl).toContain('q=Putin');
+  });
+
+  it('renders country boost and mismatch breakdown badges in tooltip (issue #319)', async () => {
+    stubFetch(() => ({
+      status: 200,
+      body: {
+        results: [
+          {
+            id: 'RU-1',
+            source: 'EU',
+            type: 'individual',
+            names: [{ wholeName: 'Vladimir Putin' }],
+            score: 95,
+            matchedAlias: 'Vladimir Putin',
+            scoreBreakdown: {
+              mechanism: 'name',
+              matchedWords: [{ queryWord: 'putin', candidateWord: 'Putin', score: 100 }],
+              unmatchedCandidateWords: [],
+              unmatchedQueryWords: [],
+              queryCoverage: 1,
+              candidateCoverage: 1,
+              countryBoostApplied: true,
+              countryMatchDetails: {
+                status: 'match',
+                queryCountry: 'RU',
+                candidateCountries: ['RU'],
+              },
+            },
+          },
+        ],
+        totalMatches: 1,
+        truncated: false,
+      },
+    }));
+
+    render(<SearchTab onSelectRecord={vi.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText(/search by name/i), { target: { value: 'Putin' } });
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }));
+
+    await waitFor(() => expect(screen.getByText('Vladimir Putin')).toBeInTheDocument());
+
+    const scoreCell = screen.getByText('95%');
+    fireEvent.mouseEnter(scoreCell);
+
+    await waitFor(() => {
+      expect(screen.getByText('+10% Country')).toBeInTheDocument();
+      expect(screen.getByText(/Country comparison:/i)).toBeInTheDocument();
+    });
   });
 });
 

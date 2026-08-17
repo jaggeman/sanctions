@@ -49,7 +49,7 @@ function requesterIdentity(req: Request): string {
  * latency path, and a write failure there is logged, not thrown.
  */
 searchRouter.get('/search', requireAuthOrScope('sanctions:read'), async (req, res): Promise<any> => {
-  const { q, source, type, limit, threshold, includeDelisted, dob } = req.query;
+  const { q, source, type, limit, threshold, includeDelisted, dob, country, nationality } = req.query;
 
   if (!q || typeof q !== 'string') {
     return res.status(400).json({ error: 'Query parameter "q" is required.' });
@@ -86,6 +86,9 @@ searchRouter.get('/search', requireAuthOrScope('sanctions:read'), async (req, re
       // Booster, not a hard filter (src/search/index.ts) — was already built
       // into runSearch/matcher but never reachable from this route.
       dob: typeof dob === 'string' ? dob : undefined,
+      // Secondary attribute matching (issue #319) — nationality/country comparison
+      country: typeof country === 'string' ? country : undefined,
+      nationality: typeof nationality === 'string' ? nationality : undefined,
     });
 
     res.json({ results, totalMatches, truncated, tookMs, sourcesSearched });
@@ -100,6 +103,8 @@ searchRouter.get('/search', requireAuthOrScope('sanctions:read'), async (req, re
         threshold: parsedThreshold,
         includeDelisted: includeDelisted === 'true',
         dob: typeof dob === 'string' ? dob : undefined,
+        country: typeof country === 'string' ? country : undefined,
+        nationality: typeof nationality === 'string' ? nationality : undefined,
       },
       resultCount: totalMatches,
       timestamp: new Date().toISOString(),

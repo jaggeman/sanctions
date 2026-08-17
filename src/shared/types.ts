@@ -264,6 +264,8 @@ export interface SearchLogEntry {
     threshold?: number;
     includeDelisted?: boolean;
     dob?: string;
+    country?: string;
+    nationality?: string;
   };
   resultCount: number; // totalMatches for a search; 1 (found) or 0 (not found) for a lookup
   timestamp: string; // ISO string

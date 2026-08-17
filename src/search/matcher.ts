@@ -472,6 +472,13 @@ export interface ScoreBreakdown {
   queryCoverage: number;
   candidateCoverage: number;
   dobBoostApplied?: boolean;
+  countryBoostApplied?: boolean;
+  countryPenaltyApplied?: boolean;
+  countryMatchDetails?: {
+    status: 'no_query' | 'no_candidate_data' | 'match' | 'mismatch';
+    queryCountry?: string;
+    candidateCountries: string[];
+  };
   summary?: string;
 }
 

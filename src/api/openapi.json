@@ -89,6 +89,26 @@
               "type": "string",
               "example": "1952-10-07"
             }
+          },
+          {
+            "name": "country",
+            "in": "query",
+            "description": "Land eller ISO-2/3-landskod (t.ex. 'SE', 'Sweden', 'RU') för sekundär attributmatchning (issue #319). Ger +10 bonus vid matchning och -20 straffpoäng vid explicit konflikt.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "SE"
+            }
+          },
+          {
+            "name": "nationality",
+            "in": "query",
+            "description": "Synonym för country-parametern.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "Swedish"
+            }
           }
         ],
         "responses": {

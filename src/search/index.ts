@@ -9,6 +9,12 @@ import {
   ScoreBreakdown,
   explainTokenizedNameMatch,
 } from './matcher';
+import {
+  evaluateCountryMatch,
+  COUNTRY_MATCH_BOOST,
+  COUNTRY_MISMATCH_PENALTY,
+  CountryMatchResult,
+} from './country';
 import { applyOverride } from '../overrides';
 
 export interface ScoredResult extends SanctionRecord {
@@ -24,6 +30,8 @@ export interface SearchOptions {
   limit?: number;
   threshold?: number; // 0..100
   dob?: string; // booster, not a hard filter — source data has year-only values
+  country?: string; // e.g. "SE", "Sweden", "SY" (issue #319)
+  nationality?: string; // synonym for country (issue #319)
   includeDelisted?: boolean; // default false — soft-deleted records are hidden (issue #9)
 }
 
@@ -367,6 +375,8 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
     }
   }
 
+  const queryCountry = options.country || options.nationality;
+
   // Evaluate candidate records (pruned via inverted index when threshold > 0,
   // or full record set when threshold === 0 per test contract).
   const scoreAt = (position: number) => {
@@ -375,18 +385,30 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
 
     const candidateTokens = nameIndex[position] ?? [];
     const { score, matchedName, winningCandidate } = scoreTokenizedNameMatch(tokenizedQuery, candidateTokens);
-    const isDobBoosted = options.dob && matchesDob(record, options.dob);
-    const boostedScore = isDobBoosted
-      ? Math.min(100, score + DOB_MATCH_BOOST)
-      : score;
+    const isDobBoosted = Boolean(options.dob && matchesDob(record, options.dob) && score > 0);
+    const countryResult = evaluateCountryMatch(queryCountry, record);
 
-    if (boostedScore >= threshold) {
+    let calculatedScore = score;
+    if (score > 0) {
+      if (isDobBoosted) {
+        calculatedScore += DOB_MATCH_BOOST;
+      }
+      if (countryResult.boostApplied) {
+        calculatedScore += COUNTRY_MATCH_BOOST;
+      } else if (countryResult.penaltyApplied) {
+        calculatedScore -= COUNTRY_MISMATCH_PENALTY;
+      }
+    }
+    const finalScore = Math.max(0, Math.min(100, calculatedScore));
+
+    if (finalScore >= threshold) {
       scored.push({
         ...record,
-        score: boostedScore,
+        score: finalScore,
         matchedAlias: matchedName,
         _winningCandidate: winningCandidate,
-        _dobBoostApplied: Boolean(isDobBoosted && score > 0),
+        _dobBoostApplied: isDobBoosted,
+        _countryResult: countryResult.status !== 'no_query' ? countryResult : undefined,
       } as any);
     }
   };
@@ -406,8 +428,9 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
   const totalMatches = scored.length;
   const results = scored.slice(0, limit);
 
-  // Generate breakdown on-demand only for results returned to caller (issue #277)
+  // Generate breakdown on-demand only for results returned to caller (issue #277, #319)
   for (const result of results) {
+    const countryRes: CountryMatchResult | undefined = (result as any)._countryResult;
     if (result.matchedAlias === 'Passport/ID match') {
       result.scoreBreakdown = {
         mechanism: 'passport_id',
@@ -417,16 +440,37 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
         queryCoverage: 1,
         candidateCoverage: 1,
         summary: 'Exact passport or national ID match',
+        countryBoostApplied: countryRes?.boostApplied ? true : undefined,
+        countryPenaltyApplied: countryRes?.penaltyApplied ? true : undefined,
+        countryMatchDetails: countryRes ? {
+          status: countryRes.status,
+          queryCountry: countryRes.queryCountry,
+          candidateCountries: countryRes.candidateCountries,
+        } : undefined,
       };
     } else if ((result as any)._winningCandidate) {
       const breakdown = explainTokenizedNameMatch(tokenizedQuery, (result as any)._winningCandidate);
       if ((result as any)._dobBoostApplied) {
         breakdown.dobBoostApplied = true;
       }
+      if (countryRes) {
+        if (countryRes.boostApplied) {
+          breakdown.countryBoostApplied = true;
+        }
+        if (countryRes.penaltyApplied) {
+          breakdown.countryPenaltyApplied = true;
+        }
+        breakdown.countryMatchDetails = {
+          status: countryRes.status,
+          queryCountry: countryRes.queryCountry,
+          candidateCountries: countryRes.candidateCountries,
+        };
+      }
       result.scoreBreakdown = breakdown;
     }
     delete (result as any)._winningCandidate;
     delete (result as any)._dobBoostApplied;
+    delete (result as any)._countryResult;
   }
 
   return {
