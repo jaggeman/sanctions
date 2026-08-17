@@ -1,5 +1,6 @@
 import { db } from '../shared/firebase';
 import { Decision, DecisionChangeType, DecisionHistoryEntry } from '../shared/types';
+import { dispatchWebhookEvent } from '../webhooks';
 
 const COLLECTION = 'decisions';
 const VALID_VERDICTS = new Set(['false_positive', 'true_positive']);
@@ -63,6 +64,9 @@ export async function saveDecision(input: SaveDecisionInput): Promise<Decision> 
   // history entry, which is the higher-priority guarantee.
   const historyEntry: DecisionHistoryEntry = { changeType, changedAt: decision.decidedAt, decision };
   await docRef.collection('history').doc().set(historyEntry);
+
+  // Dispatch webhook event asynchronously (issue #318)
+  dispatchWebhookEvent('decision.recorded', decision).catch(() => {});
 
   return decision;
 }

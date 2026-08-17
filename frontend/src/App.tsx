@@ -30,6 +30,7 @@ const UploadTab = lazyWithRetry(() => import('./UploadTab'), 'UploadTab');
 const ImportHistoryTab = lazyWithRetry(() => import('./ImportHistoryTab'), 'ImportHistoryTab');
 const OfficialSourcesTab = lazyWithRetry(() => import('./OfficialSourcesTab'), 'OfficialSourcesTab');
 const ApiTokensTab = lazyWithRetry(() => import('./ApiTokensTab'), 'ApiTokensTab');
+const WebhooksTab = lazyWithRetry(() => import('./WebhooksTab'), 'WebhooksTab');
 const HelpManualTab = lazyWithRetry(() => import('./HelpManualTab'), 'HelpManualTab');
 const DriftStatusTab = lazyWithRetry(() => import('./DriftStatusTab'), 'DriftStatusTab');
 const RecordDetail = lazyWithRetry(() => import('./RecordDetail'), 'RecordDetail');
@@ -223,6 +224,7 @@ function App() {
             <Tab label="Import History" />
             <Tab label="Official Sources" />
             <Tab label="API Tokens" />
+            <Tab label="Webhooks" />
             <Tab label="Help & Manual" />
             <Tab label="System Status" />
           </Tabs>
@@ -254,9 +256,11 @@ function App() {
 
             {tabValue === 4 && <ApiTokensTab />}
 
-            {tabValue === 5 && <HelpManualTab />}
+            {tabValue === 5 && <WebhooksTab />}
 
-            {tabValue === 6 && <DriftStatusTab />}
+            {tabValue === 6 && <HelpManualTab />}
+
+            {tabValue === 7 && <DriftStatusTab />}
           </Suspense>
         </TabErrorBoundary>
       </Container>

@@ -13,6 +13,8 @@ export type GranularApiTokenScope =
   | 'decisions:write'
   | 'imports:read'
   | 'imports:write'
+  | 'webhooks:read'
+  | 'webhooks:write'
   | 'system:read';
 
 export type LegacyApiTokenScope = 'read' | 'write';
@@ -74,6 +76,7 @@ export const READ_SCOPES: readonly GranularApiTokenScope[] = [
   'overrides:read',
   'decisions:read',
   'imports:read',
+  'webhooks:read',
   'system:read',
 ];
 
@@ -82,6 +85,7 @@ export const WRITE_SCOPES: readonly GranularApiTokenScope[] = [
   'overrides:write',
   'decisions:write',
   'imports:write',
+  'webhooks:write',
 ];
 
 export const VALID_SCOPES: readonly ApiTokenScope[] = [
