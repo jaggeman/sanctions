@@ -275,29 +275,132 @@ describe('UploadTab — applied outcome', () => {
   });
 });
 
-describe('UploadTab — batch upload', () => {
-  it('renders batch queue when multiple files are selected and executes sequential uploads', async () => {
+describe('UploadTab — batch upload (issue #289)', () => {
+  it('automatically previews all files with dryRun: true and requires Apply click before uploading', async () => {
     const file1 = makeFile('file1.xml', '<CONSOLIDATED_LIST/>');
     const file2 = makeFile('file2.xml', '<sdnList/>');
+
+    const dryRunCalls: string[] = [];
+    const applyCalls: string[] = [];
 
     stubFetch((_url, init) => {
       const body = init?.body as FormData;
       const file = body.get('file') as File;
-      if (file.name === 'file1.xml') {
-        return { status: 200, body: { status: 'applied', counts: { parsed: 10, uploaded: 10 } } };
+      const isDryRun = body.get('dryRun') === 'true';
+
+      if (isDryRun) {
+        dryRunCalls.push(file.name);
+        if (file.name === 'file1.xml') {
+          return {
+            status: 200,
+            body: {
+              status: 'dry_run',
+              importId: 'abc1',
+              counts: { parsed: 10, uploaded: 0 },
+              diffs: [{
+                source: 'EU',
+                counts: { parsed: 10, added: 5, updated: 2, unchanged: 3, delisted: 0, skipped: 0 },
+                samples: { added: [], updated: [], unchanged: [], delisted: [] },
+                toDelistIds: [],
+                activeCount: 3,
+                guardTripped: false,
+              }],
+            },
+          };
+        }
+        return { status: 409, body: { duplicateOfImportId: 'earlier-99' } };
       }
-      return { status: 409, body: { duplicateOfImportId: 'earlier-99' } };
+
+      applyCalls.push(file.name);
+      return { status: 200, body: { status: 'applied', counts: { parsed: 10, uploaded: 10 } } };
     });
 
     render(<UploadTab onViewImport={vi.fn()} />);
     const input = screen.getByLabelText(/file/i, { selector: 'input' }) as HTMLInputElement;
     fireEvent.change(input, { target: { files: [file1, file2] } });
 
-    await waitFor(() => expect(screen.getByText(/Batch Upload Queue/i)).toBeInTheDocument());
+    // Dry runs should run automatically for both files
+    await waitFor(() => expect(dryRunCalls).toEqual(['file1.xml', 'file2.xml']));
+    // No apply calls should happen yet!
+    expect(applyCalls).toEqual([]);
+
+    // The batch preview table should be visible with preview counts/statuses
+    expect(screen.getByText(/Batch Upload/i)).toBeInTheDocument();
     expect(screen.getByText('file1.xml')).toBeInTheDocument();
     expect(screen.getByText('file2.xml')).toBeInTheDocument();
+    expect(screen.getByText('Skipped (Duplicate)')).toBeInTheDocument();
+
+    // Clicking Apply All should trigger the actual upload
+    const applyBtn = screen.getByRole('button', { name: /apply/i });
+    expect(applyBtn).not.toBeDisabled();
+    fireEvent.click(applyBtn);
+
+    await waitFor(() => expect(applyCalls).toEqual(['file1.xml']));
     await waitFor(() => expect(screen.getByText(/Batch complete/i)).toBeInTheDocument());
-    expect(screen.getByText(/1 files imported, 1 skipped/i)).toBeInTheDocument();
+  });
+
+  it('surfaces delist guard warning for batch upload and disables Apply until override is checked', async () => {
+    const file1 = makeFile('file1.xml', '<CONSOLIDATED_LIST/>');
+    const file2 = makeFile('file2.xml', '<sdnList/>');
+
+    const appliedForces: string[] = [];
+
+    stubFetch((_url, init) => {
+      const body = init?.body as FormData;
+      const file = body.get('file') as File;
+      const isDryRun = body.get('dryRun') === 'true';
+
+      if (isDryRun) {
+        if (file.name === 'file1.xml') {
+          return {
+            status: 200,
+            body: {
+              status: 'dry_run',
+              importId: 'abc1',
+              counts: { parsed: 10, uploaded: 0 },
+              diffs: [{
+                source: 'EU',
+                counts: { parsed: 10, added: 0, updated: 0, unchanged: 2, delisted: 8, skipped: 0 },
+                samples: { added: [], updated: [], unchanged: [], delisted: [] },
+                toDelistIds: ['EU-1'],
+                activeCount: 10,
+                guardTripped: true,
+              }],
+            },
+          };
+        }
+        return {
+          status: 200,
+          body: {
+            status: 'dry_run',
+            importId: 'abc2',
+            counts: { parsed: 5, uploaded: 0 },
+            diffs: [],
+          },
+        };
+      }
+
+      appliedForces.push(body.get('force') as string);
+      return { status: 200, body: { status: 'applied', counts: { parsed: 10, uploaded: 10 } } };
+    });
+
+    render(<UploadTab onViewImport={vi.fn()} />);
+    const input = screen.getByLabelText(/file/i, { selector: 'input' }) as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [file1, file2] } });
+
+    await waitFor(() => expect(screen.getByText(/Refusing to delist/i)).toBeInTheDocument());
+    const applyBtn = screen.getByRole('button', { name: /apply/i });
+    expect(applyBtn).toBeDisabled();
+
+    // Check override
+    const checkbox = screen.getByRole('checkbox', { name: /override|understand|confirm/i });
+    fireEvent.click(checkbox);
+
+    expect(applyBtn).not.toBeDisabled();
+    fireEvent.click(applyBtn);
+
+    await waitFor(() => expect(appliedForces.length).toBe(2));
+    expect(appliedForces[0]).toBe('true');
   });
 });
 
