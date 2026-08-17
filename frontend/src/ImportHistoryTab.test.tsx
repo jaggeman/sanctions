@@ -150,4 +150,38 @@ describe('ImportHistoryTab', () => {
 
     await waitFor(() => expect(sessionExpired).toHaveBeenCalledTimes(1));
   });
+
+  it('displays the official website and download link when clicking an official source import', async () => {
+    stubFetch([APPLIED]);
+    render(<ImportHistoryTab />);
+
+    await waitFor(() => expect(screen.getByText('eu_list.xml')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('eu_list.xml'));
+
+    await waitFor(() => expect(screen.getByText(/Official Source Website/i)).toBeInTheDocument());
+    const portalLink = screen.getByRole('link', { name: /Official Website/i });
+    expect(portalLink).toHaveAttribute(
+      'href',
+      'https://data.europa.eu/data/datasets/consolidated-list-of-persons-groups-and-entities-subject-to-eu-financial-sanctions',
+    );
+    expect(portalLink).toHaveAttribute('target', '_blank');
+
+    const downloadLink = screen.getByRole('link', { name: /Direct Data Download URL/i });
+    expect(downloadLink).toHaveAttribute(
+      'href',
+      'https://webgate.ec.europa.eu/europeaid/fsd/fsf/public/files/xmlFullSanctionsList_1_1/content',
+    );
+    expect(downloadLink).toHaveAttribute('target', '_blank');
+  });
+
+  it('displays custom upload origin when clicking a PEP or custom import', async () => {
+    stubFetch([FAILED]);
+    render(<ImportHistoryTab />);
+
+    await waitFor(() => expect(screen.getByText('broken.csv')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('broken.csv'));
+
+    await waitFor(() => expect(screen.getByText(/Manual upload \/ custom dataset/i)).toBeInTheDocument());
+  });
 });
+
