@@ -218,13 +218,13 @@ describe('processUpload — failure handling', () => {
     expect(markImportFailed).toHaveBeenCalledWith('abc123', 'no records parsed');
   });
 
-  it('marks the import failed when the Storage upload itself throws', async () => {
+  it('proceeds with import even if raw Storage archive upload throws', async () => {
     bucketFileSave.mockRejectedValueOnce(new Error('storage quota exceeded'));
 
     const result = await processUpload(baseOptions());
 
-    expect(result.outcome).toBe('failed');
-    expect(markImportFailed).toHaveBeenCalledWith('abc123', 'storage quota exceeded');
+    expect(result.outcome).toBe('applied');
+    expect(runImport).toHaveBeenCalled();
   });
 
   // issue #60: a bookkeeping failure AFTER a real success must never get

@@ -143,18 +143,22 @@ export async function processUpload(options: ProcessUploadOptions): Promise<Proc
     return { outcome: 'unsupported_format', importId: sha256, format };
   }
 
-  let result;
+  // Save a copy of the raw source file to Cloud Storage for audit/history
   try {
     await getBucket().file(storagePath).save(await fs.readFile(filePath));
+  } catch (storageErr: any) {
+    logger.warn('uploadPipeline.storage_save_failed', { storagePath, error: storageErr.message });
+  }
 
+  let result;
+  try {
     result = await runImport({
       uploadedFile: { path: filePath, format: formatForRunImport(format), source },
       // Diff-engine controls (issue #8) forwarded from the upload request.
       ...importOptions,
     });
   } catch (err: any) {
-    // Storage or runImport itself failed — nothing durable happened, so
-    // 'failed' is accurate here.
+    // runImport itself threw — nothing durable happened, so 'failed' is accurate here.
     await markImportFailed(sha256, err.message);
     return { outcome: 'failed', importId: sha256, error: err.message };
   }
