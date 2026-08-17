@@ -177,6 +177,89 @@ describe('uploadRecords — soft delete fields + version trail', () => {
     expect(version.importId).toBe('import-1');
   });
 
+  // --- issue #292: preserve parser-supplied delisted status ------------------
+
+  it('preserves status: "delisted" and delistedAt when a new record arrives with status: "delisted" (issue #292)', async () => {
+    await uploadRecords([record({ status: 'delisted', delistedAt: '2016-03-01' })], 'import-1');
+
+    const doc = store.get('PEP-1')!;
+    expect(doc.data.status).toBe('delisted');
+    expect(doc.data.delistedAt).toBe('2016-03-01');
+
+    const version = await getVersion('PEP-1', 'import-1');
+    expect(version).toBeTruthy();
+    expect(version.changeType).toBe('created');
+    expect(version.record.status).toBe('delisted');
+    expect(version.record.delistedAt).toBe('2016-03-01');
+  });
+
+  it('updates an active record to delisted when incoming record has status: "delisted" (issue #292)', async () => {
+    await uploadRecords([record({ status: 'active' })], 'import-1');
+    expect(store.get('PEP-1')!.data.status).toBe('active');
+
+    await uploadRecords([record({ status: 'delisted', delistedAt: '2016-03-01' })], 'import-2');
+
+    const doc = store.get('PEP-1')!;
+    expect(doc.data.status).toBe('delisted');
+    expect(doc.data.delistedAt).toBe('2016-03-01');
+
+    const version = await getVersion('PEP-1', 'import-2');
+    expect(version).toBeTruthy();
+    expect(version.changeType).toBe('delisted');
+    expect(version.record.status).toBe('delisted');
+    expect(version.record.delistedAt).toBe('2016-03-01');
+  });
+
+  it('strips delistedAt when record status is active (issue #292)', async () => {
+    await uploadRecords([record({ status: 'active', delistedAt: '2016-03-01' } as any)], 'import-1');
+
+    const doc = store.get('PEP-1')!;
+    expect(doc.data.status).toBe('active');
+    expect(doc.data.delistedAt).toBeUndefined();
+  });
+
+  it('preserves status: "delisted" when existing delisted record is re-uploaded with status: "delisted" and updated content (issue #292)', async () => {
+    await uploadRecords([record({ status: 'delisted', delistedAt: '2016-03-01' })], 'import-1');
+    await uploadRecords([record({ status: 'delisted', delistedAt: '2016-03-01', names: namesOverride('Updated Name') })], 'import-2');
+
+    const doc = store.get('PEP-1')!;
+    expect(doc.data.status).toBe('delisted');
+    expect(doc.data.delistedAt).toBe('2016-03-01');
+
+    const version = await getVersion('PEP-1', 'import-2');
+    expect(version).toBeTruthy();
+    expect(version.changeType).toBe('updated');
+  });
+
+  it('imports CH fixture records preserving delisted status and stripping delistedAt for active (issue #292)', async () => {
+    const path = await import('path');
+    const { parseChXmlStream } = await import('../../src/importer/parsers/ch');
+    const fixturePath = path.join(__dirname, '../fixtures/ch_sample.xml');
+    const chRecords: SanctionRecord[] = [];
+    await parseChXmlStream(fixturePath, (r) => { chRecords.push(r); });
+
+    await uploadRecords(chRecords, 'import-ch');
+
+    // 3 delisted records in fixture
+    expect(store.get('CH-5142')?.data.status).toBe('delisted');
+    expect(store.get('CH-5142')?.data.delistedAt).toBe('2016-03-01');
+    expect(store.get('CH-5816')?.data.status).toBe('delisted');
+    expect(store.get('CH-5816')?.data.delistedAt).toBe('2013-12-20');
+    expect(store.get('CH-5374')?.data.status).toBe('delisted');
+    expect(store.get('CH-5374')?.data.delistedAt).toBe('2016-03-01');
+
+    // 4 active records in fixture
+    expect(store.get('CH-44348')?.data.status).toBe('active');
+    expect(store.get('CH-44348')?.data.delistedAt).toBeUndefined();
+    expect(store.get('CH-85396')?.data.status).toBe('active');
+    expect(store.get('CH-85396')?.data.delistedAt).toBeUndefined();
+    expect(store.get('CH-34461')?.data.status).toBe('active');
+    expect(store.get('CH-34461')?.data.delistedAt).toBeUndefined();
+    expect(store.get('CH-52941')?.data.status).toBe('active');
+    expect(store.get('CH-52941')?.data.delistedAt).toBeUndefined();
+  });
+
+
   it('writes no version entry when a re-upload is content-identical', async () => {
     await uploadRecords([record()], 'import-1');
     await uploadRecords([record()], 'import-2');

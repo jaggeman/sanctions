@@ -280,10 +280,17 @@ export async function uploadRecords(records: SanctionRecord[], importId?: string
 
       let changeType: ChangeType | null;
       let existing: SanctionRecord | undefined;
+      const incomingDelisted = record.status === 'delisted';
 
       if (!existingDoc.exists) {
-        record.status = 'active';
-        record.listedAt = now;
+        if (incomingDelisted) {
+          record.status = 'delisted';
+          record.delistedAt = record.delistedAt || now;
+        } else {
+          record.status = 'active';
+          delete record.delistedAt;
+        }
+        record.listedAt = record.listedAt || now;
         record.updatedAt = now;
         changeType = 'created';
       } else {
@@ -291,7 +298,6 @@ export async function uploadRecords(records: SanctionRecord[], importId?: string
         const wasDelisted = existing.status === 'delisted';
         const contentChanged = existing.contentHash !== record.contentHash;
 
-        record.status = 'active';
         // issue #39: every parser stamps createdAt fresh on every run, so
         // without this the incoming record's createdAt ("now") would
         // silently overwrite the original "first seen" date on any genuine
@@ -301,33 +307,53 @@ export async function uploadRecords(records: SanctionRecord[], importId?: string
         // legacy doc that never had createdAt stored at all.
         record.createdAt = existing.createdAt || record.createdAt;
 
-        if (wasDelisted) {
-          changeType = 'relisted';
-          record.listedAt = existing.listedAt || now; // preserve first-listed date
-          record.updatedAt = now;
-        } else if (contentChanged) {
-          changeType = 'updated';
-          record.listedAt = existing.listedAt || now; // preserve first-listed date
-          record.updatedAt = now;
+        if (incomingDelisted) {
+          record.status = 'delisted';
+          record.delistedAt = record.delistedAt || existing.delistedAt || now;
+          record.listedAt = existing.listedAt || record.listedAt || now;
+
+          if (!wasDelisted) {
+            changeType = 'delisted';
+            record.updatedAt = now;
+          } else if (contentChanged) {
+            changeType = 'updated';
+            record.updatedAt = now;
+          } else {
+            changeType = null;
+            record.updatedAt = existing.updatedAt;
+          }
         } else {
-          // Truly unchanged (issue #68): don't let updatedAt/listedAt drift
-          // forward on every import run just because the record was
-          // re-uploaded — that would contradict "an unchanged re-import
-          // writes nothing" above and silently corrupt listedAt for legacy
-          // records that never had one stored (it would otherwise reset to
-          // "today" on every re-import until the first real content change
-          // happened to lock it in).
-          changeType = null;
-          record.listedAt = existing.listedAt;
-          record.updatedAt = existing.updatedAt;
+          record.status = 'active';
+          delete record.delistedAt;
+
+          if (wasDelisted) {
+            changeType = 'relisted';
+            record.listedAt = existing.listedAt || now; // preserve first-listed date
+            record.updatedAt = now;
+          } else if (contentChanged) {
+            changeType = 'updated';
+            record.listedAt = existing.listedAt || now; // preserve first-listed date
+            record.updatedAt = now;
+          } else {
+            // Truly unchanged (issue #68): don't let updatedAt/listedAt drift
+            // forward on every import run just because the record was
+            // re-uploaded — that would contradict "an unchanged re-import
+            // writes nothing" above and silently corrupt listedAt for legacy
+            // records that never had one stored (it would otherwise reset to
+            // "today" on every re-import until the first real content change
+            // happened to lock it in).
+            changeType = null;
+            record.listedAt = existing.listedAt;
+            record.updatedAt = existing.updatedAt;
+          }
         }
       }
 
       if (changeType) {
-        // Clear delistedAt on relist by omitting it from the merged write and
+        // Clear delistedAt when active (including relist) by omitting it from the merged write and
         // explicitly deleting any existing value.
         const toWrite: any = { ...record };
-        if (changeType === 'relisted') {
+        if (record.status === 'active') {
           toWrite.delistedAt = admin.firestore.FieldValue.delete();
         }
         // issue #39: `merge: true` never removes a key that's simply absent
