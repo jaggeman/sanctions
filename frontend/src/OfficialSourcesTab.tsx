@@ -131,6 +131,28 @@ const RESOURCES: OfficialSourceResource[] = [
     url: 'https://www.seco.admin.ch/seco/en/home/Aussenwirtschaftspolitik_Wirtschaftliche_Zusammenarbeit/Wirtschaftsbeziehungen/exportkontrollen-und-sanktionen/sanktionen-embargos.html',
     buttonLabel: 'SECO Regulations',
   },
+
+  // Ukraine (UA — NSDC State Register of Sanctions, issue #287)
+  {
+    title: '🇺🇦 State Register of Sanctions (РНБО)',
+    source: 'UA',
+    sourceLabel: 'Ukraine (NSDC)',
+    color: 'secondary',
+    description:
+      'The official Ukrainian National Security and Defense Council (РНБО/NSDC) State Register of Sanctions — covering ~22,000 sanctioned individuals and entities under Presidential Decrees.',
+    url: 'https://drs.nsdc.gov.ua',
+    buttonLabel: 'Open NSDC Register',
+  },
+  {
+    title: '🇺🇦 NSDC Sanctions API',
+    source: 'UA',
+    sourceLabel: 'Ukraine (NSDC)',
+    color: 'secondary',
+    description:
+      'Machine-readable REST API for the Ukrainian State Register of Sanctions (OAS 3.0 spec). Requires API key — request access at sanctions@rnbo.gov.ua.',
+    url: 'https://api-drs.nsdc.gov.ua',
+    buttonLabel: 'API Docs',
+  },
 ];
 
 /**

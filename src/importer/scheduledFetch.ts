@@ -1,6 +1,10 @@
 import { downloadFile, SOURCE_URLS } from './fetcher';
 import { processUpload, ProcessUploadResult } from './uploadPipeline';
 import { SanctionSource } from '../shared/types';
+import { parseUaListStreaming } from './parsers/ua';
+import { startDiffSession } from './diff';
+import { invalidateSearchIndex } from '../search';
+import { logger } from '../shared/logger';
 
 export interface ScheduledSource {
   source: Extract<SanctionSource, 'EU' | 'UN' | 'US' | 'UK' | 'CH'>;
@@ -42,6 +46,7 @@ export interface ScheduledFetchOutcome {
  * per-source try/catch pattern).
  */
 export async function runScheduledFetch(): Promise<ScheduledFetchOutcome[]> {
+  const log = logger.child({ module: 'importer.scheduledFetch' });
   const outcomes: ScheduledFetchOutcome[] = [];
 
   for (const { source, filename } of SCHEDULED_SOURCES) {
@@ -65,6 +70,41 @@ export async function runScheduledFetch(): Promise<ScheduledFetchOutcome[]> {
       console.error(`Scheduled fetch: ${source} download/import threw: ${error.message}`);
       outcomes.push({ source, status: 'error', error: error.message });
     }
+  }
+
+  // Ukraine NSDC — REST/JSON API, not a downloadable XML file (issue #287).
+  // Runs only when NSDC_API_KEY is set; gracefully skips otherwise.
+  try {
+    const session = await startDiffSession('UA', { mode: 'sync' });
+    let count = 0;
+    let buffer: import('../shared/types').SanctionRecord[] = [];
+
+    const flush = async () => {
+      if (buffer.length === 0) return;
+      const chunk = buffer;
+      buffer = [];
+      await session.addChunk(chunk);
+    };
+
+    await parseUaListStreaming(async (record) => {
+      count++;
+      buffer.push(record);
+      if (buffer.length >= 200) await flush();
+    });
+    await flush();
+
+    if (count > 0) {
+      await session.finish();
+      await invalidateSearchIndex();
+      log.info('scheduledFetch.ua.done', { count });
+      outcomes.push({ source: 'UA' as any, status: 'ok' });
+    } else {
+      session.abort();
+      log.info('scheduledFetch.ua.skipped', { reason: 'no records (API key absent or API returned 0)' });
+    }
+  } catch (error: any) {
+    console.error(`Scheduled fetch: UA import threw: ${error.message}`);
+    outcomes.push({ source: 'UA' as any, status: 'error', error: error.message });
   }
 
   return outcomes;

@@ -6,6 +6,7 @@ import { parseUNList } from './parsers/un';
 import { parseUSListStreaming } from './parsers/us';
 import { parseUKListStreaming } from './parsers/uk';
 import { parseChXmlStream } from './parsers/ch';
+import { parseUaListStreaming } from './parsers/ua';
 import { parseCSVList } from './parsers/csv';
 import {
   startDiffSession,
@@ -22,7 +23,7 @@ import { validateCsvPath } from './csvPath';
 const log = logger.child({ module: 'importer.index' });
 
 export interface ImportOptions {
-  sources?: ('EU' | 'UN' | 'US' | 'UK' | 'CH')[];
+  sources?: ('EU' | 'UN' | 'US' | 'UK' | 'CH' | 'UA')[];
   csvPath?: string;
   csvSource?: 'PEP' | 'CUSTOM';
   csvSeparator?: string;
@@ -235,7 +236,7 @@ export async function runImport(options: ImportOptions = {}): Promise<{
     return runUploadedFileImport(options.uploadedFile, options);
   }
 
-  const sources = options.sources || ['EU', 'UN', 'US', 'UK', 'CH'];
+  const sources = options.sources || ['EU', 'UN', 'US', 'UK', 'CH', 'UA'];
   const importedCounts: Record<string, number> = {};
   const diffs: StreamedDiffResult[] = [];
   let totalParsed = 0;
@@ -442,6 +443,46 @@ export async function runImport(options: ImportOptions = {}): Promise<{
       if (chParseSucceeded) diffs.push(await session.finish());
 
       importedCounts.CH = parsed;
+      totalParsed += parsed;
+      totalUploaded += uploaded;
+    }
+
+    // 5. Process UA (Ukraine NSDC State Register of Sanctions — issue #287)
+    // Uses sync mode since NSDC tracks revocation status explicitly, so we
+    // should delist records removed from the register on each fetch.
+    if (sources.includes('UA')) {
+      const session = await startDiffSession('UA', { ...diffOptionsFrom(options), mode: 'sync' });
+      let parsed = 0;
+      let uploaded = 0;
+      let buffer: SanctionRecord[] = [];
+
+      const flush = async () => {
+        if (buffer.length === 0) return;
+        const chunk = buffer;
+        buffer = [];
+        const addedCount = await session.addChunk(chunk);
+        uploaded += addedCount;
+      };
+
+      let uaParseSucceeded = false;
+      try {
+        await parseUaListStreaming(async (record) => {
+          parsed++;
+          buffer.push(record);
+          if (buffer.length >= 200) {
+            await flush();
+          }
+        });
+        await flush();
+        uaParseSucceeded = true;
+      } catch (error: any) {
+        await flush().catch(() => {});
+        diffs.push(session.abort());
+        log.error('import.source_failed', { source: 'UA', error });
+      }
+      if (uaParseSucceeded) diffs.push(await session.finish());
+
+      importedCounts.UA = parsed;
       totalParsed += parsed;
       totalUploaded += uploaded;
     }

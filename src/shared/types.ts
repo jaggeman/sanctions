@@ -1,4 +1,4 @@
-export type SanctionSource = 'EU' | 'UN' | 'US' | 'UK' | 'CH' | 'PEP' | 'CUSTOM';
+export type SanctionSource = 'EU' | 'UN' | 'US' | 'UK' | 'CH' | 'UA' | 'PEP' | 'CUSTOM';
 
 /**
  * Canonical internal vocabulary (issue #6). The EU FSD source uses
