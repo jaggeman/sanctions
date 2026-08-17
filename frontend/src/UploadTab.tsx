@@ -61,10 +61,31 @@ interface BatchItem {
   id: string;
   filename: string;
   size: number;
-  status: 'pending' | 'uploading' | 'applied' | 'skipped' | 'failed';
+  file: File;
+  status: 'pending' | 'previewed' | 'uploading' | 'applied' | 'skipped' | 'failed';
   message?: string;
   duplicateImportId?: string;
   counts?: { parsed?: number; uploaded?: number };
+  diffs?: DiffResultData[];
+  guardTripped?: boolean;
+}
+
+function formatDiffSummary(diffs?: DiffResultData[], counts?: { parsed?: number; uploaded?: number }): string {
+  if (!diffs || diffs.length === 0) {
+    return counts?.parsed !== undefined ? `Parsed: ${counts.parsed}` : 'Ready';
+  }
+  const parts: string[] = [];
+  const added = diffs.reduce((s, d) => s + d.counts.added, 0);
+  const updated = diffs.reduce((s, d) => s + d.counts.updated, 0);
+  const unchanged = diffs.reduce((s, d) => s + d.counts.unchanged, 0);
+  const delisted = diffs.reduce((s, d) => s + d.counts.delisted, 0);
+
+  if (added > 0) parts.push(`+${added} added`);
+  if (updated > 0) parts.push(`~${updated} updated`);
+  if (unchanged > 0) parts.push(`=${unchanged} unchanged`);
+  if (delisted > 0) parts.push(`-${delisted} delisted`);
+
+  return parts.length > 0 ? parts.join(', ') : `Parsed: ${counts?.parsed ?? 0}`;
 }
 
 interface UploadTabProps {
@@ -120,7 +141,9 @@ export default function UploadTab({ onViewImport }: UploadTabProps) {
     duplicateImportId?: string;
   } | null>(null);
 
-  const guardTripped = preview?.diffs.some((d) => d.guardTripped) ?? false;
+  const singleGuardTripped = preview?.diffs.some((d) => d.guardTripped) ?? false;
+  const batchGuardTripped = batchQueue.some((item) => item.guardTripped) ?? false;
+  const guardTripped = singleGuardTripped || batchGuardTripped;
   const totalDelisted = preview?.diffs.reduce((sum, d) => sum + d.counts.delisted, 0) ?? 0;
   const isBusy = previewing || applying || syncingOfficial;
 
@@ -191,14 +214,66 @@ export default function UploadTab({ onViewImport }: UploadTabProps) {
     setPreviewing(false);
   }
 
+  async function rerunBatchPreviewFor(nextSource: SanctionSourceOption, nextMode: ImportMode) {
+    if (batchQueue.length === 0 || previewing) return;
+    setPreviewing(true);
+    setOverrideConfirmed(false);
+    setFeedback(null);
+
+    const updatedQueue: BatchItem[] = [];
+    for (const item of batchQueue) {
+      try {
+        const { res, data } = await runUpload(item.file, true, false, nextSource, nextMode);
+        if (res.status === 200 && data.status === 'dry_run') {
+          const itemGuardTripped = data.diffs?.some((d: DiffResultData) => d.guardTripped) ?? false;
+          updatedQueue.push({
+            ...item,
+            status: 'previewed',
+            counts: data.counts,
+            diffs: data.diffs,
+            guardTripped: itemGuardTripped,
+            message: formatDiffSummary(data.diffs, data.counts),
+          });
+        } else if (res.status === 409 && data.duplicateOfImportId) {
+          updatedQueue.push({
+            ...item,
+            status: 'skipped',
+            duplicateImportId: data.duplicateOfImportId,
+            message: data.error || `Skipped: duplicate of import #${data.duplicateOfImportId}`,
+          });
+        } else {
+          updatedQueue.push({
+            ...item,
+            status: 'failed',
+            message: data.error || 'Preview failed',
+          });
+        }
+      } catch (err: any) {
+        updatedQueue.push({
+          ...item,
+          status: 'failed',
+          message: err.message || 'Preview failed',
+        });
+      }
+    }
+    setBatchQueue(updatedQueue);
+    setPreviewing(false);
+  }
+
   function handleSourceChange(next: SanctionSourceOption) {
     setSource(next);
     if (preview) rerunPreviewFor(next, mode);
+    if (batchQueue.length > 0 && batchQueue.some((i) => i.status === 'previewed')) {
+      rerunBatchPreviewFor(next, mode);
+    }
   }
 
   function handleModeChange(next: ImportMode) {
     setMode(next);
     if (preview) rerunPreviewFor(source, next);
+    if (batchQueue.length > 0 && batchQueue.some((i) => i.status === 'previewed')) {
+      rerunBatchPreviewFor(source, next);
+    }
   }
 
   async function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
@@ -242,83 +317,141 @@ export default function UploadTab({ onViewImport }: UploadTabProps) {
       }
       setPreviewing(false);
     } else {
-      // Multi-file batch upload queue
+      // Multi-file batch dry-run preview flow (issue #289)
       setSelectedFile(null);
       setPreview(null);
       setFeedback(null);
+      setOverrideConfirmed(false);
 
       const items: BatchItem[] = files.map((f, idx) => ({
         id: `${f.name}-${idx}`,
         filename: f.name,
         size: f.size,
+        file: f,
         status: 'pending',
       }));
       setBatchQueue(items);
-      setApplying(true);
+      setPreviewing(true);
 
-      let successCount = 0;
-      let skippedCount = 0;
-
+      const previewedItems = [...items];
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        setBatchQueue((prev) =>
-          prev.map((item, idx) => (idx === i ? { ...item, status: 'uploading' } : item)),
-        );
-
         try {
-          const { res, data } = await runUpload(file, false, false);
-          if (res.status === 200 && data.status === 'applied') {
-            successCount++;
-            setBatchQueue((prev) =>
-              prev.map((item, idx) =>
-                idx === i
-                  ? {
-                      ...item,
-                      status: 'applied',
-                      counts: data.counts,
-                      message: `Applied: ${data.counts?.parsed ?? 0} parsed, ${data.counts?.uploaded ?? 0} saved`,
-                    }
-                  : item,
-              ),
-            );
+          const { res, data } = await runUpload(file, true, false);
+          if (res.status === 200 && data.status === 'dry_run') {
+            const itemGuardTripped = data.diffs?.some((d: DiffResultData) => d.guardTripped) ?? false;
+            previewedItems[i] = {
+              ...previewedItems[i],
+              status: 'previewed',
+              counts: data.counts,
+              diffs: data.diffs,
+              guardTripped: itemGuardTripped,
+              message: formatDiffSummary(data.diffs, data.counts),
+            };
           } else if (res.status === 409 && data.duplicateOfImportId) {
-            skippedCount++;
-            setBatchQueue((prev) =>
-              prev.map((item, idx) =>
-                idx === i
-                  ? {
-                      ...item,
-                      status: 'skipped',
-                      duplicateImportId: data.duplicateOfImportId,
-                      message: `Skipped: duplicate of import #${data.duplicateOfImportId}`,
-                    }
-                  : item,
-              ),
-            );
+            previewedItems[i] = {
+              ...previewedItems[i],
+              status: 'skipped',
+              duplicateImportId: data.duplicateOfImportId,
+              message: `Skipped: duplicate of import #${data.duplicateOfImportId}`,
+            };
+          } else if (res.status === 422) {
+            previewedItems[i] = {
+              ...previewedItems[i],
+              status: 'failed',
+              message: data.error || 'This file format is not yet supported.',
+            };
           } else {
-            setBatchQueue((prev) =>
-              prev.map((item, idx) =>
-                idx === i
-                  ? { ...item, status: 'failed', message: data.error || 'Upload failed' }
-                  : item,
-              ),
-            );
+            previewedItems[i] = {
+              ...previewedItems[i],
+              status: 'failed',
+              message: data.error || 'Preview failed',
+            };
           }
         } catch (err: any) {
+          previewedItems[i] = {
+            ...previewedItems[i],
+            status: 'failed',
+            message: err.message || 'Preview failed',
+          };
+        }
+        setBatchQueue([...previewedItems]);
+      }
+
+      setPreviewing(false);
+    }
+  }
+
+  async function handleApplyBatch() {
+    setApplying(true);
+    setFeedback(null);
+
+    let successCount = 0;
+    let skippedCount = 0;
+
+    for (let i = 0; i < batchQueue.length; i++) {
+      const item = batchQueue[i];
+      if (item.status !== 'previewed') {
+        if (item.status === 'skipped') skippedCount++;
+        continue;
+      }
+
+      setBatchQueue((prev) =>
+        prev.map((it, idx) => (idx === i ? { ...it, status: 'uploading' } : it)),
+      );
+
+      try {
+        const force = item.guardTripped ? overrideConfirmed : false;
+        const { res, data } = await runUpload(item.file, false, force);
+        if (res.status === 200 && data.status === 'applied') {
+          successCount++;
           setBatchQueue((prev) =>
-            prev.map((item, idx) =>
-              idx === i ? { ...item, status: 'failed', message: err.message || 'Error' } : item,
+            prev.map((it, idx) =>
+              idx === i
+                ? {
+                    ...it,
+                    status: 'applied',
+                    counts: data.counts,
+                    message: `Applied: ${data.counts?.parsed ?? 0} parsed, ${data.counts?.uploaded ?? 0} saved`,
+                  }
+                : it,
+            ),
+          );
+        } else if (res.status === 409 && data.duplicateOfImportId) {
+          skippedCount++;
+          setBatchQueue((prev) =>
+            prev.map((it, idx) =>
+              idx === i
+                ? {
+                    ...it,
+                    status: 'skipped',
+                    duplicateImportId: data.duplicateOfImportId,
+                    message: `Skipped: duplicate of import #${data.duplicateOfImportId}`,
+                  }
+                : it,
+            ),
+          );
+        } else {
+          setBatchQueue((prev) =>
+            prev.map((it, idx) =>
+              idx === i ? { ...it, status: 'failed', message: data.error || 'Upload failed' } : it,
             ),
           );
         }
+      } catch (err: any) {
+        setBatchQueue((prev) =>
+          prev.map((it, idx) =>
+            idx === i ? { ...it, status: 'failed', message: err.message || 'Error' } : it,
+          ),
+        );
       }
-
-      setApplying(false);
-      setFeedback({
-        severity: 'success',
-        message: `Batch complete: ${successCount} files imported, ${skippedCount} skipped as duplicates.`,
-      });
     }
+
+    setApplying(false);
+    setFeedback({
+      severity: 'success',
+      message: `Batch complete: ${successCount} files imported, ${skippedCount} skipped as duplicates.`,
+    });
   }
 
   async function handleApply() {
@@ -572,6 +705,7 @@ export default function UploadTab({ onViewImport }: UploadTabProps) {
                         <TableCell>{(item.size / 1024).toFixed(1)} KB</TableCell>
                         <TableCell>
                           {item.status === 'pending' && <Chip label="Pending" size="small" />}
+                          {item.status === 'previewed' && <Chip label="Previewed" size="small" color="info" variant="outlined" />}
                           {item.status === 'uploading' && (
                             <Chip
                               icon={<CircularProgress size={14} color="inherit" />}
@@ -597,6 +731,39 @@ export default function UploadTab({ onViewImport }: UploadTabProps) {
                   </TableBody>
                 </Table>
               </TableContainer>
+
+              {batchGuardTripped && (
+                <Alert severity="warning" sx={{ mt: 2, mb: 1 }}>
+                  <Typography variant="body2" sx={{ mb: 1 }}>
+                    Refusing to delist records by default for one or more files in this batch — this looks like a truncated or wrong file. Confirm below to override and delist anyway.
+                  </Typography>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={overrideConfirmed}
+                        onChange={(e) => setOverrideConfirmed(e.target.checked)}
+                      />
+                    }
+                    label="I understand — delist these records anyway"
+                  />
+                </Alert>
+              )}
+
+              {batchQueue.some((i) => i.status === 'previewed') && (
+                <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
+                  <Button
+                    variant="contained"
+                    onClick={handleApplyBatch}
+                    disabled={isBusy || (batchGuardTripped && !overrideConfirmed)}
+                    startIcon={applying ? <CircularProgress size={18} color="inherit" /> : undefined}
+                  >
+                    Apply ({batchQueue.filter((i) => i.status === 'previewed').length})
+                  </Button>
+                  <Button variant="text" onClick={() => setBatchQueue([])} disabled={isBusy}>
+                    Discard
+                  </Button>
+                </Box>
+              )}
             </Card>
           )}
 
