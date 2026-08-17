@@ -17,6 +17,7 @@ import {
   TableHead,
   TableRow,
   TableSortLabel,
+  Tooltip,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import DownloadIcon from '@mui/icons-material/Download';
@@ -37,6 +38,84 @@ function formatDuration(ms: number): string {
 
 function primaryNameOf(names: NameAliasLike[] | undefined): string {
   return names?.[0]?.wholeName || 'Unknown Name';
+}
+
+function renderScoreTooltip(r: any) {
+  const b = r.scoreBreakdown;
+  if (!b) {
+    return `${r.score}% match`;
+  }
+  if (b.mechanism === 'passport_id') {
+    return (
+      <Box sx={{ p: 0.5, maxWidth: 280 }}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'inherit' }}>
+          Passport / ID Match (100%)
+        </Typography>
+        <Typography variant="caption" sx={{ display: 'block', mt: 0.5 }}>
+          Matched directly on official identification document number.
+        </Typography>
+      </Box>
+    );
+  }
+
+  return (
+    <Box sx={{ p: 0.5, maxWidth: 320 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'inherit' }}>
+          Score Breakdown: {r.score}%
+        </Typography>
+        {b.dobBoostApplied && (
+          <Chip label="+10% DOB Match" size="small" color="primary" sx={{ height: 18, fontSize: '0.65rem' }} />
+        )}
+      </Box>
+
+      {b.matchedWords && b.matchedWords.length > 0 && (
+        <Box sx={{ mt: 0.5, mb: 0.5 }}>
+          <Typography variant="caption" sx={{ fontWeight: 600, display: 'block' }}>
+            Matched terms:
+          </Typography>
+          {b.matchedWords.map((mw: any, idx: number) => (
+            <Typography key={idx} variant="caption" sx={{ display: 'block', pl: 1 }}>
+              • <strong>"{mw.queryWord}"</strong> ➔ <strong>"{mw.candidateWord}"</strong> ({mw.score}%)
+            </Typography>
+          ))}
+        </Box>
+      )}
+
+      {b.unmatchedCandidateWords && b.unmatchedCandidateWords.length > 0 && (
+        <Box sx={{ mt: 0.5, mb: 0.5 }}>
+          <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', opacity: 0.85 }}>
+            Unexplained name parts:
+          </Typography>
+          <Typography variant="caption" sx={{ display: 'block', pl: 1, opacity: 0.85 }}>
+            {b.unmatchedCandidateWords
+              .map((uw: any) => `${uw.word}${uw.isParticle ? ' (particle)' : ''}`)
+              .join(', ')}
+          </Typography>
+        </Box>
+      )}
+
+      {b.unmatchedQueryWords && b.unmatchedQueryWords.length > 0 && (
+        <Box sx={{ mt: 0.5, mb: 0.5 }}>
+          <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', color: 'warning.light' }}>
+            Unmatched query terms:
+          </Typography>
+          <Typography variant="caption" sx={{ display: 'block', pl: 1, color: 'warning.light' }}>
+            {b.unmatchedQueryWords.join(', ')}
+          </Typography>
+        </Box>
+      )}
+
+      <Box sx={{ mt: 1, pt: 0.5, borderTop: '1px solid rgba(255,255,255,0.2)', display: 'flex', gap: 2 }}>
+        <Typography variant="caption" sx={{ opacity: 0.8 }}>
+          Query coverage: {Math.round(b.queryCoverage * 100)}%
+        </Typography>
+        <Typography variant="caption" sx={{ opacity: 0.8 }}>
+          Name coverage: {Math.round(b.candidateCoverage * 100)}%
+        </Typography>
+      </Box>
+    </Box>
+  );
 }
 
 function aliasNamesOf(names: NameAliasLike[] | undefined): string[] {
@@ -291,11 +370,14 @@ export default function SearchTab({ onSelectRecord }: SearchTabProps) {
                   >
                     <TableCell align="right">
                       {typeof r.score === 'number' ? (
-                        <Chip
-                          label={`${r.score}%`}
-                          size="small"
-                          color={r.score >= 90 ? 'success' : r.score >= 75 ? 'warning' : 'default'}
-                        />
+                        <Tooltip title={renderScoreTooltip(r)} arrow placement="top">
+                          <Chip
+                            label={`${r.score}%`}
+                            size="small"
+                            color={r.score >= 90 ? 'success' : r.score >= 75 ? 'warning' : 'default'}
+                            sx={{ cursor: 'help' }}
+                          />
+                        </Tooltip>
                       ) : (
                         ''
                       )}

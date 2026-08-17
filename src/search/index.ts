@@ -1,13 +1,21 @@
 import * as admin from 'firebase-admin';
 import { db } from '../shared/firebase';
 import { SanctionRecord, Override, allNamesOf, formatBirthDates } from '../shared/types';
-import { scoreTokenizedNameMatch, buildTokenizedName, buildTokenizedQuery, TokenizedName } from './matcher';
+import {
+  scoreTokenizedNameMatch,
+  buildTokenizedName,
+  buildTokenizedQuery,
+  TokenizedName,
+  ScoreBreakdown,
+  explainTokenizedNameMatch,
+} from './matcher';
 import { applyOverride } from '../overrides';
 
 export interface ScoredResult extends SanctionRecord {
   score: number;
   matchedAlias: string;
   overriddenFields: string[];
+  scoreBreakdown?: ScoreBreakdown;
 }
 
 export interface SearchOptions {
@@ -366,13 +374,20 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
     if (!record || !passesFilters(record)) return;
 
     const candidateTokens = nameIndex[position] ?? [];
-    const { score, matchedName } = scoreTokenizedNameMatch(tokenizedQuery, candidateTokens);
-    const boostedScore = options.dob && matchesDob(record, options.dob)
+    const { score, matchedName, winningCandidate } = scoreTokenizedNameMatch(tokenizedQuery, candidateTokens);
+    const isDobBoosted = options.dob && matchesDob(record, options.dob);
+    const boostedScore = isDobBoosted
       ? Math.min(100, score + DOB_MATCH_BOOST)
       : score;
 
     if (boostedScore >= threshold) {
-      scored.push({ ...record, score: boostedScore, matchedAlias: matchedName });
+      scored.push({
+        ...record,
+        score: boostedScore,
+        matchedAlias: matchedName,
+        _winningCandidate: winningCandidate,
+        _dobBoostApplied: Boolean(isDobBoosted && score > 0),
+      } as any);
     }
   };
 
@@ -390,6 +405,29 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
   scored.sort((a, b) => b.score - a.score);
   const totalMatches = scored.length;
   const results = scored.slice(0, limit);
+
+  // Generate breakdown on-demand only for results returned to caller (issue #277)
+  for (const result of results) {
+    if (result.matchedAlias === 'Passport/ID match') {
+      result.scoreBreakdown = {
+        mechanism: 'passport_id',
+        matchedWords: [],
+        unmatchedCandidateWords: [],
+        unmatchedQueryWords: [],
+        queryCoverage: 1,
+        candidateCoverage: 1,
+        summary: 'Exact passport or national ID match',
+      };
+    } else if ((result as any)._winningCandidate) {
+      const breakdown = explainTokenizedNameMatch(tokenizedQuery, (result as any)._winningCandidate);
+      if ((result as any)._dobBoostApplied) {
+        breakdown.dobBoostApplied = true;
+      }
+      result.scoreBreakdown = breakdown;
+    }
+    delete (result as any)._winningCandidate;
+    delete (result as any)._dobBoostApplied;
+  }
 
   return {
     results,
