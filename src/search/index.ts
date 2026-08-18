@@ -1,6 +1,13 @@
 import * as admin from 'firebase-admin';
 import { db } from '../shared/firebase';
-import { SanctionRecord, Override, allNamesOf, formatBirthDates } from '../shared/types';
+import {
+  SanctionRecord,
+  Override,
+  allNamesOf,
+  formatBirthDates,
+  Decision,
+  DecisionValidity,
+} from '../shared/types';
 import {
   scoreTokenizedNameMatch,
   buildTokenizedName,
@@ -16,12 +23,16 @@ import {
   CountryMatchResult,
 } from './country';
 import { applyOverride } from '../overrides';
+import { evaluateDecisionValidity, listDecisionsForSubject } from '../decisions';
 
 export interface ScoredResult extends SanctionRecord {
   score: number;
   matchedAlias: string;
   overriddenFields: string[];
   scoreBreakdown?: ScoreBreakdown;
+  decision?: Decision;
+  decisionValidity?: DecisionValidity;
+  autoCleared?: boolean;
 }
 
 export interface SearchOptions {
@@ -33,6 +44,8 @@ export interface SearchOptions {
   country?: string; // e.g. "SE", "Sweden", "SY" (issue #319)
   nationality?: string; // synonym for country (issue #319)
   includeDelisted?: boolean; // default false — soft-deleted records are hidden (issue #9)
+  subjectId?: string; // customer/subject identifier for decision memory (issue #320)
+  suppressFalsePositives?: boolean; // filter out active false_positive clearances (issue #320)
 }
 
 export interface SearchResponse {
@@ -425,8 +438,37 @@ export async function runSearch(query: string, options: SearchOptions = {}): Pro
   }
 
   scored.sort((a, b) => b.score - a.score);
-  const totalMatches = scored.length;
-  const results = scored.slice(0, limit);
+
+  // Decision memory / Whitelisting lookup for subjectId (issue #320)
+  let subjectDecisionsByEntity: Map<string, Decision> | undefined;
+  if (options.subjectId) {
+    try {
+      const subjectDecisions = await listDecisionsForSubject(options.subjectId);
+      subjectDecisionsByEntity = new Map(subjectDecisions.map((d) => [d.entityId, d]));
+    } catch {
+      // Best-effort lookup
+    }
+  }
+
+  // Attach decision metadata before slicing if suppressFalsePositives is requested
+  if (subjectDecisionsByEntity) {
+    for (const item of scored) {
+      const dec = subjectDecisionsByEntity.get(item.id);
+      if (dec) {
+        const validity = evaluateDecisionValidity(dec, item);
+        item.decision = dec;
+        item.decisionValidity = validity;
+        item.autoCleared = validity.isValid && dec.verdict === 'false_positive';
+      }
+    }
+  }
+
+  const filteredScored = options.suppressFalsePositives
+    ? scored.filter((item) => !item.autoCleared)
+    : scored;
+
+  const totalMatches = filteredScored.length;
+  const results = filteredScored.slice(0, limit);
 
   // Generate breakdown on-demand only for results returned to caller (issue #277, #319)
   for (const result of results) {

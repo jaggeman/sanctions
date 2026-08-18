@@ -182,6 +182,8 @@ const COLUMNS: { key: SortKey | null; label: string; numeric?: boolean }[] = [
 export default function SearchTab({ onSelectRecord }: SearchTabProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [countryQuery, setCountryQuery] = useState('');
+  const [subjectIdQuery, setSubjectIdQuery] = useState('');
+  const [suppressFalsePositives, setSuppressFalsePositives] = useState(false);
   const [results, setResults] = useState<any[]>([]);
   const [sortKey, setSortKey] = useState<SortKey>('score');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -203,12 +205,14 @@ export default function SearchTab({ onSelectRecord }: SearchTabProps) {
       if (countryQuery.trim()) {
         url += `&country=${encodeURIComponent(countryQuery.trim())}`;
       }
+      if (subjectIdQuery.trim()) {
+        url += `&subjectId=${encodeURIComponent(subjectIdQuery.trim())}`;
+      }
+      if (suppressFalsePositives) {
+        url += `&suppressFalsePositives=true`;
+      }
       const res = await apiFetch(url);
       if (res.status === 401) {
-        // Session expired — apiFetch's onSessionExpired callback (registered
-        // by App) already flips userEmail back to null and returns to Login.
-        // Don't also render "No results found" for what is actually an
-        // expired session, not an empty result (issue #59).
         return;
       }
       if (!res.ok) {
@@ -293,7 +297,7 @@ export default function SearchTab({ onSelectRecord }: SearchTabProps) {
           <Typography variant="h5" gutterBottom>
             Search Entities
           </Typography>
-          <Box sx={{ display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 2, mt: 2 }}>
+          <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, gap: 2, mt: 2 }}>
             <TextField
               fullWidth
               variant="outlined"
@@ -304,13 +308,23 @@ export default function SearchTab({ onSelectRecord }: SearchTabProps) {
               disabled={isLoading}
             />
             <TextField
-              sx={{ minWidth: { sm: 240 } }}
+              sx={{ minWidth: { sm: 200 } }}
               variant="outlined"
-              placeholder="Country / Nationality (e.g. SE, RU)"
+              placeholder="Country / Nationality"
               value={countryQuery}
               onChange={(e) => setCountryQuery(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
               disabled={isLoading}
+            />
+            <TextField
+              sx={{ minWidth: { sm: 200 } }}
+              variant="outlined"
+              placeholder="Customer / Subject ID"
+              value={subjectIdQuery}
+              onChange={(e) => setSubjectIdQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+              disabled={isLoading}
+              helperText={subjectIdQuery.trim() ? "Checking customer decision memory" : undefined}
             />
             <Button
               variant="contained"
@@ -318,11 +332,24 @@ export default function SearchTab({ onSelectRecord }: SearchTabProps) {
               startIcon={isLoading ? <CircularProgress size={20} color="inherit" /> : <SearchIcon />}
               onClick={handleSearch}
               disabled={isLoading}
-              sx={{ whiteSpace: 'nowrap' }}
+              sx={{ whiteSpace: 'nowrap', height: 56 }}
             >
               Search
             </Button>
           </Box>
+          {subjectIdQuery.trim() && (
+            <Box sx={{ mt: 1, display: 'flex', alignItems: 'center' }}>
+              <label style={{ fontSize: '0.875rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={suppressFalsePositives}
+                  onChange={(e) => setSuppressFalsePositives(e.target.checked)}
+                  style={{ cursor: 'pointer' }}
+                />
+                Hide previously cleared false-positive matches (Decision Memory)
+              </label>
+            </Box>
+          )}
         </CardContent>
       </Card>
 
@@ -433,9 +460,27 @@ export default function SearchTab({ onSelectRecord }: SearchTabProps) {
                       {dobs.join(', ')}
                     </TableCell>
                     <TableCell>
-                      {r.status === 'delisted' && (
-                        <Chip label="Delisted" size="small" variant="outlined" />
-                      )}
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, alignItems: 'flex-start' }}>
+                        {r.autoCleared && (
+                          <Tooltip
+                            title={`Auto-cleared: False Positive recorded by ${r.decision?.decidedBy || 'analyst'} on ${r.decision?.decidedAt ? new Date(r.decision.decidedAt).toLocaleDateString() : ''}. Notes: ${r.decision?.notes || 'None'}`}
+                            arrow
+                          >
+                            <Chip label="Auto-cleared" size="small" color="success" sx={{ fontWeight: 600, fontSize: '0.7rem' }} />
+                          </Tooltip>
+                        )}
+                        {r.decisionValidity?.status === 'invalidated_data_changed' && (
+                          <Tooltip title="Sanction record modified since prior review. Re-review required." arrow>
+                            <Chip label="Re-review needed" size="small" color="warning" sx={{ fontSize: '0.7rem' }} />
+                          </Tooltip>
+                        )}
+                        {r.decision?.verdict === 'true_positive' && (
+                          <Chip label="Confirmed Risk" size="small" color="error" sx={{ fontWeight: 600, fontSize: '0.7rem' }} />
+                        )}
+                        {r.status === 'delisted' && (
+                          <Chip label="Delisted" size="small" variant="outlined" sx={{ fontSize: '0.7rem' }} />
+                        )}
+                      </Box>
                     </TableCell>
                   </TableRow>
                 );

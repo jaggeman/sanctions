@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { saveDecision, listDecisionsForEntity } from '../../decisions';
+import { saveDecision, listDecisionsForEntity, listDecisionsForSubject } from '../../decisions';
 import { requireAuthOrScope } from '../middleware/requireAuthOrScope';
 
 export const decisionsRouter = Router();
@@ -15,14 +15,36 @@ export const decisionsRouter = Router();
  * (removed by issue #36); this router previously had no auth of its own.
  */
 decisionsRouter.post('/', requireAuthOrScope('decisions:write'), async (req, res): Promise<any> => {
-  const { entityId, subjectId, verdict, notes } = req.body;
+  const { entityId, subjectId, verdict, notes, recordHash, expiresAt } = req.body;
   const decidedBy = (req as any).userEmail;
 
   try {
-    const decision = await saveDecision({ entityId, subjectId, verdict, notes, decidedBy });
+    const decision = await saveDecision({
+      entityId,
+      subjectId,
+      verdict,
+      notes,
+      decidedBy,
+      recordHash,
+      expiresAt,
+    });
     res.status(201).json(decision);
   } catch (error: any) {
     res.status(400).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/decisions/subject/:subjectId
+ * Lists every recorded adjudication for a given customer/subject ID (issue #320).
+ */
+decisionsRouter.get('/subject/:subjectId', requireAuthOrScope('decisions:read'), async (req, res): Promise<any> => {
+  try {
+    const decisions = await listDecisionsForSubject(req.params.subjectId);
+    res.json(decisions);
+  } catch (error: any) {
+    console.error('List subject decisions error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
