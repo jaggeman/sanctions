@@ -41,7 +41,7 @@ describe('getBucket', () => {
 
     getBucket();
 
-    expect(mockBucket).toHaveBeenCalledWith('my-project.appspot.com');
+    expect(mockBucket).toHaveBeenCalledWith('my-project-uploads');
   });
 
   it('prefers GCLOUD_PROJECT (the real deployed project) over FIREBASE_PROJECT_ID or the hardcoded fallback', async () => {
@@ -57,7 +57,7 @@ describe('getBucket', () => {
 
     getBucket();
 
-    expect(mockBucket).toHaveBeenCalledWith('sanctions-app-dev-01.appspot.com');
+    expect(mockBucket).toHaveBeenCalledWith('sanctions-app-dev-01-uploads');
   });
 
   it('uses FIREBASE_STORAGE_BUCKET when explicitly set, instead of the derived default', async () => {
