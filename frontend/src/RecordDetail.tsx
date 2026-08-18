@@ -84,9 +84,19 @@ function idFlags(id: Identification): string[] {
   return flags;
 }
 
+interface DecisionEntry {
+  entityId: string;
+  subjectId: string;
+  verdict: 'false_positive' | 'true_positive';
+  decidedBy: string;
+  decidedAt: string;
+  notes?: string;
+}
+
 export default function RecordDetail({ recordId, onClose }: { recordId: string | null; onClose: () => void }) {
   const [record, setRecord] = useState<RecordDetailData | null>(null);
   const [versions, setVersions] = useState<RecordVersionEntry[]>([]);
+  const [decisions, setDecisions] = useState<DecisionEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -94,6 +104,7 @@ export default function RecordDetail({ recordId, onClose }: { recordId: string |
     if (!recordId) {
       setRecord(null);
       setVersions([]);
+      setDecisions([]);
       return;
     }
 
@@ -103,16 +114,19 @@ export default function RecordDetail({ recordId, onClose }: { recordId: string |
 
     (async () => {
       try {
-        const [recordRes, versionsRes] = await Promise.all([
+        const [recordRes, versionsRes, decisionsRes] = await Promise.all([
           apiFetch(`/api/sanctions/${encodeURIComponent(recordId)}`),
           apiFetch(`/api/sanctions/${encodeURIComponent(recordId)}/versions`),
+          apiFetch(`/api/decisions/${encodeURIComponent(recordId)}`),
         ]);
         if (!recordRes.ok) throw new Error(`Server returned ${recordRes.status}`);
         const recordData = await recordRes.json();
         const versionsData = versionsRes.ok ? await versionsRes.json() : [];
+        const decisionsData = decisionsRes.ok ? await decisionsRes.json() : [];
         if (cancelled) return;
         setRecord(recordData);
         setVersions(Array.isArray(versionsData) ? versionsData : []);
+        setDecisions(Array.isArray(decisionsData) ? decisionsData : []);
       } catch (err) {
         console.error(err);
         if (!cancelled) setError('Could not load this record.');
@@ -251,8 +265,42 @@ export default function RecordDetail({ recordId, onClose }: { recordId: string |
 
             <Divider sx={{ my: 2 }} />
 
+            {/* Decisions History (issue #320) */}
+            <Typography variant="subtitle1" gutterBottom sx={{ mt: 2 }}>Compliance Adjudications & Decisions</Typography>
+            {decisions.length > 0 ? (
+              <List dense>
+                {decisions.map((d, i) => (
+                  <ListItem key={i} disableGutters sx={{ alignItems: 'flex-start' }}>
+                    <ListItemText
+                      primary={
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                          <Chip
+                            label={d.verdict === 'false_positive' ? 'False Positive' : 'True Positive'}
+                            size="small"
+                            color={d.verdict === 'false_positive' ? 'success' : 'error'}
+                            sx={{ fontWeight: 600 }}
+                          />
+                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                            Subject: {d.subjectId}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            by {d.decidedBy} ({formatDate(d.decidedAt)})
+                          </Typography>
+                        </Box>
+                      }
+                      secondary={d.notes ? `Notes: ${d.notes}` : undefined}
+                    />
+                  </ListItem>
+                ))}
+              </List>
+            ) : (
+              <Typography variant="body2" color="text.secondary">No compliance decisions recorded yet.</Typography>
+            )}
+
+            <Divider sx={{ my: 2 }} />
+
             {/* Version trail */}
-            <Typography variant="subtitle1" gutterBottom>History</Typography>
+            <Typography variant="subtitle1" gutterBottom>Version History</Typography>
             {versions.length > 0 ? (
               <List dense>
                 {versions.map((v, i) => (

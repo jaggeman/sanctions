@@ -109,6 +109,26 @@
               "type": "string",
               "example": "Swedish"
             }
+          },
+          {
+            "name": "subjectId",
+            "in": "query",
+            "description": "Kund-ID / ärende-ID för beslutsuppslag och vitlistning (issue #320). Hämtar sparade bedömningar och flaggar tidigare avfärdade träffar som autoCleared.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "cust-12345"
+            }
+          },
+          {
+            "name": "suppressFalsePositives",
+            "in": "query",
+            "description": "Om true filtreras aktiva och giltiga false_positive-träffar bort från sökresultaten helt (issue #320).",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
           }
         ],
         "responses": {
@@ -1020,6 +1040,36 @@
           }
         }
       }
+    },
+    "/api/decisions/subject/{subjectId}": {
+      "get": {
+        "summary": "Lista alla bedömningar för en specifik kund / subjectId",
+        "description": "Returnerar alla sparade bedömningar och vitlistade träffar för kunden (issue #320).",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
+        "parameters": [
+          {
+            "name": "subjectId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista över sparade bedömningar för kunden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Decision" }
+                }
+              }
+            }
+          },
+          "401": { "description": "Ingen giltig session eller API-token" }
+        }
+      }
+    },
     "/api/webhooks": {
       "get": {
         "summary": "Lista alla webhook-prenumerationer",
@@ -1169,7 +1219,9 @@
           "verdict": { "type": "string", "enum": ["false_positive", "true_positive"] },
           "decidedBy": { "type": "string", "example": "analyst@example.com" },
           "decidedAt": { "type": "string", "format": "date-time" },
-          "notes": { "type": "string", "nullable": true }
+          "notes": { "type": "string", "nullable": true },
+          "recordHash": { "type": "string", "description": "contentHash av sanktionsposten vid beslutstillfället (issue #320)" },
+          "expiresAt": { "type": "string", "format": "date-time", "nullable": true, "description": "Giltighetstid för vitlistningen (issue #320)" }
         }
       },
       "DiffResult": {

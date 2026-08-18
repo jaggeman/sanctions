@@ -101,6 +101,20 @@ export interface Decision {
   decidedBy: string;
   decidedAt: string; // ISO string
   notes?: string;
+  recordHash?: string; // contentHash of SanctionRecord when decision was made (issue #320)
+  expiresAt?: string | null; // ISO string expiration date (issue #320)
+}
+
+export type DecisionValidityStatus =
+  | 'valid'
+  | 'invalidated_data_changed'
+  | 'invalidated_expired'
+  | 'not_whitelisted';
+
+export interface DecisionValidity {
+  isValid: boolean;
+  status: DecisionValidityStatus;
+  reason?: string;
 }
 
 // One entry in `decisions/{entityId__subjectId}/history/{autoId}` (issue
@@ -266,6 +280,7 @@ export interface SearchLogEntry {
     dob?: string;
     country?: string;
     nationality?: string;
+    subjectId?: string;
   };
   resultCount: number; // totalMatches for a search; 1 (found) or 0 (not found) for a lookup
   timestamp: string; // ISO string
