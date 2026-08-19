@@ -17,6 +17,18 @@ vi.mock('../../src/importer/uploadPipeline', () => ({
   processUpload: (...args: any[]) => processUpload(...args),
 }));
 
+vi.mock('../../src/importer/parsers/ua', () => ({
+  parseUaListStreaming: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('../../src/importer/diff', () => ({
+  startDiffSession: vi.fn().mockResolvedValue({
+    abort: vi.fn(),
+    addChunk: vi.fn(),
+    finish: vi.fn(),
+  }),
+}));
+
 const { runScheduledFetch } = await import('../../src/importer/scheduledFetch');
 
 beforeEach(() => {

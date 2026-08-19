@@ -26,6 +26,7 @@ import { lazyWithRetry } from './utils/lazyWithRetry';
 
 // Issue #228 & Issue #238: Code splitting & lazy loading of tab components with auto-recovery on chunk failure
 const SearchTab = lazyWithRetry(() => import('./SearchTab'), 'SearchTab');
+const MonitoringTab = lazyWithRetry(() => import('./MonitoringTab'), 'MonitoringTab');
 const UploadTab = lazyWithRetry(() => import('./UploadTab'), 'UploadTab');
 const ImportHistoryTab = lazyWithRetry(() => import('./ImportHistoryTab'), 'ImportHistoryTab');
 const OfficialSourcesTab = lazyWithRetry(() => import('./OfficialSourcesTab'), 'OfficialSourcesTab');
@@ -220,6 +221,7 @@ function App() {
             allowScrollButtonsMobile
           >
             <Tab label="Search" />
+            <Tab label="Ongoing Monitoring" />
             <Tab label="Upload Lists" />
             <Tab label="Import History" />
             <Tab label="Official Sources" />
@@ -236,31 +238,33 @@ function App() {
               <SearchTab onSelectRecord={setSelectedRecordId} />
             </Box>
 
-            {tabValue === 1 && (
+            {tabValue === 1 && <MonitoringTab onSelectRecord={setSelectedRecordId} />}
+
+            {tabValue === 2 && (
               <UploadTab
                 onViewImport={(importId) => {
                   setHistoryFocusId(importId);
-                  setTabValue(2);
+                  setTabValue(3);
                 }}
               />
             )}
 
-            {tabValue === 2 && (
+            {tabValue === 3 && (
               <ImportHistoryTab
                 focusImportId={historyFocusId}
                 onFocusConsumed={() => setHistoryFocusId(undefined)}
               />
             )}
 
-            {tabValue === 3 && <OfficialSourcesTab />}
+            {tabValue === 4 && <OfficialSourcesTab />}
 
-            {tabValue === 4 && <ApiTokensTab />}
+            {tabValue === 5 && <ApiTokensTab />}
 
-            {tabValue === 5 && <WebhooksTab />}
+            {tabValue === 6 && <WebhooksTab />}
 
-            {tabValue === 6 && <HelpManualTab />}
+            {tabValue === 7 && <HelpManualTab />}
 
-            {tabValue === 7 && <DriftStatusTab />}
+            {tabValue === 8 && <DriftStatusTab />}
           </Suspense>
         </TabErrorBoundary>
       </Container>

@@ -392,3 +392,55 @@ export interface WebhookDeliveryAttempt {
   attemptedAt: string; // ISO string
   durationMs: number;
 }
+
+// --- Ongoing Monitoring & Customer Portfolios Types (issue #317) ---
+export interface MonitoredSubject {
+  id: string; // e.g. "sub_..."
+  customerId: string; // external / client customer ID (e.g. "CUST-1001")
+  name: string;
+  type?: 'individual' | 'entity';
+  dob?: string;
+  country?: string;
+  nationality?: string;
+  portfolio?: string; // e.g. "retail", "corporate", "default"
+  status: 'active' | 'paused' | 'archived';
+  lastScreenedAt?: string;
+  lastMatchScore?: number;
+  lastMatchAlertId?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type AlertStatus =
+  | 'new'
+  | 'investigating'
+  | 'dismissed_false_positive'
+  | 'confirmed_true_positive';
+
+export interface MonitoringAlert {
+  id: string; // e.g. "alt_..."
+  subjectId: string; // monitored subject id
+  customerId: string;
+  subjectName: string;
+  entityId: string; // sanction record id
+  score: number;
+  matchedAlias: string;
+  source: SanctionSource;
+  status: AlertStatus;
+  autoCleared: boolean;
+  notes?: string;
+  resolvedBy?: string;
+  resolvedAt?: string;
+  createdAt: string;
+}
+
+export interface MonitoringRunSummary {
+  portfolioId?: string;
+  totalScreened: number;
+  matchesFound: number;
+  newAlerts: number;
+  autoCleared: number;
+  durationMs: number;
+  completedAt: string;
+}
