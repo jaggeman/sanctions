@@ -1160,6 +1160,173 @@
           "400": { "description": "Kunde inte leverera test-ping" }
         }
       }
+    },
+    "/api/monitoring/subjects": {
+      "get": {
+        "summary": "Lista övervakade kunder/entiteter i portföljen",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
+        "parameters": [
+          { "name": "portfolio", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "status", "in": "query", "required": false, "schema": { "type": "string", "enum": ["active", "paused", "archived"] } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista med övervakade kunder",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/MonitoredSubject" } } } }
+          }
+        }
+      },
+      "post": {
+        "summary": "Lägg till en kund i löpande övervakning",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["customerId", "name"],
+                "properties": {
+                  "customerId": { "type": "string", "example": "CUST-9821" },
+                  "name": { "type": "string", "example": "Alexander Smirnov" },
+                  "type": { "type": "string", "enum": ["individual", "entity"], "default": "individual" },
+                  "dob": { "type": "string", "example": "1985-04-12" },
+                  "country": { "type": "string", "example": "SE" },
+                  "nationality": { "type": "string", "example": "SE" },
+                  "portfolio": { "type": "string", "example": "wealth-management", "default": "default" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Skapad övervakad kund",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MonitoredSubject" } } }
+          },
+          "400": { "description": "Felaktiga parametrar" }
+        }
+      }
+    },
+    "/api/monitoring/subjects/batch": {
+      "post": {
+        "summary": "Massimportera kunder till löpande övervakning",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["subjects"],
+                "properties": {
+                  "subjects": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["customerId", "name"],
+                      "properties": {
+                        "customerId": { "type": "string" },
+                        "name": { "type": "string" },
+                        "type": { "type": "string" },
+                        "dob": { "type": "string" },
+                        "country": { "type": "string" },
+                        "portfolio": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Resultat av massregistreringen" },
+          "400": { "description": "Felaktiga parametrar" }
+        }
+      }
+    },
+    "/api/monitoring/subjects/{id}": {
+      "delete": {
+        "summary": "Ta bort en kund från löpande övervakning",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Borttagen" },
+          "404": { "description": "Hittades inte" }
+        }
+      }
+    },
+    "/api/monitoring/alerts": {
+      "get": {
+        "summary": "Lista screening-larm för övervakade portföljer",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
+        "parameters": [
+          { "name": "status", "in": "query", "required": false, "schema": { "type": "string", "enum": ["new", "investigating", "dismissed_false_positive", "confirmed_true_positive"] } },
+          { "name": "customerId", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista med screening-larm",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/MonitoringAlert" } } } }
+          }
+        }
+      }
+    },
+    "/api/monitoring/alerts/{id}/resolve": {
+      "post": {
+        "summary": "Lös och bedöm ett screening-larm",
+        "description": "Uppdaterar larmets status och sparar automatiskt beslutet i ärendeminnet (Decision Memory).",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["verdict"],
+                "properties": {
+                  "verdict": { "type": "string", "enum": ["false_positive", "true_positive"] },
+                  "notes": { "type": "string", "example": "Veriferat mot passkopia - fel födelsedag" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Larm löst",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MonitoringAlert" } } }
+          },
+          "400": { "description": "Felaktiga parametrar" }
+        }
+      }
+    },
+    "/api/monitoring/run": {
+      "post": {
+        "summary": "Starta manuell portföljscreening",
+        "security": [{ "cookieAuth": [] }, { "apiTokenAuth": [] }],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "portfolio": { "type": "string", "example": "wealth-management" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sammanfattning av screening-körningen",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MonitoringRunSummary" } } }
+          }
+        }
+      }
     }
   },
   "components": {

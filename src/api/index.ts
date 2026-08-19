@@ -16,6 +16,7 @@ import { searchRouter } from './routes/search';
 import { importsRouter } from './routes/imports';
 import { exportRouter } from './routes/export';
 import { webhooksRouter } from './routes/webhooks';
+import { monitoringRouter } from './routes/monitoring';
 import { requireAuth } from '../auth/middleware';
 import { findMisconfiguredAdminEmails } from '../auth/admins';
 import { requestLogger } from './middleware/requestLogger';
@@ -156,6 +157,9 @@ app.use('/api', exportRouter);
 
 // Webhook subscriptions and delivery management (issue #318)
 app.use('/api/webhooks', webhooksRouter);
+
+// Ongoing Monitoring and Customer Portfolios (issue #317)
+app.use('/api/monitoring', monitoringRouter);
 
 // Catch-all error logger — must be registered after every route/middleware
 // above so Express routes uncaught errors to it.
