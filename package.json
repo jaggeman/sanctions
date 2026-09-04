@@ -1,6 +1,7 @@
 {
   "name": "sanctions-checker",
   "version": "1.0.0",
+  "license": "MIT",
   "description": "Unified Sanctions List database with importers, REST API, MCP and CLI",
   "main": "dist/api/index.js",
   "engines": {
